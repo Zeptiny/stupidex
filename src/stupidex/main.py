@@ -3,7 +3,7 @@ from rich.markdown import Markdown
 from textual.app import App, ComposeResult
 from textual.events import Resize
 from textual.widgets import Input, RichLog
-from llm.handle_input import stream_input
+from .llm.handle_input import stream_input
 
 
 class BottomInputApp(App):
@@ -67,6 +67,10 @@ class BottomInputApp(App):
             output.write("")
 
 
-if __name__ == "__main__":
+def main():
     app = BottomInputApp()
     app.run()
+
+
+if __name__ == "__main__":
+    main()
