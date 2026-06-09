@@ -1,23 +1,40 @@
 import litellm
 from collections.abc import Generator
 
-chat_history: list[dict] = []
+from .message import Message, MessageRole, MessageType
+
+chat_history: list[Message] = []
 
 
-def stream_input(user_input: str) -> Generator[str, None, None]:
-    chat_history.append({"role": "user", "content": user_input})
+def stream_input(user_input: str) -> Generator[Message, None, None]:
+    chat_history.append(Message(role=MessageRole.USER, content=user_input))
 
     response = litellm.completion(
         model="openai/deepseek-v4-flash",
-        messages=chat_history,
+        messages=[m.to_dict() for m in chat_history],
         base_url="https://opencode.ai/zen/go/v1",
         stream=True,
     )
 
-    full_response = ""
+    thinking = ""
+    content = ""
     for chunk in response:
-        delta = chunk.choices[0].delta.content or ""
-        full_response += delta
-        yield delta
+        delta = chunk.choices[0].delta
 
-    chat_history.append({"role": "assistant", "content": full_response})
+        if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            thinking += delta.reasoning_content
+            yield Message(
+                role=MessageRole.ASSISTANT,
+                content=thinking,
+                type=MessageType.THINKING,
+            )
+
+        if delta.content:
+            content += delta.content
+            yield Message(
+                role=MessageRole.ASSISTANT,
+                content=content,
+                type=MessageType.TEXT,
+            )
+
+    chat_history.append(Message(role=MessageRole.ASSISTANT, content=content))

@@ -4,7 +4,6 @@ Screen {
 
 #output {
     height: 1fr;
-    border: solid green;
     padding: 1;
     overflow-y: scroll;
 }

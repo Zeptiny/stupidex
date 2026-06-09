@@ -27,3 +27,7 @@ src/
     llm/
       handle_input.py   # LLM streaming logic
 ```
+
+
+# TODO
+- Implement tool calls, there already is some specs defined for tool calls and responses in message.py
