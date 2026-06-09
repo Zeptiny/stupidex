@@ -75,7 +75,6 @@ class BottomInputApp(App):
         output.clear()
         for msg in self.messages:
             output.write(msg.render())
-            output.write("")
 
 
 def main():
