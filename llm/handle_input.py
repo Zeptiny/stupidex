@@ -1,12 +1,17 @@
 import litellm
 
+chat_history: list[dict] = []
+
+
 def handle_input(user_input: str) -> str:
-    # Process the user input and generate a response
+    chat_history.append({"role": "user", "content": user_input})
+
     response = litellm.completion(
         model="openai/deepseek-v4-flash",
-        messages=[
-            {"role": "user", "content": [{"type": "text", "text": user_input}]}
-        ],
+        messages=chat_history,
         base_url="https://opencode.ai/zen/go/v1"
     )
-    return response.choices[0].message.content
+
+    assistant_msg = response.choices[0].message.content
+    chat_history.append({"role": "assistant", "content": assistant_msg})
+    return assistant_msg
