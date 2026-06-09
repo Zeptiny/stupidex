@@ -1,7 +1,8 @@
 import asyncio
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal
 from textual.events import Resize
-from textual.widgets import Input, RichLog
+from textual.widgets import Input, LoadingIndicator, RichLog, Static
 from .llm.handle_input import stream_input
 from .llm.message import Message, MessageRole, MessageType
 
@@ -14,6 +15,9 @@ class BottomInputApp(App):
     def compose(self) -> ComposeResult:
         yield RichLog(id="output", wrap=True, highlight=True, markup=True)
         yield Input()
+        with Horizontal(id="footer"):
+            yield LoadingIndicator(id="spinner")
+            yield Static("Context: 0 | Response: 0 | Total: 0", id="status")
 
     def on_mount(self) -> None:
         self.set_interval(0.05, self._tick)
@@ -28,6 +32,7 @@ class BottomInputApp(App):
         self.messages.append(Message(role=MessageRole.USER, content=user_msg))
         self._dirty = True
         event.input.clear()
+        self.streaming_started()
         self.run_worker(self._stream_response(user_msg))
 
     async def _stream_response(self, user_msg: str) -> None:
@@ -66,6 +71,22 @@ class BottomInputApp(App):
 
         # Final render to ensure everything is up to date
         self._dirty = True
+        self.streaming_finished()
+        
+    def streaming_started(self) -> None:
+        self.query_one('#spinner').display = True
+
+    def streaming_finished(self) -> None:
+        self.query_one('#spinner').display = False
+        last_msg = self.messages[-1]
+        if last_msg.usage:
+            u = last_msg.usage
+            self.query_one("#status", Static).update(
+                f"Context: {u.prompt_tokens} | Response: {u.completion_tokens} | Total: {u.total_tokens}"
+            )
+        else:
+            pass
+            # TODO: Could not update usage, need to decide later how to handle 
 
     def on_resize(self, event: Resize) -> None:
         self._render_messages()
