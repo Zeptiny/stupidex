@@ -2,6 +2,12 @@ Screen {
     layout: vertical;
 }
 
+#header {
+    dock: top;
+    height: 3;
+    padding: 1;
+}
+
 #output {
     height: 1fr;
     padding: 1;

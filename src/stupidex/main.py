@@ -3,16 +3,24 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.events import Resize
 from textual.widgets import Input, LoadingIndicator, RichLog, Static
-from .llm.handle_input import stream_input
+from .llm.handle_input import stream_response
 from .llm.message import Message, MessageRole, MessageType
+from .llm.session import SessionManager
+from datetime import datetime
 
 
 class BottomInputApp(App):
     CSS_PATH = "main.tcss"
-    messages: list[Message] = []
+    sessions: SessionManager = SessionManager()
     _dirty: bool = False
 
+    @property
+    def messages(self) -> list[Message]:
+        return self.sessions.active.messages if self.sessions.active else []
+
     def compose(self) -> ComposeResult:
+        with Horizontal(id="header"):
+            yield Static(self.sessions.active.name if self.sessions.active else "No Session", id="title")
         yield RichLog(id="output", wrap=True, highlight=True, markup=True)
         yield Input()
         with Horizontal(id="footer"):
@@ -20,6 +28,9 @@ class BottomInputApp(App):
             yield Static("Context: 0 | Response: 0 | Total: 0", id="status")
 
     def on_mount(self) -> None:
+        self.sessions.create(datetime.now().strftime("Session %Y-%m-%d %H:%M:%S"))
+        self.query_one('#title', Static).update(self.sessions.active.name)
+        self.query_one(Input).focus()
         self.set_interval(0.05, self._tick)
 
     def _tick(self) -> None:
@@ -29,17 +40,17 @@ class BottomInputApp(App):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         user_msg = event.value
+        event.input.clear()
         self.messages.append(Message(role=MessageRole.USER, content=user_msg))
         self._dirty = True
-        event.input.clear()
         self.streaming_started()
-        self.run_worker(self._stream_response(user_msg))
+        self.run_worker(self._stream_response())
 
-    async def _stream_response(self, user_msg: str) -> None:
-        stream = stream_input(user_msg)
+    async def _stream_response(self) -> None:
+        stream = stream_response(self.messages)
 
-        thinking_idx = None
-        content_idx = None
+        thinking_msg = None
+        content_msg = None
 
         loop = asyncio.get_event_loop()
 
@@ -55,24 +66,24 @@ class BottomInputApp(App):
                 break
 
             if msg.type == MessageType.THINKING:
-                if thinking_idx is None:
+                if thinking_msg is None:
                     self.messages.append(msg)
-                    thinking_idx = len(self.messages) - 1
+                    thinking_msg = msg
                 else:
-                    self.messages[thinking_idx] = msg
+                    thinking_msg.content = msg.content
             else:
-                if content_idx is None:
+                if content_msg is None:
                     self.messages.append(msg)
-                    content_idx = len(self.messages) - 1
+                    content_msg = msg
                 else:
-                    self.messages[content_idx] = msg
+                    content_msg.content = msg.content
+                    content_msg.usage = msg.usage
 
             self._dirty = True
 
-        # Final render to ensure everything is up to date
         self._dirty = True
         self.streaming_finished()
-        
+
     def streaming_started(self) -> None:
         self.query_one('#spinner').display = True
 
@@ -84,9 +95,6 @@ class BottomInputApp(App):
             self.query_one("#status", Static).update(
                 f"Context: {u.prompt_tokens} | Response: {u.completion_tokens} | Total: {u.total_tokens}"
             )
-        else:
-            pass
-            # TODO: Could not update usage, need to decide later how to handle 
 
     def on_resize(self, event: Resize) -> None:
         self._render_messages()

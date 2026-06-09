@@ -3,15 +3,11 @@ from collections.abc import Generator
 
 from .message import Message, MessageRole, MessageType, Usage
 
-chat_history: list[Message] = []
 
-
-def stream_input(user_input: str) -> Generator[Message, None, None]:
-    chat_history.append(Message(role=MessageRole.USER, content=user_input))
-
+def stream_response(messages: list[Message]) -> Generator[Message, None, None]:
     response = litellm.completion(
-        model="openai/deepseek-v4-flash",
-        messages=[m.to_dict() for m in chat_history],
+        model="openai/mimo-v2.5",
+        messages=[m.to_dict() for m in messages],
         base_url="https://opencode.ai/zen/go/v1",
         stream=True,
         stream_options={"include_usage": True},
@@ -43,9 +39,7 @@ def stream_input(user_input: str) -> Generator[Message, None, None]:
             usage = Usage(
                 prompt_tokens=chunk.usage.prompt_tokens,
                 completion_tokens=chunk.usage.completion_tokens,
-                total_tokens=chunk.usage.total_tokens
+                total_tokens=chunk.usage.total_tokens,
             )
 
-    final_msg = Message(role=MessageRole.ASSISTANT, content=content, usage=usage)
-    chat_history.append(final_msg)
-    yield final_msg
+    yield Message(role=MessageRole.ASSISTANT, content=content, usage=usage)
