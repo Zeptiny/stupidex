@@ -33,7 +33,14 @@ def execute_read_tool(file_path: str, offset: int = 1, limit: int = 100) -> str:
             lines = f.readlines()
             # Return <line number> | <line content>
             selected_lines = lines[offset - 1:offset - 1 + limit]
-            return "\n".join(f"{i + offset} | {line.rstrip()}" for i, line in enumerate(selected_lines))
+            line_count = len(lines)
+
+            if offset > line_count:
+                return f"Offset of {offset} is greater than the file line count {line_count}"
+
+            return f"Showing lines {offset}-{min(offset + limit - 1, line_count)} of {line_count}\n" + \
+                "\n".join(f"{i + offset} | {line.rstrip()}" for i,
+                          line in enumerate(selected_lines))
 
     except Exception as e:
         return f"Error reading file: {e}"
