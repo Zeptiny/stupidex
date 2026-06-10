@@ -6,6 +6,7 @@ import litellm
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
+from stupidex.domain.tool import ExecutorResult
 from stupidex.tools import TOOL_REGISTRY
 
 
@@ -82,8 +83,14 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
         for tc in tool_calls:
             name = tc["function"]["name"]
             args = json.loads(tc["function"]["arguments"])
-            executor = TOOL_REGISTRY[name]["executor"]
-            result = executor(**args)
+            if name not in TOOL_REGISTRY:
+                result = ExecutorResult(
+                    display=f"Unknown tool: {name}",
+                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(TOOL_REGISTRY)}",
+                )
+            else:
+                executor = TOOL_REGISTRY[name]["executor"]
+                result = executor(**args)
 
             yield Message(
                 role=MessageRole.TOOL,
