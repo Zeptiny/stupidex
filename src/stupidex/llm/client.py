@@ -85,12 +85,14 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
             args = json.loads(tc["function"]["arguments"])
 
             # Yield a TOOL_CALL message to show what tool is being called
-            yield Message(
-                role=MessageRole.ASSISTANT,
-                content=f"Calling tool: {name}",
-                type=MessageType.TOOL_CALL,
-                metadata={"tool_name": name, "tool_args": args},
-            )
+            # TODO: Not much use yet as it only shows after the agent finished writing the tool call, 
+            # if we can update to show while its writing it would improve the responsiveness (Ex: large file writes)
+            # yield Message(
+            #     role=MessageRole.ASSISTANT,
+            #     content=f"Calling tool: {name}",
+            #     type=MessageType.TOOL_CALL,
+            #     metadata={"tool_name": name, "tool_args": args},
+            # )
 
             if name not in TOOL_REGISTRY:
                 result = ExecutorResult(

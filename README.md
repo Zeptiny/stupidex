@@ -69,8 +69,10 @@ src/
 - Make IGNORED_DIRS configurable
 - Context and usage only being updated when the agent finishes it response
 - Bug: Automatically scrolling down after a message is finished
-- Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded
+- Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded - currently commented
   - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response
+  - Show the TOOL_CALL while the agent is writing the tool (Or in a similar way)
+
 
 # Some ground rules
 - Absolute imports only
