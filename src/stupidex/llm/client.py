@@ -83,6 +83,15 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
         for tc in tool_calls:
             name = tc["function"]["name"]
             args = json.loads(tc["function"]["arguments"])
+
+            # Yield a TOOL_CALL message to show what tool is being called
+            yield Message(
+                role=MessageRole.ASSISTANT,
+                content=f"Calling tool: {name}",
+                type=MessageType.TOOL_CALL,
+                metadata={"tool_name": name, "tool_args": args},
+            )
+
             if name not in TOOL_REGISTRY:
                 result = ExecutorResult(
                     display=f"Unknown tool: {name}",
@@ -92,6 +101,7 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
                 executor = TOOL_REGISTRY[name]["executor"]
                 result = executor(**args)
 
+            # Yield a TOOL_RESULT message with the execution result
             yield Message(
                 role=MessageRole.TOOL,
                 content=result.content,

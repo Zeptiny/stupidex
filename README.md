@@ -44,7 +44,7 @@ src/
       file_manipulation.py     # Tools for file manipulation
       search.py                # Tools for file searching (Currently grep)
     widgets/
-      message_display.py       # Rich rendering for messages
+      message_widget.py        # Textual widgets for messages with streaming support
 ```
 
 
@@ -59,15 +59,18 @@ src/
 ## Needs fix
 - Input messages are not queued and can have multiple concurrent connections
 - Minimax M3 do not render response (Sometimes?) - needs triage
-- Not re-render the full history on each update
 
 ## Needs improvement
 - Model selector only works with openai compatible endpoints
   - Deferred until provider selector
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
 - Session saving to disk
-- Default selected model (Last one selected, else first) - preserver between sessions / app close
+- Default selected model (Last one selected, else first) - preserve between sessions / app close
 - Make IGNORED_DIRS configurable
+- Context and usage only being updated when the agent finishes it response
+- Bug: Automatically scrolling down after a message is finished
+- Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded
+  - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response
 
 # Some ground rules
 - Absolute imports only

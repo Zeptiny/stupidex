@@ -1,16 +1,21 @@
 import asyncio
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
-from textual.events import Resize
-from textual.reactive import reactive
-from textual.widgets import Input, LoadingIndicator, RichLog, Static
+from textual.containers import Horizontal, ScrollableContainer
+from textual.widgets import Input, LoadingIndicator, Static
 
 from stupidex.commands.session_commands import SessionCommands
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.domain.session import SessionManager
 from stupidex.llm.client import stream_response
-from stupidex.widgets.message_display import render_message
+from stupidex.widgets.message_widget import (
+    AssistantMessageWidget,
+    MessageWidget,
+    ThinkingMessageWidget,
+    ToolCallMessageWidget,
+    ToolResultMessageWidget,
+    create_message_widget,
+)
 
 
 class Stupidex(App):
@@ -19,7 +24,6 @@ class Stupidex(App):
     COMMANDS = {SessionCommands}
 
     sessions: SessionManager = SessionManager()
-    _needs_rerender: reactive[bool] = reactive(False)
 
     @property
     def messages(self) -> list[Message]:
@@ -32,37 +36,34 @@ class Stupidex(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="header"):
             yield Static(self.sessions.active.name if self.sessions.active else "No Session", id="title")
-        yield RichLog(id="output", wrap=True, highlight=True, markup=True)
+        yield ScrollableContainer(id="output")
         yield Input()
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
             yield Static("N/A Model", id="model")
             yield Static("Context: 0 | Response: 0 | Total: 0", id="status")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.sessions.create()
-        self.rerender_all()
+        self.query_one("#title", Static).update(self.sessions.active.name)
+        await self.mount_all_messages()
         self.query_one(Input).focus()
 
-    def watch__needs_rerender(self, value: bool) -> None:
-        if value:
-            self._render_messages()
-            self.rerender_footer() # TODO: It appears to not make a difference, needs to check if the API only returns usage at the message end
-            self._needs_rerender = False
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         user_msg = event.value
         event.input.clear()
-        self.messages.append(Message(role=MessageRole.USER, content=user_msg))
-        self._needs_rerender = True
+        msg = Message(role=MessageRole.USER, content=user_msg)
+        self.messages.append(msg)
+        await self.mount_message(msg)
         self.streaming_started()
         self.run_worker(self._stream_response())
 
     async def _stream_response(self) -> None:
         stream = stream_response(self.messages, self.model)
+        container = self.query_one("#output", ScrollableContainer)
 
-        thinking_msg = None
-        content_msg = None
+        thinking_widget: MessageWidget | None = None
+        content_widget: MessageWidget | None = None
 
         loop = asyncio.get_event_loop()
 
@@ -78,26 +79,37 @@ class Stupidex(App):
                 break
 
             if msg.type == MessageType.THINKING:
-                if thinking_msg is None:
+                if thinking_widget is None:
                     self.messages.append(msg)
-                    thinking_msg = msg
+                    thinking_widget = ThinkingMessageWidget(msg)
+                    await container.mount(thinking_widget)
+                    thinking_widget.scroll_visible()
                 else:
-                    thinking_msg.content = msg.content
+                    thinking_widget.update_content(msg.content)
+            elif msg.type == MessageType.TOOL_CALL:
+                self.messages.append(msg)
+                widget = ToolCallMessageWidget(msg)
+                await container.mount(widget)
+                widget.scroll_visible()
+                thinking_widget = None
+                content_widget = None
             elif msg.type == MessageType.TOOL_RESULT:
                 self.messages.append(msg)
-                thinking_msg = None
-                content_msg = None
+                widget = ToolResultMessageWidget(msg)
+                await container.mount(widget)
+                widget.scroll_visible()
+                thinking_widget = None
+                content_widget = None
             else:
-                if content_msg is None:
+                if content_widget is None:
                     self.messages.append(msg)
-                    content_msg = msg
+                    content_widget = AssistantMessageWidget(msg)
+                    await container.mount(content_widget)
+                    content_widget.scroll_visible()
                 else:
-                    content_msg.content = msg.content
-                    content_msg.usage = msg.usage
+                    content_widget.update_content(msg.content)
+                    content_widget.msg.usage = msg.usage
 
-            self._needs_rerender = True
-
-        self._needs_rerender = True
         self.streaming_finished()
 
     def streaming_started(self) -> None:
@@ -105,16 +117,20 @@ class Stupidex(App):
 
     def streaming_finished(self) -> None:
         self.query_one("#spinner").display = False
-        self.rerender_all()
+        self.rerender_footer()
 
-    def on_resize(self, event: Resize) -> None:
-        self._render_messages()
+    async def mount_message(self, msg: Message) -> None:
+        container = self.query_one("#output", ScrollableContainer)
+        widget = create_message_widget(msg)
+        await container.mount(widget)
+        widget.scroll_visible()
 
-    def _render_messages(self) -> None:
-        output = self.query_one("#output", RichLog)
-        output.clear()
+    async def mount_all_messages(self) -> None:
+        container = self.query_one("#output", ScrollableContainer)
+        await container.remove_children()
         for msg in self.messages:
-            output.write(render_message(msg))
+            widget = create_message_widget(msg)
+            await container.mount(widget)
 
     def rerender_footer(self) -> None:
         if not self.sessions.active:
@@ -134,16 +150,3 @@ class Stupidex(App):
             self.query_one("#model", Static).update(f"{self.model}")
         else:
             self.query_one("#model", Static).update("No Model")
-
-    def rerender_all(self) -> None:
-        if not self.sessions.active:
-            return
-
-        self.query_one("#title", Static).update(self.sessions.active.name)
-
-        output = self.query_one("#output", RichLog)
-        output.clear()
-        for msg in self.sessions.active.messages:
-            output.write(render_message(msg))
-
-        self.rerender_footer()
