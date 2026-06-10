@@ -82,6 +82,10 @@ class Stupidex(App):
                     thinking_msg = msg
                 else:
                     thinking_msg.content = msg.content
+            elif msg.type == MessageType.TOOL_RESULT:
+                self.messages.append(msg)
+                thinking_msg = None
+                content_msg = None
             else:
                 if content_msg is None:
                     self.messages.append(msg)

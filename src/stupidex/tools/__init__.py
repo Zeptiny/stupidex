@@ -1,0 +1,7 @@
+from stupidex.tools.file_manipulation import read_tool, execute_read_tool, edit_tool, execute_edit_tool, read_directory, execute_read_directory_tool
+
+TOOL_REGISTRY = {
+    "read": {"tool": read_tool, "executor": execute_read_tool},
+    "edit": {"tool": edit_tool, "executor": execute_edit_tool},
+    "read_directory": {"tool": read_directory, "executor": execute_read_directory_tool}
+}
