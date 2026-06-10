@@ -10,10 +10,6 @@ dependencies = [
     "textual",
     "litellm",
     "httpx",
-    "sys",
-    "os",
-    "difflib",
-    "glob",
     "pathlib",
 ]
 
