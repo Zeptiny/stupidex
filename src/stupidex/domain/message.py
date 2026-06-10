@@ -29,6 +29,7 @@ class Message:
     role: MessageRole
     content: str
     type: MessageType = MessageType.TEXT
+    display: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     usage: Usage | None = None
     tool_call_id: str | None = None

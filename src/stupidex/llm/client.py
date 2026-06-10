@@ -53,7 +53,8 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
                     while tc_delta.index >= len(tool_calls):
-                        tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                        tool_calls.append({"id": "", "type": "function", "function": {
+                                          "name": "", "arguments": ""}})
                     tc = tool_calls[tc_delta.index]
                     if tc_delta.id:
                         tc["id"] = tc_delta.id
@@ -74,7 +75,8 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
             yield Message(role=MessageRole.ASSISTANT, content=content, usage=usage)
             return
 
-        assistant_msg: dict = {"role": "assistant", "content": content or None, "tool_calls": tool_calls}
+        assistant_msg: dict = {"role": "assistant",
+                               "content": content or None, "tool_calls": tool_calls}
         api_messages.append(assistant_msg)
 
         for tc in tool_calls:
@@ -85,7 +87,8 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
 
             yield Message(
                 role=MessageRole.TOOL,
-                content=result,
+                content=result.content,
+                display=result.display,
                 type=MessageType.TOOL_RESULT,
                 tool_call_id=tc["id"],
             )
@@ -93,5 +96,5 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
             api_messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
-                "content": result,
+                "content": result.content,
             })

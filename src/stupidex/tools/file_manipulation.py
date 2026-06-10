@@ -1,4 +1,4 @@
-from stupidex.domain.tool import Tool, ToolParameter, ToolParameterProperties
+from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.utils import directory_tree
 import glob as glob_module
 import os
@@ -28,7 +28,7 @@ read_tool = Tool(
 )
 
 
-def execute_read_tool(file_path: str, offset: int = 1, limit: int = 100) -> str:
+def execute_read_tool(file_path: str, offset: int = 1, limit: int = 100) -> ExecutorResult:
     try:
         with open(file_path, "r") as f:
             lines = f.readlines()
@@ -37,14 +37,17 @@ def execute_read_tool(file_path: str, offset: int = 1, limit: int = 100) -> str:
             line_count = len(lines)
 
             if offset > line_count:
-                return f"Offset of {offset} is greater than the file line count {line_count}"
+                return ExecutorResult(display=f"Offset {offset} out of range", content=f"Offset of {offset} is greater than the file line count {line_count}")
 
-            return f"Showing lines {offset}-{min(offset + limit - 1, line_count)} of {line_count}\n" + \
+            return ExecutorResult(
+                display=f"Read {file_path} lines {offset}-{min(offset + limit - 1, line_count)}",
+                content=f"Showing lines {offset}-{min(offset + limit - 1, line_count)} of {line_count}\n" +
                 "\n".join(f"{i + offset} | {line.rstrip()}" for i,
                           line in enumerate(selected_lines))
+            )
 
     except Exception as e:
-        return f"Error reading file: {e}"
+        return ExecutorResult(display=f"Read error {file_path}", content=f"Error reading file {file_path}: {e}")
 
 
 edit_tool = Tool(
@@ -74,13 +77,13 @@ edit_tool = Tool(
 )
 
 
-def execute_edit_tool(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+def execute_edit_tool(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> ExecutorResult:
     try:
         with open(file_path, "r") as f:
             content = f.read()
 
         if old_string not in content:
-            return f"String '{old_string}' not found in file '{file_path}'. No changes made."
+            return ExecutorResult(display=f"String not found in {file_path}", content=f"String '{old_string}' not found in file '{file_path}'. No changes made.")
 
         if replace_all:
             new_content = content.replace(old_string, new_string)
@@ -100,12 +103,13 @@ def execute_edit_tool(file_path: str, old_string: str, new_string: str, replace_
         )
         diff_text = "\n".join(diff)
 
+        display = f"Edited {file_path}"
         result = f"File '{file_path}' edited successfully."
         if diff_text:
             result += f"\n\nDiff:\n{diff_text}"
-        return result
+        return ExecutorResult(display=display, content=result)
     except Exception as e:
-        return f"Error editing file: {e}"
+        return ExecutorResult(display=f"Edit error {file_path}", content=f"Error editing file {file_path}: {e}")
 
 
 read_directory = Tool(
@@ -131,8 +135,10 @@ read_directory = Tool(
 )
 
 
-def execute_read_directory_tool(directory_path: str, max_depth: int = 2, include_hidden: bool = False) -> str:
-    return directory_tree(path=directory_path, max_depth=max_depth, include_hidden=include_hidden)
+def execute_read_directory_tool(directory_path: str, max_depth: int = 2, include_hidden: bool = False) -> ExecutorResult:
+    result = directory_tree(path=directory_path,
+                            max_depth=max_depth, include_hidden=include_hidden)
+    return ExecutorResult(display=f"Read directory {directory_path}", content=result)
 
 
 glob_tool = Tool(
@@ -158,7 +164,7 @@ glob_tool = Tool(
 )
 
 
-def execute_glob_tool(directory_path: str, pattern: str, include_hidden: bool = False) -> str:
+def execute_glob_tool(directory_path: str, pattern: str, include_hidden: bool = False) -> ExecutorResult:
     try:
         # Build the full pattern path
         full_pattern = os.path.join(directory_path, pattern)
@@ -168,7 +174,7 @@ def execute_glob_tool(directory_path: str, pattern: str, include_hidden: bool = 
             full_pattern, recursive=True, include_hidden=include_hidden)
 
         if not matches:
-            return f"No files found matching pattern '{pattern}' in '{directory_path}'."
+            return ExecutorResult(display=f"No matches for {pattern}", content=f"No files found matching pattern '{pattern}' in '{directory_path}'.")
 
         # Convert to relative paths and sort
         relative_paths = sorted(matches)
@@ -183,9 +189,9 @@ def execute_glob_tool(directory_path: str, pattern: str, include_hidden: bool = 
             else:
                 result_lines.append(path)
 
-        return "\n".join(result_lines)
+        return ExecutorResult(display=f"Found {len(relative_paths)} matches for {pattern}", content="\n".join(result_lines))
     except Exception as e:
-        return f"Error searching for files: {e}"
+        return ExecutorResult(display=f"Glob error pattern: {pattern}", content=f"Error searching for files using apttern {pattern}: {e}")
 
 
 write_tool = Tool(
@@ -207,7 +213,7 @@ write_tool = Tool(
 )
 
 
-def execute_write_tool(file_path: str, content: str) -> str:
+def execute_write_tool(file_path: str, content: str) -> ExecutorResult:
     try:
         path = Path(file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -216,8 +222,11 @@ def execute_write_tool(file_path: str, content: str) -> str:
             f.write(content)
 
         lines = content.splitlines()
-        return f"File written successfully, path: {path}, Showing lines 1-{len(lines)} of written file:\n" + \
+        return ExecutorResult(
+            display=f"Wrote {len(lines)} lines to {path}",
+            content=f"File written successfully, path: {path}, Showing lines 1-{len(lines)} of written file:\n" +
             "\n".join(f"{i + 1} | {line.rstrip()}" for i,
                       line in enumerate(lines))
+        )
     except Exception as e:
-        return f"Error writing file: {e}"
+        return ExecutorResult(display=f"Write error {file_path}", content=f"Error writing file: {e}")

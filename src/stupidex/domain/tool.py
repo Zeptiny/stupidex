@@ -2,6 +2,12 @@ from dataclasses import dataclass
 
 
 @dataclass
+class ExecutorResult:
+    display: str
+    content: str
+
+
+@dataclass
 class ToolParameterProperties:
     type: str
     description: str

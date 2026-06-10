@@ -43,6 +43,7 @@ src/
 
 # TODO - In priority order
 - Thinking collapse
+- Tool result collapse
 - Provider selector
 - Implement tool calls, there already is some specs defined for tool calls and responses in message.py
   - Subagents (Configurable)

@@ -5,6 +5,7 @@ from stupidex.domain.message import Message, MessageRole, MessageType
 
 
 def render_message(msg: Message) -> Panel | Markdown:
+    display = msg.display if msg.display is not None else msg.content
     match msg.type:
         case MessageType.THINKING:
             return Panel(Markdown(f"*{msg.content}*"), style="dim")
@@ -12,7 +13,7 @@ def render_message(msg: Message) -> Panel | Markdown:
             tool = msg.metadata.get("tool_name", "unknown")
             return Panel(Markdown(f"`{tool}`"), title="Tool Call", style="blue")
         case MessageType.TOOL_RESULT:
-            return Panel(msg.content, title="Tool Result", style="blue")
+            return Panel(display, title="Tool Result", style="blue")
         case _:
             if msg.role == MessageRole.USER:
                 return Panel(Markdown(msg.content), style="green")
