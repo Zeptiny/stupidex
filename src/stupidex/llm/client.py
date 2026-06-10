@@ -1,7 +1,6 @@
-import litellm
 from collections.abc import Generator
-
-from stupidex.llm.message import Message, MessageRole, MessageType, Usage
+import litellm
+from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 
 
 def stream_response(messages: list[Message], model: str | None) -> Generator[Message, None, None]:

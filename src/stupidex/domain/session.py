@@ -1,8 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 import uuid
-from stupidex.llm.models import listModels
-from stupidex.llm.message import Message
+from stupidex.domain.message import Message
 
 
 @dataclass
@@ -10,7 +9,7 @@ class Session:
     name: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[Message] = field(default_factory=list)
-    model: str = field(default_factory=lambda: listModels()[0].id if listModels() else None)
+    model: str | None = None
 
 
 class SessionManager:
@@ -19,7 +18,8 @@ class SessionManager:
         self.active: Session | None = None
 
     def create(self) -> Session:
-        session = Session(name=datetime.now().strftime("Session %Y-%m-%d %H:%M:%S"))
+        session = Session(name=datetime.now().strftime(
+            "Session %Y-%m-%d %H:%M:%S"))
         self.sessions[session.id] = session
         self.active = session
         return session

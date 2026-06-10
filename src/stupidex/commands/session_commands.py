@@ -1,34 +1,8 @@
 from functools import partial
 from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
-from textual.screen import Screen
-from textual.widgets import OptionList
-from textual.widgets.option_list import Option
-from stupidex.llm.models import Model, listModels
-from stupidex.llm.session import Session
-from stupidex.utils.interface import full_rerender, rerender_footer
-
-
-class SessionPicker(Screen[str]):
-    def __init__(self, sessions: list[Session]) -> None:
-        super().__init__()
-        self.sessions = sessions
-
-    def compose(self):
-        yield OptionList(*[Option(s.name, id=s.id) for s in self.sessions])
-
-    def on_option_list_option_selected(self, event):
-        self.dismiss(event.option.id)
-        
-class ModelPicker(Screen[str]):
-    def __init__(self, models: list[Model]) -> None:
-        super().__init__()
-        self.models = models
-
-    def compose(self):
-        yield OptionList(*[Option(m.id, id=m.id) for m in self.models])
-
-    def on_option_list_option_selected(self, event):
-        self.dismiss(event.option.id)
+from stupidex.llm.models import list_models
+from stupidex.screens.model_picker import ModelPicker
+from stupidex.screens.session_picker import SessionPicker
 
 
 class SessionCommands(Provider):
@@ -54,14 +28,14 @@ class SessionCommands(Provider):
         match cmd:
             case "/new":
                 self.app.sessions.create()
-                full_rerender(self.app)
+                self.app.rerender_all()
             case "/switch":
                 sessions = list(self.app.sessions.sessions.values())
 
                 def on_picked(result: str | None):
                     if result:
                         self.app.sessions.switch(result)
-                        full_rerender(self.app)
+                        self.app.rerender_all()
 
                 self.app.push_screen(SessionPicker(sessions), on_picked)
             case "/delete":
@@ -72,15 +46,15 @@ class SessionCommands(Provider):
                         self.app.sessions.delete(result)
                         if self.app.sessions.active is None:
                             self.app.sessions.create()
-                        full_rerender(self.app)
+                        self.app.rerender_all()
 
                 self.app.push_screen(SessionPicker(sessions), on_picked)
             case "/model":
-                models = listModels()
+                models = list_models()
 
                 def on_picked(result: str | None):
                     if result:
                         self.app.sessions.change_model(result)
-                        rerender_footer(self.app)   
+                        self.app.rerender_footer()
 
                 self.app.push_screen(ModelPicker(models), on_picked)
