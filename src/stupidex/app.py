@@ -47,6 +47,7 @@ class Stupidex(App):
     def watch__needs_rerender(self, value: bool) -> None:
         if value:
             self._render_messages()
+            self.rerender_footer() # TODO: It appears to not make a difference, needs to check if the API only returns usage at the message end
             self._needs_rerender = False
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
