@@ -38,9 +38,6 @@ class SessionManager:
             return True
         return False
 
-    def list(self) -> list[str]:
-        return list(self.sessions.keys())
-    
     def change_model(self, model_id: str) -> None:
         if self.active:
             self.active.model = model_id
