@@ -9,6 +9,7 @@ class Session:
     name: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[Message] = field(default_factory=list)
+    model: str = None
 
 
 class SessionManager:
@@ -38,3 +39,7 @@ class SessionManager:
 
     def list(self) -> list[str]:
         return list(self.sessions.keys())
+    
+    def change_model(self, model_id: str) -> None:
+        if self.active:
+            self.active.model = model_id

@@ -20,7 +20,7 @@ class BottomInputApp(App):
     @property
     def messages(self) -> list[Message]:
         return self.sessions.active.messages if self.sessions.active else []
-
+    
     def compose(self) -> ComposeResult:
         with Horizontal(id="header"):
             yield Static(self.sessions.active.name if self.sessions.active else "No Session", id="title")
@@ -28,6 +28,7 @@ class BottomInputApp(App):
         yield Input()
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
+            yield Static("No Model Selected", id="model")
             yield Static("Context: 0 | Response: 0 | Total: 0", id="status")
 
     def on_mount(self) -> None:

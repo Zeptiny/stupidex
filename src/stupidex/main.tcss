@@ -30,6 +30,11 @@ Input {
     margin-right: 1;
 }
 
+#model {
+    color: gray;
+    width: 16;
+}
+
 #status {
     color: gray;
 }

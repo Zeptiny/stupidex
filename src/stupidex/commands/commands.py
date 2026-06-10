@@ -3,8 +3,9 @@ from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
 from textual.screen import Screen
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
+from stupidex.llm.models import Model, listModels
 from ..llm.session import Session
-from ..utils.interface import full_rerender
+from ..utils.interface import full_rerender, rerender_footer
 
 
 class SessionPicker(Screen[str]):
@@ -17,6 +18,17 @@ class SessionPicker(Screen[str]):
 
     def on_option_list_option_selected(self, event):
         self.dismiss(event.option.id)
+        
+class ModelPicker(Screen[str]):
+    def __init__(self, models: list[Model]) -> None:
+        super().__init__()
+        self.models = models
+
+    def compose(self):
+        yield OptionList(*[Option(m.id, id=m.id) for m in self.models])
+
+    def on_option_list_option_selected(self, event):
+        self.dismiss(event.option.id)
 
 
 class SessionCommands(Provider):
@@ -24,6 +36,7 @@ class SessionCommands(Provider):
         "/new": "Start a new session",
         "/switch": "Switch to another session",
         "/delete": "Delete a session",
+        "/model": "Change the model for the current session",
     }
 
     async def discover(self) -> Hits:
@@ -62,3 +75,12 @@ class SessionCommands(Provider):
                         full_rerender(self.app)
 
                 self.app.push_screen(SessionPicker(sessions), on_picked)
+            case "/model":
+                models = listModels()
+
+                def on_picked(result: str | None):
+                    if result:
+                        self.app.sessions.change_model(result)
+                        rerender_footer(self.app)   
+
+                self.app.push_screen(ModelPicker(models), on_picked)

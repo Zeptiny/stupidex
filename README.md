@@ -34,12 +34,16 @@ src/
 - Sessions
   - Implemented-ish
     - Still needs to save on disk
-- Model selector
 - Provider selector
 - Implement tool calls, there already is some specs defined for tool calls and responses in message.py
 - MCP (Configurable in a settings.json)
 - Subagents (Configurable)
 - Not re-render the full history on each update
+- Default selected model (Last one selected, else first) - preserver between sessions / app close
 
 # Needs fix
 - Input messages are not queued and can have multiple concurrent connections
+
+# Needs improvement
+- Model selector only works with openai compatible endpoints
+  - Deferred until provider selector
