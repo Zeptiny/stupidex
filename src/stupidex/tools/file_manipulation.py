@@ -3,6 +3,7 @@ from stupidex.utils import directory_tree
 import glob as glob_module
 import os
 import difflib
+from pathlib import Path
 
 read_tool = Tool(
     name="read",
@@ -185,3 +186,38 @@ def execute_glob_tool(directory_path: str, pattern: str, include_hidden: bool = 
         return "\n".join(result_lines)
     except Exception as e:
         return f"Error searching for files: {e}"
+
+
+write_tool = Tool(
+    name="write",
+    description="Create new files or rewrite file content, directories are auto created",
+    parameters=ToolParameter(
+        properties={
+            "file_path": ToolParameterProperties(
+                type="string",
+                description="The file directory, relative to the current working directory"
+            ),
+            "content": ToolParameterProperties(
+                type="string",
+                description="The file content"
+            ),
+        },
+        required=["file_path", "content"]
+    ),
+)
+
+
+def execute_write_tool(file_path: str, content: str) -> str:
+    try:
+        path = Path(file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        lines = content.splitlines()
+        return f"File written successfully, path: {path}, Showing lines 1-{len(lines)} of written file:\n" + \
+            "\n".join(f"{i + 1} | {line.rstrip()}" for i,
+                      line in enumerate(lines))
+    except Exception as e:
+        return f"Error writing file: {e}"
