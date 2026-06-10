@@ -42,6 +42,7 @@ src/
       session_commands.py      # commands provider
     tools/
       file_manipulation.py     # Tools for file manipulation
+      search.py                # Tools for file searching (Currently grep)
     widgets/
       message_display.py       # Rich rendering for messages
 ```
