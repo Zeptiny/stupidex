@@ -4,9 +4,9 @@ from collections.abc import Generator
 from .message import Message, MessageRole, MessageType, Usage
 
 
-def stream_response(messages: list[Message]) -> Generator[Message, None, None]:
+def stream_response(messages: list[Message], model: str | None) -> Generator[Message, None, None]:
     response = litellm.completion(
-        model="openai/mimo-v2.5",
+        model="openai/" + model,
         messages=[m.to_dict() for m in messages],
         base_url="https://opencode.ai/zen/go/v1",
         stream=True,

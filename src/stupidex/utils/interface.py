@@ -1,6 +1,5 @@
 from textual.app import App
 from textual.widgets import RichLog, Static
-from stupidex.llm.models import listModels
 
 def rerender_footer(app: App) -> None:
     sessions = app.sessions
@@ -16,21 +15,15 @@ def rerender_footer(app: App) -> None:
     else:
         app.query_one("#status", Static).update("Context: 0 | Response: 0 | Total: 0")
         
-    if sessions.active.model:
-        app.query_one("#model", Static).update(f"{sessions.active.model}")
+    if app.model:
+        app.query_one("#model", Static).update(f"{app.model}")
     else:
-        app.query_one("#model", Static).update("No Model Selected")
+        app.query_one("#model", Static).update("No Model")
 
 def full_rerender(app: App) -> None:
     sessions = app.sessions
     if not sessions.active:
         return
-
-    # Auto-select model if none selected
-    if not sessions.active.model:
-        models = listModels()
-        if models:
-            sessions.active.model = models[0].id
 
     # Title
     app.query_one("#title", Static).update(sessions.active.name)

@@ -21,6 +21,10 @@ class BottomInputApp(App):
     def messages(self) -> list[Message]:
         return self.sessions.active.messages if self.sessions.active else []
     
+    @property
+    def model(self) -> str | None:
+        return self.sessions.active.model if self.sessions.active else None
+    
     def compose(self) -> ComposeResult:
         with Horizontal(id="header"):
             yield Static(self.sessions.active.name if self.sessions.active else "No Session", id="title")
@@ -28,7 +32,7 @@ class BottomInputApp(App):
         yield Input()
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
-            yield Static("No Model Selected", id="model")
+            yield Static("N/A Model", id="model")
             yield Static("Context: 0 | Response: 0 | Total: 0", id="status")
 
     def on_mount(self) -> None:
@@ -51,7 +55,7 @@ class BottomInputApp(App):
         self.run_worker(self._stream_response())
 
     async def _stream_response(self) -> None:
-        stream = stream_response(self.messages)
+        stream = stream_response(self.messages, self.model)
 
         thinking_msg = None
         content_msg = None

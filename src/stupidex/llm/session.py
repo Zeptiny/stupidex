@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 import uuid
+from stupidex.llm.models import listModels
 from .message import Message
 
 
@@ -9,7 +10,7 @@ class Session:
     name: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[Message] = field(default_factory=list)
-    model: str = None
+    model: str = field(default_factory=lambda: listModels()[0].id if listModels() else "mimo-v2.5")
 
 
 class SessionManager:
