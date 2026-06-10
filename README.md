@@ -22,22 +22,28 @@ The project uses the `src` layout:
 pyproject.toml
 src/
   stupidex/
-    main.py              # entry point (3 lines)
-    app.py               # Textual App class, UI lifecycle
-    main.tcss            # styles
-    domain/              # Plain Python scripts (No Textual, no Rich, Httpx) and are usable.
-      message.py         # Message, MessageRole, MessageType, Usage
-      session.py         # Session, SessionManager
+    main.py                    # entry point (3 lines)
+    app.py                     # Textual App class, UI lifecycle
+    main.tcss                  # styles
+    utils.py                   # Utility functions
+    domain/                    # Plain Python scripts (No Textual, no Rich, Httpx) and are usable.
+      message.py               # Message, MessageRole, MessageType, Usage
+      session.py               # Session, SessionManager
+      tool.py                  # Tool, ExecutorREsult and related classes
     llm/
-      client.py          # LLM streaming logic
-      models.py          # Model fetching
+      client.py                # LLM streaming logic
+      models.py                # Model fetching
+      dynamic_system_prompt.py # Dynamic system prompt generation
+      static_system_prompt.py  # Static system prompt provider
     screens/
-      session_picker.py  # session selection screen
-      model_picker.py    # model selection screen
+      session_picker.py        # session selection screen
+      model_picker.py          # model selection screen
     commands/
-      session_commands.py # slash commands provider
+      session_commands.py      # commands provider
+    tools/
+      file_manipulation.py     # Tools for file manipulation
     widgets/
-      message_display.py # Rich rendering for messages
+      message_display.py       # Rich rendering for messages
 ```
 
 
