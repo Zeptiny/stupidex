@@ -37,4 +37,7 @@ Input {
 
 #status {
     color: gray;
+    width: 1fr;
+    text-align: right;
+    margin-right: 2;
 }
