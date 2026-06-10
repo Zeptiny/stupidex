@@ -40,6 +40,7 @@ src/
 - Subagents (Configurable)
 - Not re-render the full history on each update
 - Default selected model (Last one selected, else first) - preserver between sessions / app close
+- Move to Textual Reactive
 
 # Needs fix
 - Input messages are not queued and can have multiple concurrent connections
