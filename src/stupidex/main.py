@@ -10,7 +10,7 @@ from .commands.commands import SessionCommands
 from .utils.interface import full_rerender
 
 
-class BottomInputApp(App):
+class Stupidex(App):
     CSS_PATH = "main.tcss"
     BINDINGS = [("ctrl+p", "command_palette", "Commands")]
     COMMANDS = {SessionCommands}
@@ -110,7 +110,7 @@ class BottomInputApp(App):
 
 
 def main():
-    app = BottomInputApp()
+    app = Stupidex()
     app.run()
 
 
