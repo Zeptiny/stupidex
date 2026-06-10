@@ -12,6 +12,8 @@ dependencies = [
     "httpx",
     "sys",
     "os",
+    "difflib",
+    "glob",
 ]
 
 [project.scripts]

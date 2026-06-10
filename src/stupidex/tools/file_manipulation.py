@@ -2,6 +2,7 @@ from stupidex.domain.tool import Tool, ToolParameter, ToolParameterProperties
 from stupidex.utils import directory_tree
 import glob as glob_module
 import os
+import difflib
 
 read_tool = Tool(
     name="read",
@@ -64,8 +65,6 @@ edit_tool = Tool(
     ),
 )
 
-# TODO: Show the edit diff
-
 
 def execute_edit_tool(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
     try:
@@ -83,7 +82,20 @@ def execute_edit_tool(file_path: str, old_string: str, new_string: str, replace_
         with open(file_path, "w") as f:
             f.write(new_content)
 
-        return f"File '{file_path}' edited successfully."
+        # Generate and show the diff
+        diff = difflib.unified_diff(
+            content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=f"old/{file_path}",
+            tofile=f"new/{file_path}",
+            lineterm=""
+        )
+        diff_text = "\n".join(diff)
+
+        result = f"File '{file_path}' edited successfully."
+        if diff_text:
+            result += f"\n\nDiff:\n{diff_text}"
+        return result
     except Exception as e:
         return f"Error editing file: {e}"
 
