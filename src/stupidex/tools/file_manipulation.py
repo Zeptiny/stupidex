@@ -1,6 +1,7 @@
 from stupidex.domain.tool import Tool, ToolParameter, ToolParameterProperties
 from stupidex.utils import directory_tree
-
+import glob as glob_module
+import os
 
 read_tool = Tool(
     name="read",
@@ -108,3 +109,56 @@ read_directory = Tool(
 
 def execute_read_directory_tool(directory_path: str, max_depth: int = 2) -> str:
     return directory_tree(path=directory_path, max_depth=max_depth)
+
+
+glob_tool = Tool(
+    name="glob",
+    description="Search for files matching a glob pattern in a directory and return their relative paths",
+    parameters=ToolParameter(
+        properties={
+            "directory_path": ToolParameterProperties(
+                type="string",
+                description="The directory to search in, relative to the current working directory"
+            ),
+            "pattern": ToolParameterProperties(
+                type="string",
+                description="The glob pattern to match file names (e.g., '*.py', '**/*.txt', 'src/**/*.py')"
+            ),
+            "include_hidden": ToolParameterProperties(
+                type="boolean",
+                description="Whether to include hidden files (starting with .) (default: false)"
+            ),
+        },
+        required=["directory_path", "pattern"]
+    ),
+)
+
+
+def execute_glob_tool(directory_path: str, pattern: str, include_hidden: bool = False) -> str:
+    try:
+        # Build the full pattern path
+        full_pattern = os.path.join(directory_path, pattern)
+
+        # Use glob to find matching files
+        matches = glob_module.glob(
+            full_pattern, recursive=True, include_hidden=include_hidden)
+
+        if not matches:
+            return f"No files found matching pattern '{pattern}' in '{directory_path}'."
+
+        # Convert to relative paths and sort
+        relative_paths = sorted(matches)
+
+        # Format output
+        result_lines = [
+            f"Found {len(relative_paths)} file(s) matching '{pattern}':"]
+        for path in relative_paths:
+            # Add trailing slash for directories
+            if os.path.isdir(path):
+                result_lines.append(f"{path}/")
+            else:
+                result_lines.append(path)
+
+        return "\n".join(result_lines)
+    except Exception as e:
+        return f"Error searching for files: {e}"
