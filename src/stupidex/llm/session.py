@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import uuid
 from stupidex.llm.models import listModels
-from .message import Message
+from stupidex.llm.message import Message
 
 
 @dataclass

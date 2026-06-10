@@ -3,11 +3,11 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.events import Resize
 from textual.widgets import Input, LoadingIndicator, RichLog, Static
-from .llm.handle_input import stream_response
-from .llm.message import Message, MessageRole, MessageType
-from .llm.session import SessionManager
-from .commands.commands import SessionCommands
-from .utils.interface import full_rerender
+from stupidex.llm.handle_input import stream_response
+from stupidex.llm.message import Message, MessageRole, MessageType
+from stupidex.llm.session import SessionManager
+from stupidex.commands.commands import SessionCommands
+from stupidex.utils.interface import full_rerender
 
 
 class Stupidex(App):

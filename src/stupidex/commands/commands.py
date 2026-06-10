@@ -4,8 +4,8 @@ from textual.screen import Screen
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 from stupidex.llm.models import Model, listModels
-from ..llm.session import Session
-from ..utils.interface import full_rerender, rerender_footer
+from stupidex.llm.session import Session
+from stupidex.utils.interface import full_rerender, rerender_footer
 
 
 class SessionPicker(Screen[str]):
