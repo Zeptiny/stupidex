@@ -1,12 +1,20 @@
 from collections.abc import Generator
+
 import litellm
+
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
+from stupidex.llm.static_system_prompt import build_static_system_prompt
+from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
 
 
 def stream_response(messages: list[Message], model: str | None) -> Generator[Message, None, None]:
+    api_messages = [build_static_system_prompt().to_dict()] + \
+        [m.to_dict() for m in messages] + \
+        [build_dynamic_system_prompt().to_dict()]
+
     response = litellm.completion(
         model="openai/" + model,
-        messages=[m.to_dict() for m in messages],
+        messages=api_messages,
         base_url="https://opencode.ai/zen/go/v1",
         stream=True,
         stream_options={"include_usage": True},
