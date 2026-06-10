@@ -28,25 +28,25 @@ class SessionCommands(Provider):
         match cmd:
             case "/new":
                 self.app.sessions.create()
-                self.app.rerender_all()
+                await self.app.rerender_all()
             case "/switch":
                 sessions = list(self.app.sessions.sessions.values())
 
-                def on_picked(result: str | None):
+                async def on_picked(result: str | None):
                     if result:
                         self.app.sessions.switch(result)
-                        self.app.rerender_all()
+                        await self.app.rerender_all()
 
                 self.app.push_screen(SessionPicker(sessions), on_picked)
             case "/delete":
                 sessions = list(self.app.sessions.sessions.values())
 
-                def on_picked(result: str | None):
+                async def on_picked(result: str | None):
                     if result:
                         self.app.sessions.delete(result)
                         if self.app.sessions.active is None:
                             self.app.sessions.create()
-                        self.app.rerender_all()
+                        await self.app.rerender_all()
 
                 self.app.push_screen(SessionPicker(sessions), on_picked)
             case "/model":

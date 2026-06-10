@@ -132,6 +132,14 @@ class Stupidex(App):
             widget = create_message_widget(msg)
             await container.mount(widget)
 
+    async def rerender_all(self) -> None:
+        if not self.sessions.active:
+            return
+
+        self.query_one("#title", Static).update(self.sessions.active.name)
+        await self.mount_all_messages()
+        self.rerender_footer()
+
     def rerender_footer(self) -> None:
         if not self.sessions.active:
             return
