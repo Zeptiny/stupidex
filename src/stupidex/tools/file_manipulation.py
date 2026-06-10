@@ -112,15 +112,19 @@ read_directory = Tool(
             "max_depth": ToolParameterProperties(
                 type="integer",
                 description="The max depth of the directory tree (Default 2)"
-            )
+            ),
+            "include_hidden": ToolParameterProperties(
+                type="boolean",
+                description="Whether to include hidden files and directories (starting with . or cache/builds/dist/envs/tooling directories) (default: false)"
+            ),
         },
         required=["directory_path"]
     ),
 )
 
 
-def execute_read_directory_tool(directory_path: str, max_depth: int = 2) -> str:
-    return directory_tree(path=directory_path, max_depth=max_depth)
+def execute_read_directory_tool(directory_path: str, max_depth: int = 2, include_hidden: bool = False) -> str:
+    return directory_tree(path=directory_path, max_depth=max_depth, include_hidden=include_hidden)
 
 
 glob_tool = Tool(

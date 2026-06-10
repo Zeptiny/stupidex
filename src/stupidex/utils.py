@@ -1,7 +1,17 @@
 import os
 
+IGNORED_DIRS = {
+    ".git", ".svn", ".hg",
+    "node_modules", "__pycache__",
+    "venv", ".venv", "env",
+    "dist", "build", "target",
+    ".idea", ".vscode", ".vs",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox",
+    ".eggs", "*.egg-info",
+}
 
-def directory_tree(path: str, max_depth: int, _depth: int = 0, _prefix: str = "") -> str:
+
+def directory_tree(path: str, max_depth: int, include_hidden: bool = False, _depth: int = 0, _prefix: str = "") -> str:
     if _depth >= max_depth:
         return ""
 
@@ -11,7 +21,9 @@ def directory_tree(path: str, max_depth: int, _depth: int = 0, _prefix: str = ""
     except PermissionError:
         return ""
 
-    entries = [e for e in entries if not e.startswith(".")]
+    if not include_hidden:
+        entries = [
+            e for e in entries if e not in IGNORED_DIRS or not e.startswith(("."))]
 
     for i, entry in enumerate(entries):
         full_path = os.path.join(path, entry)
@@ -21,7 +33,7 @@ def directory_tree(path: str, max_depth: int, _depth: int = 0, _prefix: str = ""
 
         if os.path.isdir(full_path):
             lines.append(f"{_prefix}{connector}{entry}/")
-            lines.append(directory_tree(full_path, max_depth,
+            lines.append(directory_tree(full_path, max_depth, include_hidden,
                          _depth + 1, _prefix + child_prefix))
         else:
             lines.append(f"{_prefix}{connector}{entry}")

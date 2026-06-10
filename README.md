@@ -60,6 +60,7 @@ src/
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
 - Session saving to disk
 - Default selected model (Last one selected, else first) - preserver between sessions / app close
+- Make IGNORED_DIRS configurable
 
 # Some ground rules
 - Absolute imports only
