@@ -43,6 +43,7 @@ src/
     tools/
       file_manipulation.py     # Tools for file manipulation
       search.py                # Tools for file searching (Currently grep)
+      exec.py                  # Executing tools (Currently command tool)
     widgets/
       message_widget.py        # Textual widgets for messages with streaming support
 ```
