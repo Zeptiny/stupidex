@@ -104,7 +104,7 @@ async def stream_response(
             if name not in filtered_tools:
                 result = ExecutorResult(
                     display=f"Unknown tool: {name}",
-                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools)}",
+                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools.keys())}",
                 )
             else:
                 executor = filtered_tools[name]["executor"]
