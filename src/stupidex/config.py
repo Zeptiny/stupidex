@@ -32,7 +32,7 @@ class Config:
         ".eggs", "*.egg-info",
     ])
     command_timeout: int = 30
-    read_line_limit: int = 100
+    read_line_limit: int = 1000
     grep_max_results: int = 100
     directory_tree_depth: int = 2
 
