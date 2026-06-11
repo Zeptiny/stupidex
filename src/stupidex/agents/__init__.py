@@ -14,7 +14,7 @@ general = Agent(
     "Always make modular and maintainable code."
     "Call subagents when you need to break down tasks",
     available_tools=["read", "read_directory", "glob",
-                     "grep", "edit", "write", "execute_command", "delegate_to_subagent"]
+                     "grep", "edit", "write", "execute_command", "delegate_to_subagent", "wait_for_subagent", "list_subagents"]
 )
 
 explorer = Agent(

@@ -27,6 +27,7 @@ src/
     main.tcss                  # styles
     utils.py                   # Utility functions
     agents/                    # Agent definitions
+      manager.py               # Subagent Manager
     domain/                    # Plain Python scripts (No Textual, no Rich, Httpx) and are usable.
       message.py               # Message, MessageRole, MessageType, Usage
       session.py               # Session, SessionManager
@@ -58,8 +59,7 @@ src/
 - Model Tiers (Similar to Claude Code - Haiku, Sonnet, Opus, Fabled)
 
 ## Subagents
-- Parallel / non-blocking subagents
-- View the subagent while working
+- Allow the user to view the subagents messages history while working
 
 ## Needs fix
 - Input messages are not queued and can have multiple concurrent connections

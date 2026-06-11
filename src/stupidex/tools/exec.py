@@ -1,9 +1,11 @@
-import subprocess
+import asyncio
+import shlex
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
+
 
 execute_command_tool = Tool(
     name="execute_command",
-    description="Execute a system command using subprocess.run and return the output",
+    description="Execute a system command using subprocess and return the output",
     parameters=ToolParameter(
         properties={
             "command": ToolParameterProperties(
@@ -32,33 +34,54 @@ execute_command_tool = Tool(
 )
 
 
-def execute_command(
+async def execute_command(
     command: str,
     description: str | None = None,
     working_directory: str = ".",
     timeout: int = 30,
     shell: bool = True,
 ) -> ExecutorResult:
-    """Execute a system command using subprocess.run."""
+    """Execute a system command using asyncio subprocess."""
     try:
-        result = subprocess.run(
-            command,
-            shell=shell,
-            cwd=working_directory,
-            timeout=timeout,
-            capture_output=True,
-            text=True,
-        )
+        if shell:
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=working_directory,
+            )
+        else:
+            args = shlex.split(command)
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=working_directory,
+            )
 
-        stdout = result.stdout.strip() if result.stdout else ""
-        stderr = result.stderr.strip() if result.stderr else ""
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            return ExecutorResult(
+                display=f"{description} - Timed out after {timeout} seconds",
+                content=f"Error: Command '{command}' timed out after {timeout} seconds.",
+            )
 
-        if result.returncode == 0:
+        stdout = stdout_bytes.decode(
+            "utf-8", errors="replace").strip() if stdout_bytes else ""
+        stderr = stderr_bytes.decode(
+            "utf-8", errors="replace").strip() if stderr_bytes else ""
+
+        if process.returncode == 0:
             output = stdout if stdout else "(no output)"
             if stderr:
                 output += f"\n\nStderr:\n{stderr}"
             return ExecutorResult(
-                display=f"{description} (exit code: {result.returncode})",
+                display=f"{description} (exit code: {process.returncode})",
                 content=output,
             )
         else:
@@ -70,15 +93,10 @@ def execute_command(
             if not output:
                 output = "(no output)"
             return ExecutorResult(
-                display=f"{description} (exit code: {result.returncode})",
+                display=f"{description} (exit code: {process.returncode})",
                 content=output,
             )
 
-    except subprocess.TimeoutExpired:
-        return ExecutorResult(
-            display=f"{description} - Timed out after {timeout} seconds",
-            content=f"Error: Command '{command}' timed out after {timeout} seconds.",
-        )
     except Exception as e:
         return ExecutorResult(
             display=f"{description} - Execution error",

@@ -1,5 +1,5 @@
 import json
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 import litellm
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.llm.static_system_prompt import build_static_system_prompt
@@ -8,16 +8,14 @@ from stupidex.domain.tool import ExecutorResult
 from stupidex.tools import TOOL_REGISTRY
 
 
-def stream_response(
+async def stream_response(
     messages: list[Message],
     model: str | None,
     available_tools: list[str],
     system_prompt: str,
-) -> Generator[Message, None, None]:
-    system_msg = Message(
-        role=MessageRole.SYSTEM, content=system_prompt, type=MessageType.TEXT,
-    )
-    api_messages = [build_static_system_prompt(system_msg).to_dict()] + \
+) -> AsyncGenerator[Message, None]:
+    system_msg = build_static_system_prompt(system_prompt)
+    api_messages = [system_msg.to_dict()] + \
         [m.to_dict() for m in messages] + \
         [build_dynamic_system_prompt().to_dict()]
 
@@ -26,8 +24,8 @@ def stream_response(
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
     while True:
-        response = litellm.completion(
-            model="openai/" + model,
+        response = await litellm.acompletion(
+            model="openai/" + (model or "mimo-v2.5"),
             messages=api_messages,
             tools=tools_list,
             base_url="https://opencode.ai/zen/go/v1",
@@ -40,7 +38,7 @@ def stream_response(
         tool_calls: list[dict] = []
         usage = None
 
-        for chunk in response:
+        async for chunk in response:
             delta = chunk.choices[0].delta
 
             if hasattr(delta, "reasoning_content") and delta.reasoning_content:
@@ -110,7 +108,7 @@ def stream_response(
                 )
             else:
                 executor = filtered_tools[name]["executor"]
-                result = executor(**args)
+                result = await executor(**args)
 
             # Yield a TOOL_RESULT message with the execution result
             yield Message(

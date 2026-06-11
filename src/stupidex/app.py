@@ -1,5 +1,3 @@
-import asyncio
-
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.widgets import Input, LoadingIndicator, Static
@@ -59,25 +57,17 @@ class Stupidex(App):
         self.run_worker(self._stream_response())
 
     async def _stream_response(self) -> None:
-        stream = stream_response(messages=self.messages, model=self.model,
-                                 available_tools=generalAgent.available_tools, system_prompt=generalAgent.system_prompt)
         container = self.query_one("#output", ScrollableContainer)
 
         thinking_widget: ThinkingMessageWidget | None = None
         content_widget: AssistantMessageWidget | None = None
 
-        loop = asyncio.get_event_loop()
-
-        def next_chunk():
-            try:
-                return next(stream)
-            except StopIteration:
-                return None
-
-        while True:
-            msg = await loop.run_in_executor(None, next_chunk)
-            if msg is None:
-                break
+        async for msg in stream_response(
+            messages=self.messages,
+            model=self.model,
+            available_tools=generalAgent.available_tools,
+            system_prompt=generalAgent.system_prompt,
+        ):
 
             if msg.type == MessageType.THINKING:
                 if thinking_widget is None:

@@ -1,5 +1,6 @@
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.widgets import Collapsible, Static
 
@@ -71,7 +72,7 @@ class ToolResultMessageWidget(Static):
     def compose(self) -> ComposeResult:
         display = self.msg.display if self.msg.display is not None else self.msg.content
         yield Collapsible(
-            Static(self.msg.content, classes="tool-result-content"),
+            Static(Text(self.msg.content), classes="tool-result-content"),
             title=display,
             collapsed=True,
             classes="tool-result-collapse",
