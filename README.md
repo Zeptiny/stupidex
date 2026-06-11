@@ -73,7 +73,6 @@ src/
 - Support for Anthropic API
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
 - Session saving to disk
-- Make IGNORED_DIRS configurable
 - Context and usage only being updated when the agent finishes it response
   - Also expands to not updating the footer for subagent viewing
 - Bug: Automatically scrolling down after a message is finished
