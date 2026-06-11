@@ -138,13 +138,22 @@ read_directory = Tool(
 
 
 async def execute_read_directory_tool(directory_path: str, max_depth: int = 2, include_hidden: bool = False) -> ExecutorResult:
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, lambda: directory_tree(
-            path=directory_path, max_depth=max_depth, include_hidden=include_hidden)
-    )
-    return ExecutorResult(display=f"Read directory {directory_path}", content=result)
-
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: directory_tree(
+                path=directory_path,
+                max_depth=max_depth,
+                include_hidden=include_hidden,
+            ),
+        )
+        return ExecutorResult(display=f"Read directory {directory_path}", content=result)
+    except Exception as e:
+        return ExecutorResult(
+            display=f"Read directory error {directory_path}",
+            content=f"Error reading directory {directory_path}: {e}",
+        )
 
 glob_tool = Tool(
     name="glob",
@@ -188,7 +197,8 @@ async def execute_glob_tool(directory_path: str, pattern: str, include_hidden: b
         # Convert to relative paths and sort
         relative_paths = sorted(matches)
 
-        result_lines = [f"Found {len(relative_paths)} file(s) matching '{pattern}':"]
+        result_lines = [
+            f"Found {len(relative_paths)} file(s) matching '{pattern}':"]
         for path in relative_paths:
             if os.path.isdir(path):
                 result_lines.append(f"{path}/")
