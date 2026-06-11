@@ -118,7 +118,7 @@ list_subagents = Tool(
 )
 
 
-def execute_list_subagents() -> ExecutorResult:
+async def execute_list_subagents() -> ExecutorResult:
     states = subagent_manager.get_states()
 
     if not states:
