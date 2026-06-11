@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import uuid
 from stupidex.domain.message import Message
+from stupidex.agents.manager import SubagentManager
 
 
 @dataclass
@@ -10,6 +11,7 @@ class Session:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[Message] = field(default_factory=list)
     model: str | None = None
+    subagent_manager: SubagentManager = field(default_factory=SubagentManager)
 
 
 class SessionManager:
@@ -32,6 +34,8 @@ class SessionManager:
 
     def delete(self, id: str) -> bool:
         if id in self.sessions:
+            session = self.sessions[id]
+            session.subagent_manager.cancel_all()
             del self.sessions[id]
             if self.active and self.active.id == id:
                 self.active = None

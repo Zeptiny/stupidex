@@ -1,7 +1,9 @@
+import asyncio
 import os
 import re
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.utils import IGNORED_DIRS
+import aiofiles
 
 grep_tool = Tool(
     name="grep",
@@ -34,11 +36,11 @@ grep_tool = Tool(
 )
 
 
-def _is_binary(file_path: str) -> bool:
+async def _is_binary(file_path: str) -> bool:
     """Check if a file is binary by reading a small chunk."""
     try:
-        with open(file_path, "rb") as f:
-            chunk = f.read(8192)
+        async with aiofiles.open(file_path, "rb") as f:
+            chunk = await f.read(8192)
             return b"\0" in chunk
     except OSError:
         return True
@@ -53,7 +55,7 @@ def _should_skip_dir(dirname: str) -> bool:
     return False
 
 
-def execute_grep_tool(
+async def execute_grep_tool(
     pattern: str,
     directory_path: str,
     include_pattern: str | None = None,
@@ -86,42 +88,44 @@ def execute_grep_tool(
             file_regex = re.compile(f"^{glob_regex}$", re.IGNORECASE)
 
         results: list[str] = []
-        files_searched = 0
         total_matches = 0
 
-        for root, dirs, files in os.walk(base_path):
-            # Prune ignored directories in-place so os.walk skips them
-            dirs[:] = [d for d in dirs if not _should_skip_dir(d)]
+        # Collect all file paths using os.walk (blocking) in executor
+        def _collect_files():
+            collected = []
+            for root, dirs, files in os.walk(base_path):
+                dirs[:] = [d for d in dirs if not _should_skip_dir(d)]
+                for filename in sorted(files):
+                    if file_regex and not file_regex.match(filename):
+                        continue
+                    collected.append(os.path.join(root, filename))
+            return collected
 
-            for filename in sorted(files):
-                if total_matches >= max_results:
-                    break
+        loop = asyncio.get_event_loop()
+        file_paths = await loop.run_in_executor(None, _collect_files)
 
-                # Filter by include pattern
-                if file_regex and not file_regex.match(filename):
-                    continue
-
-                file_path = os.path.join(root, filename)
-
-                # Skip binary files
-                if _is_binary(file_path):
-                    continue
-
-                try:
-                    relative_path = os.path.relpath(file_path, base_path)
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        for line_num, line in enumerate(f, 1):
-                            if regex.search(line):
-                                results.append(f"{relative_path}:{line_num}: {line.rstrip()}")
-                                total_matches += 1
-                                if total_matches >= max_results:
-                                    break
-                except (PermissionError, OSError):
-                    continue
-
-            files_searched += 1
+        for file_path in file_paths:
             if total_matches >= max_results:
                 break
+
+            # Skip binary files
+            if await _is_binary(file_path):
+                continue
+
+            try:
+                relative_path = os.path.relpath(file_path, base_path)
+                async with aiofiles.open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    line_num = 0
+                    async for line in f:
+                        line_num += 1
+                        if regex.search(line):
+                            results.append(
+                                f"{relative_path}:{line_num}: {line.rstrip()}")
+                            total_matches += 1
+                            if total_matches >= max_results:
+                                break
+            except (PermissionError, OSError):
+                continue
 
         if not results:
             return ExecutorResult(
@@ -129,7 +133,8 @@ def execute_grep_tool(
                 content=f"No matches found for pattern '{pattern}' in '{directory_path}'.",
             )
 
-        output_lines = [f"Found {total_matches} match(es) for pattern '{pattern}':"]
+        output_lines = [
+            f"Found {total_matches} match(es) for pattern '{pattern}':"]
         output_lines.extend(results)
 
         if total_matches >= max_results:

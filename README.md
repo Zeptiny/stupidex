@@ -26,6 +26,8 @@ src/
     app.py                     # Textual App class, UI lifecycle
     main.tcss                  # styles
     utils.py                   # Utility functions
+    agents/                    # Agent definitions
+      manager.py               # Subagent Manager
     domain/                    # Plain Python scripts (No Textual, no Rich, Httpx) and are usable.
       message.py               # Message, MessageRole, MessageType, Usage
       session.py               # Session, SessionManager
@@ -50,10 +52,22 @@ src/
 
 
 # TODO - In priority order
+- Todo management tool
 - Provider selector
 - Subagents
 - Configuration file
 - MCP 
+- Model Tiers (Similar to Claude Code - Haiku, Sonnet, Opus, Fabled)
+- Interrupt agent during streaming
+  - How to handle subagents in this case?
+- Skills
+- LSP
+- Approval / permission system
+- Concurrency control for file locking
+
+## Subagents
+- Allow for the main agent to interrupt/cancel subagents
+- BTW/Side agent (Ask a question without interrupting the main flow)
 
 ## Needs fix
 - Input messages are not queued and can have multiple concurrent connections
@@ -65,11 +79,22 @@ src/
 - Default selected model (Last one selected, else first) - preserve between sessions / app close
 - Make IGNORED_DIRS configurable
 - Context and usage only being updated when the agent finishes it response
+  - Also expands to not updating the footer for subagent viewing
 - Bug: Automatically scrolling down after a message is finished
 - Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded - currently commented
   - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response
   - Show the TOOL_CALL while the agent is writing the tool (Or in a similar way)
+- Multiple main agent types (General, plan, etc.) that can be switched during the conversation
+- Fuzzy matching on edit tool
+- Resolve supplied path in tool to avoid modifing/reading files out of the workspace
+  - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
+- Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
+
+# Considerations
+- Also make the read tool usable with directories?
+- Remove the list_subagents tool?
 
 
 # Some ground rules
 - Absolute imports only
+- Domain driven structure

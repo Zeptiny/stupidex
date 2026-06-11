@@ -1,9 +1,9 @@
 import os
 from datetime import datetime
+from xml.sax.saxutils import escape
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.utils import directory_tree
-
-# TODO: Improve this bullshit prompt
+from stupidex.agents.manager import get_subagent_manager
 
 
 def build_dynamic_system_prompt() -> Message:
@@ -18,11 +18,21 @@ def build_dynamic_system_prompt() -> Message:
 </directory_structure>
 """
 
+    subagent_manager = get_subagent_manager()
+    states = subagent_manager.get_states()
+    if states:
+        parts = []
+        for s in states:
+            e = escape
+            attrs = f'id="{e(s["id"])}" name="{e(s["name"])}" type="{e(s["type"])}" state="{e(s["state"])}" elapsed="{s["elapsed"]}s"'
+            task_block = f"<task>\n{e(s['task'])}\n</task>" if s.get(
+                "task") else ""
+            parts.append(
+                f'  <subagent {attrs}>\n  {task_block}\n  </subagent>')
+        content += "\n<subagents>\n" + "\n".join(parts) + "\n</subagents>\n"
+
     return Message(
         role=MessageRole.SYSTEM,
         content=content,
         type=MessageType.TEXT,
     )
-
-
-

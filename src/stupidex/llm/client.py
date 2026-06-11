@@ -1,8 +1,6 @@
 import json
-from collections.abc import Generator
-
+from collections.abc import AsyncGenerator
 import litellm
-
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
@@ -10,16 +8,24 @@ from stupidex.domain.tool import ExecutorResult
 from stupidex.tools import TOOL_REGISTRY
 
 
-def stream_response(messages: list[Message], model: str | None) -> Generator[Message, None, None]:
-    api_messages = [build_static_system_prompt().to_dict()] + \
+async def stream_response(
+    messages: list[Message],
+    model: str | None,
+    available_tools: list[str],
+    system_prompt: str,
+) -> AsyncGenerator[Message, None]:
+    system_msg = build_static_system_prompt(system_prompt)
+    api_messages = [system_msg.to_dict()] + \
         [m.to_dict() for m in messages] + \
         [build_dynamic_system_prompt().to_dict()]
 
-    tools_list = [entry["tool"].to_dict() for entry in TOOL_REGISTRY.values()]
+    filtered_tools = {k: v for k, v in TOOL_REGISTRY.items()
+                      if k in available_tools}
+    tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
     while True:
-        response = litellm.completion(
-            model="openai/" + model,
+        response = await litellm.acompletion(
+            model="openai/" + (model or "mimo-v2.5"),
             messages=api_messages,
             tools=tools_list,
             base_url="https://opencode.ai/zen/go/v1",
@@ -32,7 +38,7 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
         tool_calls: list[dict] = []
         usage = None
 
-        for chunk in response:
+        async for chunk in response:
             delta = chunk.choices[0].delta
 
             if hasattr(delta, "reasoning_content") and delta.reasoning_content:
@@ -85,23 +91,24 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
             args = json.loads(tc["function"]["arguments"])
 
             # Yield a TOOL_CALL message to show what tool is being called
-            # TODO: Not much use yet as it only shows after the agent finished writing the tool call, 
+            # TODO: Not much use yet as it only shows after the agent finished writing the tool call,
             # if we can update to show while its writing it would improve the responsiveness (Ex: large file writes)
-            # yield Message(
-            #     role=MessageRole.ASSISTANT,
-            #     content=f"Calling tool: {name}",
-            #     type=MessageType.TOOL_CALL,
-            #     metadata={"tool_name": name, "tool_args": args},
-            # )
+            # Currently uncommented because of subagents
+            yield Message(
+                role=MessageRole.ASSISTANT,
+                content=f"Calling tool: {name}",
+                type=MessageType.TOOL_CALL,
+                metadata={"tool_name": name, "tool_args": args},
+            )
 
-            if name not in TOOL_REGISTRY:
+            if name not in filtered_tools:
                 result = ExecutorResult(
                     display=f"Unknown tool: {name}",
-                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(TOOL_REGISTRY)}",
+                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools.keys())}",
                 )
             else:
-                executor = TOOL_REGISTRY[name]["executor"]
-                result = executor(**args)
+                executor = filtered_tools[name]["executor"]
+                result = await executor(**args)
 
             # Yield a TOOL_RESULT message with the execution result
             yield Message(
