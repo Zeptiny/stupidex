@@ -70,19 +70,20 @@ class SubagentManager:
                 record.async_task.cancel()
         self.on_spawn = None
 
-    async def spawn(self, name: str, task: str, agent_type: str, model: str = "mimo-v2.5") -> SubagentRecord:
+    async def spawn(self, name: str, task: str, agent_type: str, model: str | None = None) -> SubagentRecord:
         """Spawn a subagent as an asyncio task. Returns the record immediately."""
         # Lazy imports to avoid circular dependency
         from stupidex.llm.client import stream_response
         from stupidex.domain.message import Message, MessageRole, MessageType
-        from stupidex.agents import AGENT_REGISTRY
+        from stupidex.agents import get_agent_registry
 
-        if agent_type not in AGENT_REGISTRY:
+        registry = get_agent_registry()
+        if agent_type not in registry:
             raise ValueError(
-                f"Unknown agent type: {agent_type}. Available: {', '.join(AGENT_REGISTRY.keys())}"
+                f"Unknown agent type: {agent_type}. Available: {', '.join(registry.keys())}"
             )
 
-        agent = AGENT_REGISTRY[agent_type]
+        agent = registry[agent_type]
         subagent_id = uuid.uuid4().hex[:12]
 
         record = SubagentRecord(

@@ -1,54 +1,85 @@
 import time
 from xml.sax.saxutils import escape
 
+from stupidex.config import get_model_for_tier
+from stupidex.domain.agent import ModelTier, TIER_DESCRIPTIONS
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
-from stupidex.agents import AGENT_REGISTRY, AgentTypes
+from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import get_subagent_manager
-
-_agent_options = "\n".join(
-    f"- {name}: {agent.description} (tools: {', '.join(agent.available_tools)})"
-    for name, agent in AGENT_REGISTRY.items() if agent.type == AgentTypes.SUBAGENT)
-
-delegate_to_subagent = Tool(
-    name="delegate_to_subagent",
-    description="Delegate a task to a subagent. Subagents do not share context and must be given explicit instructions.",
-    parameters=ToolParameter(
-        properties={
-            "name": ToolParameterProperties(
-                type="string",
-                description="A descriptive name for this subagent instance"
-            ),
-            "task": ToolParameterProperties(
-                type="string",
-                description="The subagent task with detailed instructions"
-            ),
-            "type": ToolParameterProperties(
-                type="string",
-                description=f"The agent type. Available types:\n{_agent_options}"
-            ),
-            "model": ToolParameterProperties(
-                type="string",
-                description="The model to use for the subagent, default mimo-v2.5"
-            ),
-        },
-        required=["name", "task", "type"]
-    ),
-)
+from stupidex.domain.agent import AgentTypes
 
 
-async def execute_delegate_to_subagent(name: str, task: str, type: str, model: str = "mimo-v2.5") -> ExecutorResult:
-    if type not in AGENT_REGISTRY:
-        available = ", ".join(AGENT_REGISTRY.keys())
+def build_delegate_tool() -> Tool:
+    registry = get_agent_registry()
+    agent_lines = "\n".join(
+        f"- {name} [{agent.tier.value}]: {agent.description}"
+        for name, agent in registry.items() if agent.type == AgentTypes.SUBAGENT
+    )
+    tier_lines = "\n".join(
+        f"- {tier.value}: {desc}"
+        for tier, desc in TIER_DESCRIPTIONS.items()
+    )
+    return Tool(
+        name="delegate_to_subagent",
+        description="Delegate a task to a subagent. Subagents do not share context and must be given explicit instructions.",
+        parameters=ToolParameter(
+            properties={
+                "name": ToolParameterProperties(
+                    type="string",
+                    description="A descriptive name for this subagent instance"
+                ),
+                "task": ToolParameterProperties(
+                    type="string",
+                    description="The subagent task with detailed instructions"
+                ),
+                "type": ToolParameterProperties(
+                    type="string",
+                    description=f"The agent type to delegate to. Available agents:\n{agent_lines}"
+                ),
+                "tier": ToolParameterProperties(
+                    type="string",
+                    description=(
+                        f"Override the agent's default model tier. "
+                        f"The tier determines which model is used for this task. "
+                        f"If omitted, the agent's predefined tier is used.\n\n"
+                        f"Available tiers (from fastest to most capable):\n{tier_lines}"
+                    )
+                ),
+            },
+            required=["name", "task", "type"]
+        ),
+    )
+
+
+async def execute_delegate_to_subagent(name: str, task: str, type: str, tier: str | None = None) -> ExecutorResult:
+    registry = get_agent_registry()
+    if type not in registry:
+        available = ", ".join(registry.keys())
         return ExecutorResult(
             display=f"Unknown agent type: {type}",
             content=f"Error: agent type '{type}' does not exist. Available agents: {available}",
         )
 
+    agent = registry[type]
+
+    if tier is not None:
+        try:
+            resolved_tier = ModelTier.from_str(tier)
+        except ValueError:
+            valid = ", ".join(t.value for t in ModelTier)
+            return ExecutorResult(
+                display=f"Invalid tier: {tier}",
+                content=f"Error: tier '{tier}' is not valid. Available tiers: {valid}",
+            )
+    else:
+        resolved_tier = agent.tier
+
+    model = get_model_for_tier(resolved_tier.value)
     record = await get_subagent_manager().spawn(name, task, type, model)
 
     return ExecutorResult(
-        display=f"Subagent '{name}' spawned (id: {record.id})",
-        content=f'<subagent id="{escape(record.id)}" name="{escape(name)}" type="{escape(type)}" state="pending">\n<task>\n{escape(task)}\n</task>\n</subagent>',
+        display=f"Subagent '{name}' spawned (id: {record.id}, tier: {resolved_tier.value})",
+        content=f'<subagent id="{escape(record.id)}" name="{escape(name)}" type="{escape(type)}" tier="{escape(resolved_tier.value)}" state="pending">\n<task>\n{escape(task)}\n</task>\n</subagent>',
     )
 
 

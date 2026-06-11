@@ -1,14 +1,5 @@
 import os
-
-IGNORED_DIRS = {
-    ".git", ".svn", ".hg",
-    "node_modules", "__pycache__",
-    "venv", ".venv", "env",
-    "dist", "build", "target",
-    ".idea", ".vscode", ".vs",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox",
-    ".eggs", "*.egg-info",
-}
+from stupidex.config import get_config
 
 
 def directory_tree(path: str, max_depth: int, include_hidden: bool = False, _depth: int = 0, _prefix: str = "") -> str:
@@ -21,9 +12,10 @@ def directory_tree(path: str, max_depth: int, include_hidden: bool = False, _dep
     except PermissionError:
         return ""
 
+    ignored = set(get_config().ignored_dirs)
     if not include_hidden:
         entries = [
-            e for e in entries if e not in IGNORED_DIRS or not e.startswith(("."))]
+            e for e in entries if e not in ignored or not e.startswith(("."))]
 
     for i, entry in enumerate(entries):
         full_path = os.path.join(path, entry)

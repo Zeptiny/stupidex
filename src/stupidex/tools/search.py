@@ -1,8 +1,8 @@
 import asyncio
 import os
 import re
+from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
-from stupidex.utils import IGNORED_DIRS
 import aiofiles
 
 grep_tool = Tool(
@@ -47,8 +47,9 @@ async def _is_binary(file_path: str) -> bool:
 
 
 def _should_skip_dir(dirname: str) -> bool:
-    """Check if a directory should be skipped based on IGNORED_DIRS rules."""
-    if dirname in IGNORED_DIRS:
+    """Check if a directory should be skipped based on ignored_dirs config."""
+    ignored = set(get_config().ignored_dirs)
+    if dirname in ignored:
         return True
     if dirname.startswith("."):
         return True
@@ -60,9 +61,11 @@ async def execute_grep_tool(
     directory_path: str,
     include_pattern: str | None = None,
     case_insensitive: bool = False,
-    max_results: int = 100,
+    max_results: int | None = None,
 ) -> ExecutorResult:
     """Search for a pattern in files within a directory."""
+    if max_results is None:
+        max_results = get_config().grep_max_results
     try:
         flags = re.IGNORECASE if case_insensitive else 0
         try:

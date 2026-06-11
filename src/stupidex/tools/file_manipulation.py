@@ -4,6 +4,7 @@ import difflib
 import glob as glob_module
 from pathlib import Path
 import aiofiles
+from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.utils import directory_tree
 
@@ -30,7 +31,9 @@ read_tool = Tool(
 )
 
 
-async def execute_read_tool(file_path: str, offset: int = 1, limit: int = 100) -> ExecutorResult:
+async def execute_read_tool(file_path: str, offset: int = 1, limit: int | None = None) -> ExecutorResult:
+    if limit is None:
+        limit = get_config().read_line_limit
     try:
         async with aiofiles.open(file_path, "r") as f:
             lines = await f.readlines()
@@ -137,7 +140,9 @@ read_directory = Tool(
 )
 
 
-async def execute_read_directory_tool(directory_path: str, max_depth: int = 2, include_hidden: bool = False) -> ExecutorResult:
+async def execute_read_directory_tool(directory_path: str, max_depth: int | None = None, include_hidden: bool = False) -> ExecutorResult:
+    if max_depth is None:
+        max_depth = get_config().directory_tree_depth
     try:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(

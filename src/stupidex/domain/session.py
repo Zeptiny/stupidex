@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 import uuid
+from stupidex.config import get_config
 from stupidex.domain.message import Message
 from stupidex.agents.manager import SubagentManager
 
@@ -20,8 +21,11 @@ class SessionManager:
         self.active: Session | None = None
 
     def create(self) -> Session:
-        session = Session(name=datetime.now().strftime(
-            "Session %Y-%m-%d %H:%M:%S"))
+        cfg = get_config()
+        session = Session(
+            name=datetime.now().strftime("Session %Y-%m-%d %H:%M:%S"),
+            model=cfg.default_model,
+        )
         self.sessions[session.id] = session
         self.active = session
         return session

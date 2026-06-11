@@ -1,14 +1,16 @@
 import os
 from datetime import datetime
 from xml.sax.saxutils import escape
+from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.utils import directory_tree
 from stupidex.agents.manager import get_subagent_manager
 
 
 def build_dynamic_system_prompt() -> Message:
+    cfg = get_config()
     cwd = os.getcwd()
-    tree = directory_tree(cwd, max_depth=2)
+    tree = directory_tree(cwd, max_depth=cfg.directory_tree_depth)
 
     content = f"""
 <current_time>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</current_time>
