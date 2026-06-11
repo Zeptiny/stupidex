@@ -15,6 +15,7 @@ from stupidex.widgets.message_widget import (
     ToolResultMessageWidget,
     create_message_widget,
 )
+from stupidex.agents import general as generalAgent
 
 
 class Stupidex(App):
@@ -58,7 +59,8 @@ class Stupidex(App):
         self.run_worker(self._stream_response())
 
     async def _stream_response(self) -> None:
-        stream = stream_response(self.messages, self.model)
+        stream = stream_response(messages=self.messages, model=self.model,
+                                 available_tools=generalAgent.available_tools, system_prompt=generalAgent.system_prompt)
         container = self.query_one("#output", ScrollableContainer)
 
         thinking_widget: ThinkingMessageWidget | None = None

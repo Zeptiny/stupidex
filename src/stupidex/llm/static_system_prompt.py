@@ -1,21 +1,11 @@
 from stupidex.domain.message import Message, MessageRole, MessageType
 import platform
 
-# TODO: Improve this bullshit prompt
-# Tools definition will be included here when they are added
 
-
-def build_static_system_prompt() -> Message:
+def build_static_system_prompt(system_prompt: str) -> Message:
     content = f"""
     <instructions>
-    You are running inside Stupidex, a terminal-based coding assistant.
-    You are a coding agent designed to help users with coding tasks. 
-    You can understand and write code in various programming languages, debug code, and provide explanations for coding concepts. 
-    Always provide clear and concise answers, and if you don't know something, say so.
-    Always search the codebase before doing any mutating change or implementation.
-    Follow the best practices of the coding language being used on the codebase.
-    Follow the standards and patterns defined in the codabase.
-    Always make modular and maintainable code.
+    {system_prompt}
     </instructions>
     
     <user_operating_system>{_get_os_info()}</user_operating_system>

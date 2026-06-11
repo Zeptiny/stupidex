@@ -11,21 +11,19 @@ from stupidex.tools import TOOL_REGISTRY
 def stream_response(
     messages: list[Message],
     model: str | None,
-    tools: dict[str, dict] | None = None,
-    system_prompt: str | None = None,
+    available_tools: list[str],
+    system_prompt: str,
 ) -> Generator[Message, None, None]:
-    if system_prompt is not None:
-        system_msg = Message(
-            role=MessageRole.SYSTEM, content=system_prompt, type=MessageType.TEXT,
-        )
-        api_messages = [system_msg.to_dict()] + [m.to_dict() for m in messages]
-    else:
-        api_messages = [build_static_system_prompt().to_dict()] + \
-            [m.to_dict() for m in messages] + \
-            [build_dynamic_system_prompt().to_dict()]
+    system_msg = Message(
+        role=MessageRole.SYSTEM, content=system_prompt, type=MessageType.TEXT,
+    )
+    api_messages = [build_static_system_prompt(system_msg).to_dict()] + \
+        [m.to_dict() for m in messages] + \
+        [build_dynamic_system_prompt().to_dict()]
 
-    tool_registry = tools if tools is not None else TOOL_REGISTRY
-    tools_list = [entry["tool"].to_dict() for entry in tool_registry.values()]
+    filtered_tools = {k: v for k, v in TOOL_REGISTRY.items()
+                      if k in available_tools}
+    tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
     while True:
         response = litellm.completion(
@@ -105,13 +103,13 @@ def stream_response(
                 metadata={"tool_name": name, "tool_args": args},
             )
 
-            if name not in tool_registry:
+            if name not in filtered_tools:
                 result = ExecutorResult(
                     display=f"Unknown tool: {name}",
-                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(tool_registry)}",
+                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools)}",
                 )
             else:
-                executor = tool_registry[name]["executor"]
+                executor = filtered_tools[name]["executor"]
                 result = executor(**args)
 
             # Yield a TOOL_RESULT message with the execution result

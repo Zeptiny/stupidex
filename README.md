@@ -74,6 +74,7 @@ src/
 - Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded - currently commented
   - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response
   - Show the TOOL_CALL while the agent is writing the tool (Or in a similar way)
+- Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 
 
 # Some ground rules
