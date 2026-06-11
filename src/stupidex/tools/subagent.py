@@ -1,4 +1,5 @@
 import time
+from xml.sax.saxutils import escape
 
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.agents import AGENT_REGISTRY, AgentTypes
@@ -47,7 +48,7 @@ async def execute_delegate_to_subagent(name: str, task: str, type: str, model: s
 
     return ExecutorResult(
         display=f"Subagent '{name}' spawned (id: {subagent_id})",
-        content=f'<subagent id="{subagent_id}" name="{name}" type="{type}" state="pending">\n<task>\n{task}\n</task>\n</subagent>',
+        content=f'<subagent id="{escape(subagent_id)}" name="{escape(name)}" type="{escape(type)}" state="pending">\n<task>\n{escape(task)}\n</task>\n</subagent>',
     )
 
 
@@ -85,14 +86,15 @@ async def execute_wait_for_subagent(subagent_ids: list[str]) -> ExecutorResult:
         elif record.start_time:
             elapsed = round(time.time() - record.start_time, 1)
 
-        attrs = f'id="{sid}" name="{record.name}" type="{record.type}" state="{status}" elapsed="{elapsed}s"'
-        task_block = f"<task>\n{record.task}\n</task>" if record.task else ""
+        e = escape  # shorthand
+        attrs = f'id="{e(sid)}" name="{e(record.name)}" type="{e(record.type)}" state="{e(status)}" elapsed="{elapsed}s"'
+        task_block = f"<task>\n{e(record.task)}\n</task>" if record.task else ""
         if record.result:
             parts.append(
-                f'<subagent {attrs}>\n{task_block}\n<result>\n{record.result}\n</result>\n</subagent>')
+                f'<subagent {attrs}>\n{task_block}\n<result>\n{e(record.result)}\n</result>\n</subagent>')
         elif record.error:
             parts.append(
-                f'<subagent {attrs}>\n{task_block}\n<error>\n{record.error}\n</error>\n</subagent>')
+                f'<subagent {attrs}>\n{task_block}\n<error>\n{e(record.error)}\n</error>\n</subagent>')
         else:
             parts.append(f'<subagent {attrs}>\n{task_block}\n</subagent>')
 
@@ -100,7 +102,7 @@ async def execute_wait_for_subagent(subagent_ids: list[str]) -> ExecutorResult:
     missing = [sid for sid in subagent_ids if sid not in found_ids]
     missing_block = ""
     if missing:
-        missing_block = f'\n<not_found>{", ".join(missing)}</not_found>'
+        missing_block = f'\n<not_found>{", ".join(escape(sid) for sid in missing)}</not_found>'
 
     content = "<subagents>\n" + \
         "\n".join(parts) + f"\n</subagents>{missing_block}"
@@ -126,8 +128,9 @@ async def execute_list_subagents() -> ExecutorResult:
 
     parts = []
     for s in states:
-        attrs = f'id="{s["id"]}" name="{s["name"]}" type="{s["type"]}" state="{s["state"]}" elapsed="{s["elapsed"]}s"'
-        task_block = f"<task>\n{s['task']}\n</task>" if s.get("task") else ""
+        e = escape
+        attrs = f'id="{e(s["id"])}" name="{e(s["name"])}" type="{e(s["type"])}" state="{e(s["state"])}" elapsed="{s["elapsed"]}s"'
+        task_block = f"<task>\n{e(s['task'])}\n</task>" if s.get("task") else ""
         parts.append(f'<subagent {attrs}>\n{task_block}\n</subagent>')
 
     return ExecutorResult(

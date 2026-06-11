@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from xml.sax.saxutils import escape
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.utils import directory_tree
 from stupidex.agents.manager import get_subagent_manager
@@ -22,8 +23,9 @@ def build_dynamic_system_prompt() -> Message:
     if states:
         parts = []
         for s in states:
-            attrs = f'id="{s["id"]}" name="{s["name"]}" type="{s["type"]}" state="{s["state"]}" elapsed="{s["elapsed"]}s"'
-            task_block = f"<task>\n{s['task']}\n</task>" if s.get(
+            e = escape
+            attrs = f'id="{e(s["id"])}" name="{e(s["name"])}" type="{e(s["type"])}" state="{e(s["state"])}" elapsed="{s["elapsed"]}s"'
+            task_block = f"<task>\n{e(s['task'])}\n</task>" if s.get(
                 "task") else ""
             parts.append(
                 f'  <subagent {attrs}>\n  {task_block}\n  </subagent>')
