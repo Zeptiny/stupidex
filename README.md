@@ -54,6 +54,11 @@ src/
 - Subagents
 - Configuration file
 - MCP 
+- Model Tiers (Similar to Claude Code - Haiku, Sonnet, Opus, Fabled)
+
+## Subagents
+- Parallel / non-blocking subagents
+- View the subagent while working
 
 ## Needs fix
 - Input messages are not queued and can have multiple concurrent connections

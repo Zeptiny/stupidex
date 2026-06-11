@@ -1,8 +1,6 @@
 import json
 from collections.abc import Generator
-
 import litellm
-
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
@@ -10,12 +8,24 @@ from stupidex.domain.tool import ExecutorResult
 from stupidex.tools import TOOL_REGISTRY
 
 
-def stream_response(messages: list[Message], model: str | None) -> Generator[Message, None, None]:
-    api_messages = [build_static_system_prompt().to_dict()] + \
-        [m.to_dict() for m in messages] + \
-        [build_dynamic_system_prompt().to_dict()]
+def stream_response(
+    messages: list[Message],
+    model: str | None,
+    tools: dict[str, dict] | None = None,
+    system_prompt: str | None = None,
+) -> Generator[Message, None, None]:
+    if system_prompt is not None:
+        system_msg = Message(
+            role=MessageRole.SYSTEM, content=system_prompt, type=MessageType.TEXT,
+        )
+        api_messages = [system_msg.to_dict()] + [m.to_dict() for m in messages]
+    else:
+        api_messages = [build_static_system_prompt().to_dict()] + \
+            [m.to_dict() for m in messages] + \
+            [build_dynamic_system_prompt().to_dict()]
 
-    tools_list = [entry["tool"].to_dict() for entry in TOOL_REGISTRY.values()]
+    tool_registry = tools if tools is not None else TOOL_REGISTRY
+    tools_list = [entry["tool"].to_dict() for entry in tool_registry.values()]
 
     while True:
         response = litellm.completion(
@@ -85,22 +95,23 @@ def stream_response(messages: list[Message], model: str | None) -> Generator[Mes
             args = json.loads(tc["function"]["arguments"])
 
             # Yield a TOOL_CALL message to show what tool is being called
-            # TODO: Not much use yet as it only shows after the agent finished writing the tool call, 
+            # TODO: Not much use yet as it only shows after the agent finished writing the tool call,
             # if we can update to show while its writing it would improve the responsiveness (Ex: large file writes)
-            # yield Message(
-            #     role=MessageRole.ASSISTANT,
-            #     content=f"Calling tool: {name}",
-            #     type=MessageType.TOOL_CALL,
-            #     metadata={"tool_name": name, "tool_args": args},
-            # )
+            # Currently uncommented because of subagents
+            yield Message(
+                role=MessageRole.ASSISTANT,
+                content=f"Calling tool: {name}",
+                type=MessageType.TOOL_CALL,
+                metadata={"tool_name": name, "tool_args": args},
+            )
 
-            if name not in TOOL_REGISTRY:
+            if name not in tool_registry:
                 result = ExecutorResult(
                     display=f"Unknown tool: {name}",
-                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(TOOL_REGISTRY)}",
+                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(tool_registry)}",
                 )
             else:
-                executor = TOOL_REGISTRY[name]["executor"]
+                executor = tool_registry[name]["executor"]
                 result = executor(**args)
 
             # Yield a TOOL_RESULT message with the execution result
