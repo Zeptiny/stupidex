@@ -58,11 +58,9 @@ src/
 
 ## Needs fix
 - Input messages are not queued and can have multiple concurrent connections
-- Minimax M3 do not render response (Sometimes?) - needs triage
 
 ## Needs improvement
-- Model selector only works with openai compatible endpoints
-  - Deferred until provider selector
+- Support for Anthropic API
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
 - Session saving to disk
 - Default selected model (Last one selected, else first) - preserve between sessions / app close
