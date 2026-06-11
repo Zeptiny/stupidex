@@ -6,13 +6,14 @@ from stupidex.domain.agent import ModelTier, TIER_DESCRIPTIONS
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import get_subagent_manager
+from stupidex.domain.agent import AgentTypes
 
 
 def build_delegate_tool() -> Tool:
     registry = get_agent_registry()
     agent_lines = "\n".join(
         f"- {name} [{agent.tier.value}]: {agent.description}"
-        for name, agent in registry.items()
+        for name, agent in registry.items() if agent.type == AgentTypes.SUBAGENT
     )
     tier_lines = "\n".join(
         f"- {tier.value}: {desc}"
