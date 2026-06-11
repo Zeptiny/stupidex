@@ -2,7 +2,7 @@ import time
 
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.agents import AGENT_REGISTRY, AgentTypes
-from stupidex.agents.manager import subagent_manager
+from stupidex.agents.manager import get_subagent_manager
 
 _agent_options = "\n".join(
     f"- {name}: {agent.description} (tools: {', '.join(agent.available_tools)})"
@@ -43,7 +43,7 @@ async def execute_delegate_to_subagent(name: str, task: str, type: str, model: s
             content=f"Error: agent type '{type}' does not exist. Available agents: {available}",
         )
 
-    subagent_id = await subagent_manager.spawn(name, task, type, model)
+    subagent_id = await get_subagent_manager().spawn(name, task, type, model)
 
     return ExecutorResult(
         display=f"Subagent '{name}' spawned (id: {subagent_id})",
@@ -71,7 +71,7 @@ async def execute_wait_for_subagent(subagent_ids: list[str]) -> ExecutorResult:
     if not subagent_ids:
         return ExecutorResult(display="No subagent IDs provided", content="Error: subagent_ids must be a non-empty list of IDs.")
 
-    records = await subagent_manager.wait(subagent_ids)
+    records = await get_subagent_manager().wait(subagent_ids)
 
     if not records:
         return ExecutorResult(display="No subagents found", content=f"No subagents found for IDs: {', '.join(subagent_ids)}")
@@ -119,7 +119,7 @@ list_subagents = Tool(
 
 
 async def execute_list_subagents() -> ExecutorResult:
-    states = subagent_manager.get_states()
+    states = get_subagent_manager().get_states()
 
     if not states:
         return ExecutorResult(display="No subagents", content="<subagents />")

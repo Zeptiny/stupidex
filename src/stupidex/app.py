@@ -14,6 +14,7 @@ from stupidex.widgets.message_widget import (
     create_message_widget,
 )
 from stupidex.agents import general as generalAgent
+from stupidex.agents.manager import set_subagent_manager
 
 
 class Stupidex(App):
@@ -61,6 +62,8 @@ class Stupidex(App):
 
         thinking_widget: ThinkingMessageWidget | None = None
         content_widget: AssistantMessageWidget | None = None
+
+        set_subagent_manager(self.sessions.active.subagent_manager)
 
         async for msg in stream_response(
             messages=self.messages,

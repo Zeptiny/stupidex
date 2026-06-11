@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import uuid
 from stupidex.domain.message import Message
+from stupidex.agents.manager import SubagentManager
 
 
 @dataclass
@@ -10,6 +11,7 @@ class Session:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[Message] = field(default_factory=list)
     model: str | None = None
+    subagent_manager: SubagentManager = field(default_factory=SubagentManager)
 
 
 class SessionManager:

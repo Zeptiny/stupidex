@@ -1,9 +1,20 @@
 import asyncio
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from stupidex.domain.agent import Agent
+
+_current_manager: ContextVar['SubagentManager'] = ContextVar('current_manager')
+
+
+def get_subagent_manager() -> 'SubagentManager':
+    return _current_manager.get()
+
+
+def set_subagent_manager(manager: 'SubagentManager') -> None:
+    _current_manager.set(manager)
 
 
 class SubagentState(Enum):
@@ -124,6 +135,3 @@ class SubagentManager:
     def get_record(self, subagent_id: str) -> SubagentRecord | None:
         """Look up a single subagent record by ID."""
         return self._subagents.get(subagent_id)
-
-
-subagent_manager = SubagentManager()

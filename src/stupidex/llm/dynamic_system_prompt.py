@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.utils import directory_tree
-from stupidex.agents.manager import subagent_manager
+from stupidex.agents.manager import get_subagent_manager
 
 
 def build_dynamic_system_prompt() -> Message:
@@ -17,6 +17,7 @@ def build_dynamic_system_prompt() -> Message:
 </directory_structure>
 """
 
+    subagent_manager = get_subagent_manager()
     states = subagent_manager.get_states()
     if states:
         parts = []
