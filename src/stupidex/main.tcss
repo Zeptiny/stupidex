@@ -14,7 +14,20 @@ Screen {
     overflow-y: auto;
 }
 
-Input {
+#tabs {
+    height: 1fr;
+}
+
+#tabs > ContentSwitcher {
+    height: 1fr;
+}
+
+TabPane {
+    height: 1fr;
+}
+
+Input#input {
+    height: 3;
 }
 
 #footer {

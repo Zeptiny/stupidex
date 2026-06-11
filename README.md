@@ -66,7 +66,6 @@ src/
 - Concurrency control for file locking
 
 ## Subagents
-- Allow the user to view the subagents messages history while working
 - Allow for the main agent to interrupt/cancel subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
 
@@ -88,6 +87,7 @@ src/
 - Fuzzy matching on edit tool
 - Resolve supplied path in tool to avoid modifing/reading files out of the workspace
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
+- Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 
 # Considerations
 - Also make the read tool usable with directories?

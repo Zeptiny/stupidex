@@ -44,11 +44,11 @@ async def execute_delegate_to_subagent(name: str, task: str, type: str, model: s
             content=f"Error: agent type '{type}' does not exist. Available agents: {available}",
         )
 
-    subagent_id = await get_subagent_manager().spawn(name, task, type, model)
+    record = await get_subagent_manager().spawn(name, task, type, model)
 
     return ExecutorResult(
-        display=f"Subagent '{name}' spawned (id: {subagent_id})",
-        content=f'<subagent id="{escape(subagent_id)}" name="{escape(name)}" type="{escape(type)}" state="pending">\n<task>\n{escape(task)}\n</task>\n</subagent>',
+        display=f"Subagent '{name}' spawned (id: {record.id})",
+        content=f'<subagent id="{escape(record.id)}" name="{escape(name)}" type="{escape(type)}" state="pending">\n<task>\n{escape(task)}\n</task>\n</subagent>',
     )
 
 
