@@ -63,9 +63,9 @@ async def execute_grep_tool(
     case_insensitive: bool = False,
     max_results: int | None = None,
 ) -> ExecutorResult:
+    """Search for a pattern in files within a directory."""
     if max_results is None:
         max_results = get_config().grep_max_results
-    """Search for a pattern in files within a directory."""
     try:
         flags = re.IGNORECASE if case_insensitive else 0
         try:
