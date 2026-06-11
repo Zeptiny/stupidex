@@ -44,9 +44,9 @@ async def execute_command(
     timeout: int | None = None,
     shell: bool = True,
 ) -> ExecutorResult:
+    """Execute a system command using asyncio subprocess."""
     if timeout is None:
         timeout = get_config().command_timeout
-    """Execute a system command using asyncio subprocess."""
     try:
         if shell:
             process = await asyncio.create_subprocess_shell(
