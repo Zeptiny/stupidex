@@ -14,7 +14,11 @@ class AgentTypes(Enum):
             "hidden": cls.HIDDEN,
             "subagent": cls.SUBAGENT,
         }
-        return _map.get(value.lower(), cls.SUBAGENT)
+        result = _map.get(value.lower())
+        if result is None:
+            valid = ", ".join(t.value.lower() for t in cls)
+            raise ValueError(f"Invalid agent type: '{value}'. Valid types: {valid}")
+        return result
 
 
 class ModelTier(Enum):
@@ -31,7 +35,11 @@ class ModelTier(Enum):
             "papudo": cls.PAPUDO,
             "papaca": cls.PAPACA,
         }
-        return _map.get(value.lower(), cls.PAPUDO)
+        result = _map.get(value.lower())
+        if result is None:
+            valid = ", ".join(t.value for t in cls)
+            raise ValueError(f"Invalid tier: '{value}'. Valid tiers: {valid}")
+        return result
 
 
 TIER_DESCRIPTIONS: dict[ModelTier, str] = {
