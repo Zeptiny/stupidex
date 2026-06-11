@@ -65,46 +65,47 @@ class Stupidex(App):
 
         set_subagent_manager(self.sessions.active.subagent_manager)
 
-        async for msg in stream_response(
-            messages=self.messages,
-            model=self.model,
-            available_tools=generalAgent.available_tools,
-            system_prompt=generalAgent.system_prompt,
-        ):
+        try:
+            async for msg in stream_response(
+                messages=self.messages,
+                model=self.model,
+                available_tools=generalAgent.available_tools,
+                system_prompt=generalAgent.system_prompt,
+            ):
 
-            if msg.type == MessageType.THINKING:
-                if thinking_widget is None:
+                if msg.type == MessageType.THINKING:
+                    if thinking_widget is None:
+                        self.messages.append(msg)
+                        thinking_widget = ThinkingMessageWidget(msg)
+                        await container.mount(thinking_widget)
+                        thinking_widget.scroll_visible()
+                    else:
+                        thinking_widget.update_content(msg.content)
+                elif msg.type == MessageType.TOOL_CALL:
                     self.messages.append(msg)
-                    thinking_widget = ThinkingMessageWidget(msg)
-                    await container.mount(thinking_widget)
-                    thinking_widget.scroll_visible()
-                else:
-                    thinking_widget.update_content(msg.content)
-            elif msg.type == MessageType.TOOL_CALL:
-                self.messages.append(msg)
-                widget = ToolCallMessageWidget(msg)
-                await container.mount(widget)
-                widget.scroll_visible()
-                thinking_widget = None
-                content_widget = None
-            elif msg.type == MessageType.TOOL_RESULT:
-                self.messages.append(msg)
-                widget = ToolResultMessageWidget(msg)
-                await container.mount(widget)
-                widget.scroll_visible()
-                thinking_widget = None
-                content_widget = None
-            else:
-                if content_widget is None:
+                    widget = ToolCallMessageWidget(msg)
+                    await container.mount(widget)
+                    widget.scroll_visible()
+                    thinking_widget = None
+                    content_widget = None
+                elif msg.type == MessageType.TOOL_RESULT:
                     self.messages.append(msg)
-                    content_widget = AssistantMessageWidget(msg)
-                    await container.mount(content_widget)
-                    content_widget.scroll_visible()
+                    widget = ToolResultMessageWidget(msg)
+                    await container.mount(widget)
+                    widget.scroll_visible()
+                    thinking_widget = None
+                    content_widget = None
                 else:
-                    content_widget.update_content(msg.content)
-                    content_widget.msg.usage = msg.usage
-
-        self.streaming_finished()
+                    if content_widget is None:
+                        self.messages.append(msg)
+                        content_widget = AssistantMessageWidget(msg)
+                        await container.mount(content_widget)
+                        content_widget.scroll_visible()
+                    else:
+                        content_widget.update_content(msg.content)
+                        content_widget.msg.usage = msg.usage
+        finally:
+            self.streaming_finished()
 
     def streaming_started(self) -> None:
         self.query_one("#spinner").display = True
