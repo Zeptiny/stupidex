@@ -144,6 +144,19 @@ def _merge_from_env(cfg: Config) -> Config:
     return Config(**values)
 
 
+_NON_EMPTY_STRINGS = {"base_url", "default_model", "provider_api_type"}
+
+
+def _validate_config(cfg: Config) -> Config:
+    defaults = Config()
+    values = asdict(cfg)
+    for field_name in _NON_EMPTY_STRINGS:
+        val = values.get(field_name)
+        if not val or not isinstance(val, str):
+            values[field_name] = asdict(defaults)[field_name]
+    return Config(**values)
+
+
 def _seed_agents_dir(agents_dir: Path) -> None:
     agents_dir.mkdir(parents=True, exist_ok=True)
     for name, agent_data in _DEFAULT_AGENTS.items():
@@ -177,6 +190,7 @@ class ConfigManager:
 
         cfg = Config(**merged)
         cfg = _merge_from_env(cfg)
+        cfg = _validate_config(cfg)
 
         cls._instance = cfg
         return cfg
