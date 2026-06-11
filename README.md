@@ -52,14 +52,23 @@ src/
 
 
 # TODO - In priority order
+- Todo management tool
 - Provider selector
 - Subagents
 - Configuration file
 - MCP 
 - Model Tiers (Similar to Claude Code - Haiku, Sonnet, Opus, Fabled)
+- Interrupt agent during streaming
+  - How to handle subagents in this case?
+- Skills
+- LSP
+- Approval / permission system
+- Concurrency control for file locking
 
 ## Subagents
 - Allow the user to view the subagents messages history while working
+- Allow for the main agent to interrupt/cancel subagents
+- BTW/Side agent (Ask a question without interrupting the main flow)
 
 ## Needs fix
 - Input messages are not queued and can have multiple concurrent connections
@@ -76,7 +85,13 @@ src/
   - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response
   - Show the TOOL_CALL while the agent is writing the tool (Or in a similar way)
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
+- Fuzzy matching on edit tool
+
+# Considerations
+- Also make the read tool usable with directories?
+- Remove the list_subagents tool?
 
 
 # Some ground rules
 - Absolute imports only
+- Domain driven structure
