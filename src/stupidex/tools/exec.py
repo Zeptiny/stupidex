@@ -1,5 +1,7 @@
 import asyncio
+import os
 import shlex
+import signal
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 
 
@@ -49,6 +51,7 @@ async def execute_command(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_directory,
+                start_new_session=True,
             )
         else:
             args = shlex.split(command)
@@ -57,6 +60,7 @@ async def execute_command(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_directory,
+                start_new_session=True,
             )
 
         try:
@@ -64,7 +68,10 @@ async def execute_command(
                 process.communicate(), timeout=timeout
             )
         except asyncio.TimeoutError:
-            process.kill()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (OSError, AttributeError):
+                process.kill()
             await process.wait()
             return ExecutorResult(
                 display=f"{description} - Timed out after {timeout} seconds",
