@@ -41,3 +41,50 @@ Input {
     text-align: right;
     margin-right: 2;
 }
+
+/* Collapse widgets: override Textual defaults to match Rich.Panel style */
+Collapsible.thinking-collapse {
+    border: round orange;
+    background: transparent;
+    height: auto;
+    margin: 0;
+    padding: 0;
+}
+
+Collapsible.thinking-collapse.-collapsed {
+    padding-bottom: 0;
+}
+
+Collapsible.thinking-collapse > CollapsibleTitle {
+    color: orange;
+    width: 1fr;
+}
+
+Collapsible.thinking-collapse > Contents {
+    height: auto;
+}
+
+.thinking-content {
+    text-style: dim;
+}
+
+Collapsible.tool-result-collapse {
+    border: round skyblue;
+    background: transparent;
+    height: auto;
+    margin: 0;
+    padding: 0;
+}
+
+Collapsible.tool-result-collapse.-collapsed {
+    padding-bottom: 0;
+}
+
+Collapsible.tool-result-collapse > CollapsibleTitle {
+    color: skyblue;
+    width: 1fr;
+}
+
+Collapsible.tool-result-collapse > Contents {
+    height: auto;
+}

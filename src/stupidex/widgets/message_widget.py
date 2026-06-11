@@ -1,6 +1,7 @@
 from rich.markdown import Markdown
 from rich.panel import Panel
-from textual.widgets import Static
+from textual.app import ComposeResult
+from textual.widgets import Collapsible, Static
 
 from stupidex.domain.message import Message, MessageRole, MessageType
 
@@ -25,9 +26,28 @@ class UserMessageWidget(MessageWidget):
         return Panel(Markdown(self.msg.content), style="green")
 
 
-class ThinkingMessageWidget(MessageWidget):
-    def _build_renderable(self):
-        return Panel(Markdown(f"*{self.msg.content}*"), style="dim")
+class ThinkingMessageWidget(Static):
+    """A collapsible widget that shows 'Thinking...' when collapsed and full thinking when expanded."""
+
+    def __init__(self, msg: Message, **kwargs):
+        self.msg = msg
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
+        yield Collapsible(
+            Static(self.msg.content, classes="thinking-content"),
+            title="Thinking...",
+            collapsed=True,
+            classes="thinking-collapse",
+        )
+
+    def update_content(self, content: str) -> None:
+        self.msg.content = content
+        try:
+            content_widget = self.query_one(".thinking-content", Static)
+            content_widget.update(self.msg.content)
+        except Exception:
+            pass
 
 
 class AssistantMessageWidget(MessageWidget):
@@ -41,13 +61,24 @@ class ToolCallMessageWidget(MessageWidget):
         return Panel(Markdown(f"`{tool}`"), title="Tool Call", style="blue")
 
 
-class ToolResultMessageWidget(MessageWidget):
-    def _build_renderable(self):
+class ToolResultMessageWidget(Static):
+    """A collapsible widget that shows the display summary when collapsed and full content when expanded."""
+
+    def __init__(self, msg: Message, **kwargs):
+        self.msg = msg
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
         display = self.msg.display if self.msg.display is not None else self.msg.content
-        return Panel(display, title="Tool Result", style="blue")
+        yield Collapsible(
+            Static(self.msg.content, classes="tool-result-content"),
+            title=display,
+            collapsed=True,
+            classes="tool-result-collapse",
+        )
 
 
-def create_message_widget(msg: Message) -> MessageWidget:
+def create_message_widget(msg: Message) -> Static:
     """Factory function to create the appropriate widget for a message."""
     match msg.type:
         case MessageType.THINKING:
