@@ -50,8 +50,6 @@ src/
 
 
 # TODO - In priority order
-- Thinking collapse
-- Tool result collapse
 - Provider selector
 - Subagents
 - Configuration file

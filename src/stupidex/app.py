@@ -10,7 +10,6 @@ from stupidex.domain.session import SessionManager
 from stupidex.llm.client import stream_response
 from stupidex.widgets.message_widget import (
     AssistantMessageWidget,
-    MessageWidget,
     ThinkingMessageWidget,
     ToolCallMessageWidget,
     ToolResultMessageWidget,
@@ -62,8 +61,8 @@ class Stupidex(App):
         stream = stream_response(self.messages, self.model)
         container = self.query_one("#output", ScrollableContainer)
 
-        thinking_widget: MessageWidget | None = None
-        content_widget: MessageWidget | None = None
+        thinking_widget: ThinkingMessageWidget | None = None
+        content_widget: AssistantMessageWidget | None = None
 
         loop = asyncio.get_event_loop()
 
