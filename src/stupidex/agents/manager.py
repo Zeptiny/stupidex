@@ -99,7 +99,10 @@ class SubagentManager:
                 record.messages.append(user_msg)
                 if record.on_message:
                     record.messages_mounted += 1
-                    await record.on_message(user_msg)
+                    try:
+                        await record.on_message(user_msg)
+                    except Exception:
+                        pass
                 async for msg in stream_response(
                     subagent_messages,
                     model=model,
@@ -109,7 +112,10 @@ class SubagentManager:
                     record.messages.append(msg)
                     if record.on_message:
                         record.messages_mounted += 1
-                        await record.on_message(msg)
+                        try:
+                            await record.on_message(msg)
+                        except Exception:
+                            pass
                     if msg.type == MessageType.TEXT:
                         record.result = msg.content
 
