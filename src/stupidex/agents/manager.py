@@ -64,6 +64,12 @@ class SubagentManager:
         self.on_spawn: Callable[[SubagentRecord],
                                 Coroutine[Any, Any, None]] | None = None
 
+    def cancel_all(self) -> None:
+        for record in self._subagents.values():
+            if record.async_task and not record.async_task.done():
+                record.async_task.cancel()
+        self.on_spawn = None
+
     async def spawn(self, name: str, task: str, agent_type: str, model: str = "mimo-v2.5") -> SubagentRecord:
         """Spawn a subagent as an asyncio task. Returns the record immediately."""
         # Lazy imports to avoid circular dependency

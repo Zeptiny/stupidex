@@ -34,6 +34,8 @@ class SessionManager:
 
     def delete(self, id: str) -> bool:
         if id in self.sessions:
+            session = self.sessions[id]
+            session.subagent_manager.cancel_all()
             del self.sessions[id]
             if self.active and self.active.id == id:
                 self.active = None
