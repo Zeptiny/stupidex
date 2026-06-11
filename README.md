@@ -79,6 +79,7 @@ src/
 - Default selected model (Last one selected, else first) - preserve between sessions / app close
 - Make IGNORED_DIRS configurable
 - Context and usage only being updated when the agent finishes it response
+  - Also expands to not updating the footer for subagent viewing
 - Bug: Automatically scrolling down after a message is finished
 - Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded - currently commented
   - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response
