@@ -86,6 +86,8 @@ src/
   - Show the TOOL_CALL while the agent is writing the tool (Or in a similar way)
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool
+- Resolve supplied path in tool to avoid modifing/reading files out of the workspace
+  - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 
 # Considerations
 - Also make the read tool usable with directories?
