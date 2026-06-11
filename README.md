@@ -26,6 +26,7 @@ src/
     app.py                     # Textual App class, UI lifecycle
     main.tcss                  # styles
     utils.py                   # Utility functions
+    agents/                    # Agent definitions
     domain/                    # Plain Python scripts (No Textual, no Rich, Httpx) and are usable.
       message.py               # Message, MessageRole, MessageType, Usage
       session.py               # Session, SessionManager
