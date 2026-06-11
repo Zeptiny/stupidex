@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import httpx
+from stupidex.config import get_config
 
 
 @dataclass
@@ -8,7 +9,8 @@ class Model:
 
 
 def list_models() -> list[Model]:
-    with httpx.Client(base_url="https://opencode.ai/zen/go/v1") as client:
+    cfg = get_config()
+    with httpx.Client(base_url=cfg.base_url) as client:
         response = client.get("/models")
         response.raise_for_status()
         data = response.json()

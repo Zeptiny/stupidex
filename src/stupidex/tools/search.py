@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.utils import IGNORED_DIRS
 import aiofiles
@@ -60,8 +61,10 @@ async def execute_grep_tool(
     directory_path: str,
     include_pattern: str | None = None,
     case_insensitive: bool = False,
-    max_results: int = 100,
+    max_results: int | None = None,
 ) -> ExecutorResult:
+    if max_results is None:
+        max_results = get_config().grep_max_results
     """Search for a pattern in files within a directory."""
     try:
         flags = re.IGNORECASE if case_insensitive else 0

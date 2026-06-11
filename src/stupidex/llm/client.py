@@ -1,11 +1,12 @@
 import json
 from collections.abc import AsyncGenerator
 import litellm
+from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
 from stupidex.domain.tool import ExecutorResult
-from stupidex.tools import TOOL_REGISTRY
+from stupidex.tools import get_tool_registry
 
 
 async def stream_response(
@@ -14,21 +15,23 @@ async def stream_response(
     available_tools: list[str],
     system_prompt: str,
 ) -> AsyncGenerator[Message, None]:
+    cfg = get_config()
     system_msg = build_static_system_prompt(system_prompt)
     api_messages = [system_msg.to_dict()] + \
         [m.to_dict() for m in messages] + \
         [build_dynamic_system_prompt().to_dict()]
 
-    filtered_tools = {k: v for k, v in TOOL_REGISTRY.items()
+    registry = get_tool_registry()
+    filtered_tools = {k: v for k, v in registry.items()
                       if k in available_tools}
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
     while True:
         response = await litellm.acompletion(
-            model="openai/" + (model or "mimo-v2.5"),
+            model=cfg.provider_api_type + "/" + (model or cfg.default_model),
             messages=api_messages,
             tools=tools_list,
-            base_url="https://opencode.ai/zen/go/v1",
+            base_url=cfg.base_url,
             stream=True,
             stream_options={"include_usage": True},
         )

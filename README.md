@@ -54,10 +54,7 @@ src/
 # TODO - In priority order
 - Todo management tool
 - Provider selector
-- Subagents
-- Configuration file
 - MCP 
-- Model Tiers (Similar to Claude Code - Haiku, Sonnet, Opus, Fabled)
 - Interrupt agent during streaming
   - How to handle subagents in this case?
 - Skills
@@ -76,7 +73,6 @@ src/
 - Support for Anthropic API
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
 - Session saving to disk
-- Default selected model (Last one selected, else first) - preserve between sessions / app close
 - Make IGNORED_DIRS configurable
 - Context and usage only being updated when the agent finishes it response
   - Also expands to not updating the footer for subagent viewing

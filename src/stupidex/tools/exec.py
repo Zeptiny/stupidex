@@ -2,6 +2,7 @@ import asyncio
 import os
 import shlex
 import signal
+from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 
 
@@ -40,9 +41,11 @@ async def execute_command(
     command: str,
     description: str | None = None,
     working_directory: str = ".",
-    timeout: int = 30,
+    timeout: int | None = None,
     shell: bool = True,
 ) -> ExecutorResult:
+    if timeout is None:
+        timeout = get_config().command_timeout
     """Execute a system command using asyncio subprocess."""
     try:
         if shell:

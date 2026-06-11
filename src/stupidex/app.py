@@ -14,7 +14,7 @@ from stupidex.widgets.message_widget import (
     UserMessageWidget,
     create_message_widget,
 )
-from stupidex.agents import general as generalAgent
+from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import set_subagent_manager, SubagentRecord, SubagentState
 
 
@@ -53,6 +53,7 @@ class Stupidex(App):
         await self.mount_all_messages()
         self.query_one("#input", Input).display = True
         self.query_one("#input", Input).focus()
+        self.rerender_footer()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         user_msg = event.value
@@ -73,11 +74,12 @@ class Stupidex(App):
         self.sessions.active.subagent_manager.on_spawn = self._on_subagent_spawned
 
         try:
+            general = get_agent_registry()["general"]
             async for msg in stream_response(
                 messages=self.messages,
                 model=self.model,
-                available_tools=generalAgent.available_tools,
-                system_prompt=generalAgent.system_prompt,
+                available_tools=general.available_tools,
+                system_prompt=general.system_prompt,
             ):
 
                 if msg.type == MessageType.THINKING:
