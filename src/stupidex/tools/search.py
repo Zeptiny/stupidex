@@ -3,7 +3,6 @@ import os
 import re
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
-from stupidex.utils import get_ignored_dirs
 import aiofiles
 
 grep_tool = Tool(
@@ -49,7 +48,7 @@ async def _is_binary(file_path: str) -> bool:
 
 def _should_skip_dir(dirname: str) -> bool:
     """Check if a directory should be skipped based on ignored_dirs config."""
-    ignored = get_ignored_dirs()
+    ignored = set(get_config().ignored_dirs)
     if dirname in ignored:
         return True
     if dirname.startswith("."):

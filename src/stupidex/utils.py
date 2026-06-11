@@ -2,11 +2,6 @@ import os
 from stupidex.config import get_config
 
 
-def get_ignored_dirs() -> set[str]:
-    cfg = get_config()
-    return set(cfg.ignored_dirs)
-
-
 def directory_tree(path: str, max_depth: int, include_hidden: bool = False, _depth: int = 0, _prefix: str = "") -> str:
     if _depth >= max_depth:
         return ""
@@ -17,7 +12,7 @@ def directory_tree(path: str, max_depth: int, include_hidden: bool = False, _dep
     except PermissionError:
         return ""
 
-    ignored = get_ignored_dirs()
+    ignored = set(get_config().ignored_dirs)
     if not include_hidden:
         entries = [
             e for e in entries if e not in ignored or not e.startswith(("."))]
