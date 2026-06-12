@@ -122,6 +122,18 @@ Collapsible.tool-result-collapse > CollapsibleTitle {
     width: 1fr;
 }
 
+#command-picker {
+    height: auto;
+    max-height: 10;
+    background: $surface;
+    border: tall $primary;
+    margin: 0 1;
+}
+
+#command-picker > .option-list--option-highlighted {
+    background: $accent-darken-1;
+}
+
 .temp-tool-message {
     padding: 0 1;
     color: $text-muted;

@@ -8,10 +8,11 @@ from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, Te
 
 from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import SubagentRecord, SubagentState, set_subagent_manager
-from stupidex.commands.session_commands import SessionCommands
+from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.domain.session import SessionManager
 from stupidex.llm.client import stream_response
+from stupidex.widgets.command_picker import CommandPicker
 from stupidex.widgets.message_widget import (
     AssistantMessageWidget,
     ThinkingMessageWidget,
@@ -47,8 +48,9 @@ class Stupidex(App):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._subagent_widgets: dict[str, dict[str,
-                                               ThinkingMessageWidget | AssistantMessageWidget | Static | None]] = {}
+        self._subagent_widgets: dict[
+            str, dict[str, ThinkingMessageWidget | AssistantMessageWidget | Static | None]
+        ] = {}
 
     @property
     def messages(self) -> list[Message]:
@@ -63,6 +65,7 @@ class Stupidex(App):
             yield Static(self.sessions.active.name if self.sessions.active else "No Session", id="title")
         with TabbedContent(id="tabs", initial="main"), TabPane("Main", id="main"):
             yield ScrollableContainer(id="output")
+        yield CommandPicker(SessionCommands.COMMANDS)
         yield TextArea(id="input")
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
@@ -89,32 +92,33 @@ class Stupidex(App):
     def _has_running_subagents(self) -> bool:
         if not self.sessions.active:
             return False
-        terminal = {SubagentState.COMPLETED,
-                    SubagentState.FAILED, SubagentState.INTERRUPTED}
-        return any(
-            r.state not in terminal
-            for r in self.sessions.active.subagent_manager._subagents.values()
-        )
+        terminal = {SubagentState.COMPLETED, SubagentState.FAILED, SubagentState.INTERRUPTED}
+        return any(r.state not in terminal for r in self.sessions.active.subagent_manager._subagents.values())
 
     async def action_interrupt(self) -> None:
+        try:
+            picker = self.query_one("#command-picker", CommandPicker)
+            if picker.display:
+                picker.hide()
+                return
+        except Exception:
+            pass
+
         hint = self.query_one("#interrupt-hint", Static)
 
         if self._interrupt_state == InterruptState.IDLE:
             if self._is_streaming():
                 self._interrupt_state = InterruptState.CONFIRM_AGENT
-                hint.update(
-                    "[bold yellow]Press Esc again to interrupt agent[/]")
+                hint.update("[bold yellow]Press Esc again to interrupt agent[/]")
             elif self._has_running_subagents():
                 self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
-                hint.update(
-                    "[bold red]Press Esc again to interrupt subagents[/]")
+                hint.update("[bold red]Press Esc again to interrupt subagents[/]")
         elif self._interrupt_state == InterruptState.CONFIRM_AGENT:
             self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
             if self._active_worker and not self._active_worker.is_finished:
                 self._active_worker.cancel()
             if self._has_running_subagents():
-                hint.update(
-                    "[bold red]Press Esc again to interrupt subagents[/]")
+                hint.update("[bold red]Press Esc again to interrupt subagents[/]")
             else:
                 self._interrupt_state = InterruptState.IDLE
                 hint.update("")
@@ -124,12 +128,10 @@ class Stupidex(App):
                 if cancelled:
                     names = []
                     for sid in cancelled:
-                        record = self.sessions.active.subagent_manager.get_record(
-                            sid)
+                        record = self.sessions.active.subagent_manager.get_record(sid)
                         if record:
                             names.append(record.label or record.name)
-                    detail = ", ".join(
-                        names) if names else f"{len(cancelled)} subagent(s)"
+                    detail = ", ".join(names) if names else f"{len(cancelled)} subagent(s)"
                     interrupt_msg = Message(
                         role=MessageRole.ASSISTANT,
                         content=f"[Subagents interrupted by user: {detail}]",
@@ -156,17 +158,54 @@ class Stupidex(App):
         user_msg = text_area.text.strip()
         if not user_msg:
             return
+
+        picker = self.query_one("#command-picker", CommandPicker)
+        if picker.display and user_msg.startswith("/"):
+            command = picker.get_selected_command()
+            text_area.clear()
+            picker.hide()
+            if command:
+                await execute_command(self, command)
+            return
+
         text_area.clear()
         msg = Message(role=MessageRole.USER, content=user_msg)
         self.messages.append(msg)
         await self.mount_message(msg)
         self._reset_interrupt_state()
         self.streaming_started()
-        self._active_worker = self.run_worker(
-            self._stream_response(), exit_on_error=False)
+        self._active_worker = self.run_worker(self._stream_response(), exit_on_error=False)
 
     async def on_submittextarea_submitted(self, event: TextArea.Submitted) -> None:
         await self.action_submit_input()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id != "input":
+            return
+        text = event.text_area.text.strip()
+        try:
+            picker = self.query_one("#command-picker", CommandPicker)
+        except Exception:
+            return
+        if text.startswith("/"):
+            picker.update_filter(text)
+        elif picker.display:
+            picker.hide()
+
+    async def on_command_picker_command_selected(self, event: CommandPicker.CommandSelected) -> None:
+        text_area = self.query_one("#input", TextArea)
+        text_area.clear()
+        self.query_one("#command-picker", CommandPicker).hide()
+        await execute_command(self, event.command)
+
+    def watch_focused(self, focused) -> None:
+        if focused and focused.id == "input":
+            try:
+                picker = self.query_one("#command-picker", CommandPicker)
+                if picker.display:
+                    picker.hide()
+            except Exception:
+                pass
 
     def action_clear_input(self) -> None:
         self.query_one("#input", TextArea).clear()
@@ -210,7 +249,6 @@ class Stupidex(App):
                 available_tools=general.available_tools,
                 system_prompt=general.system_prompt,
             ):
-
                 if msg.type == MessageType.THINKING:
                     if thinking_widget is None:
                         self.messages.append(msg)
@@ -283,14 +321,12 @@ class Stupidex(App):
         await self.rerender_footer()
 
     async def _on_subagent_spawned(self, record: SubagentRecord) -> None:
-        record.on_message = lambda msg, rid=record.id: self._on_subagent_message(
-            rid, msg)
-        record.on_state_change = lambda state, rid=record.id: self._on_subagent_state_change(
-            rid, state)
+        record.on_message = lambda msg, rid=record.id: self._on_subagent_message(rid, msg)
+        record.on_state_change = lambda state, rid=record.id: self._on_subagent_state_change(rid, state)
         tabs = self.query_one("#tabs", TabbedContent)
         pane = TabPane(self._tab_label(record), id=f"sub-{record.id}")
         await tabs.add_pane(pane)
-        for msg in record.messages[record.messages_mounted:]:
+        for msg in record.messages[record.messages_mounted :]:
             await self._on_subagent_message(record.id, msg)
         await self._update_sidebar_subagents()
 
@@ -298,7 +334,9 @@ class Stupidex(App):
         if msg.usage:
             try:
                 sidebar = self.query_one("#sidebar", Sidebar)
-                sidebar.update_tokens(msg.usage.prompt_tokens, msg.usage.completion_tokens, msg.usage.total_tokens, view_id=subagent_id)
+                sidebar.update_tokens(
+                    msg.usage.prompt_tokens, msg.usage.completion_tokens, msg.usage.total_tokens, view_id=subagent_id
+                )
             except Exception:
                 pass
 
@@ -414,8 +452,7 @@ class Stupidex(App):
 
     async def _sync_subagent_tabs(self) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
-        pane_ids = [p.id for p in tabs.query(
-            "TabPane") if p.id and p.id.startswith("sub-")]
+        pane_ids = [p.id for p in tabs.query("TabPane") if p.id and p.id.startswith("sub-")]
         for pane_id in pane_ids:
             await tabs.remove_pane(pane_id)
         self._subagent_widgets.clear()
@@ -427,18 +464,14 @@ class Stupidex(App):
         for record in manager._subagents.values():
             pane = TabPane(self._tab_label(record), id=f"sub-{record.id}")
             await tabs.add_pane(pane)
-            record.on_message = lambda msg, rid=record.id: self._on_subagent_message(
-                rid, msg)
-            record.on_state_change = lambda state, rid=record.id: self._on_subagent_state_change(
-                rid, state)
+            record.on_message = lambda msg, rid=record.id: self._on_subagent_message(rid, msg)
+            record.on_state_change = lambda state, rid=record.id: self._on_subagent_state_change(rid, state)
             for msg in record.messages:
                 await self._on_subagent_message(record.id, msg)
 
     @staticmethod
     def _tab_label(record: SubagentRecord) -> str:
-        indicator = {"pending": "◌", "running": "●",
-                     "completed": "✓", "failed": "✗",
-                     "interrupted": "⊘"}
+        indicator = {"pending": "◌", "running": "●", "completed": "✓", "failed": "✗", "interrupted": "⊘"}
         return f"{indicator.get(record.state.value, '?')} {record.label}"
 
     async def rerender_footer(self) -> None:
@@ -453,7 +486,9 @@ class Stupidex(App):
         try:
             sidebar = self.query_one("#sidebar", Sidebar)
             if last_usage:
-                sidebar.update_tokens(last_usage.prompt_tokens, last_usage.completion_tokens, last_usage.total_tokens, view_id="main")
+                sidebar.update_tokens(
+                    last_usage.prompt_tokens, last_usage.completion_tokens, last_usage.total_tokens, view_id="main"
+                )
             else:
                 sidebar.update_tokens(0, 0, 0, view_id="main")
         except Exception:
