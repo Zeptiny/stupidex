@@ -61,6 +61,8 @@ src/
 - LSP
 - Approval / permission system
 - Concurrency control for file locking
+- AGENTS.md handling
+  - Also /init command for it
 
 ## Subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
