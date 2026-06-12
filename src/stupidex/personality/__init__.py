@@ -47,25 +47,12 @@ def load_personalities() -> dict[str, str]:
     return personalities
 
 
-def build_system_prompt_with_personality(agent_system_prompt: str) -> str:
-    """Replace the ## Personality section in the agent's system_prompt
-    with the currently selected personality text."""
+def append_personality(agent_system_prompt: str) -> str:
+    """Append the selected personality to the end of the agent's system prompt."""
     current = get_config().personality
     personality_text = PERSONALITY_REGISTRY.get(current)
 
     if not personality_text:
         return agent_system_prompt
 
-    prompt = agent_system_prompt
-    marker = "## Personality"
-    idx = prompt.find(marker)
-    if idx == -1:
-        return prompt
-
-    after_marker = idx + len(marker)
-
-    next_section_idx = prompt.find("\n## ", after_marker)
-    end = len(prompt) if next_section_idx == -1 else next_section_idx
-
-    new_section = f"{marker}\n\n{personality_text}\n"
-    return prompt[:idx] + new_section + prompt[end:]
+    return f"{agent_system_prompt}\n\n## Personality\n\n{personality_text}\n"
