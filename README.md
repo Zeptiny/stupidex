@@ -98,6 +98,8 @@ src/
 - Bug: Long thinking may eat CPU when uncollapsed
 - Bug: "Offset 1 out of range"- Possibly when reading files without content
 - Message queue for the user
+- UI Bug: Selected model is not updating when changing, only when sending message
+- UI Bug: Token usage is not updated when switching/creating sessions
 
 # Considerations
 - Also make the read tool usable with directories?
