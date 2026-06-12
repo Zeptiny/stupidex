@@ -145,6 +145,8 @@ class Stupidex(App):
             pass
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if self._is_streaming():
+            return
         user_msg = event.value
         event.input.clear()
         msg = Message(role=MessageRole.USER, content=user_msg)

@@ -48,6 +48,7 @@ src/
       exec.py                  # Executing tools (Currently command tool)
     widgets/
       message_widget.py        # Textual widgets for messages with streaming support
+      sidebar                  # The right sidebar of the interface
 ```
 
 
@@ -75,9 +76,6 @@ src/
 ## Subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
 
-## Needs fix
-- Input messages are not queued and can have multiple concurrent connections
-
 ## Needs improvement
 - Support for Anthropic API
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
@@ -90,6 +88,7 @@ src/
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Bug: Long thinking may eat CPU when uncollapsed
 - Bug: "Offset 1 out of range"- Possibly when reading files without content
+- Message queue for the user
 
 # Considerations
 - Also make the read tool usable with directories?
