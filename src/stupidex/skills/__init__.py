@@ -1,50 +1,13 @@
 import logging
-import re
 from pathlib import Path
 
 from stupidex.config import HOME_SKILLS_DIR, PROJECT_SKILLS_DIR
 from stupidex.domain.skill import Skill
+from stupidex.utils import parse_frontmatter, seed_defaults
 
 log = logging.getLogger(__name__)
 
 SKILL_REGISTRY: dict[str, Skill] = {}
-
-_FRONTMATTER_PATTERN = re.compile(
-    r'^---\s*\n(.*?)\n---\s*\n(.*)',
-    re.DOTALL
-)
-
-
-def _parse_frontmatter(content: str) -> tuple[dict, str]:
-    """Parse YAML frontmatter from markdown content.
-
-    Returns (metadata_dict, body_content).
-    If no frontmatter is found, returns ({}, content).
-    """
-    match = _FRONTMATTER_PATTERN.match(content.strip())
-    if not match:
-        return {}, content
-
-    frontmatter_str = match.group(1)
-    body = match.group(2)
-
-    metadata = {}
-    for line in frontmatter_str.split('\n'):
-        line = line.strip()
-        if not line or ':' not in line:
-            continue
-
-        key, _, value = line.partition(':')
-        key = key.strip()
-        value = value.strip()
-
-        # Remove quotes if present
-        if value and value[0] in ('"', "'") and value[-1] == value[0]:
-            value = value[1:-1]
-
-        metadata[key] = value
-
-    return metadata, body
 
 
 def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
@@ -66,11 +29,11 @@ def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
             log.warning("Skipping %s: %s", skill_file, e)
             continue
 
-        metadata, body = _parse_frontmatter(content)
+        metadata, body = parse_frontmatter(content)
 
         name = metadata.get('name', path.name)
-
         description = metadata.get('description', '')
+
         if not description:
             log.warning("Skipping %s: no description in frontmatter", skill_file)
             continue
@@ -87,27 +50,8 @@ def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
 
 
 def seed_skills_dir(skills_dir: Path) -> None:
-    skills_dir.mkdir(parents=True, exist_ok=True)
-
-    # Get the source defaults directory (where the default skills are)
-    source_skills_dir = Path(__file__).parent / "defaults"
-
-    # Copy all skill directories from source
-    for source_skill_dir in sorted(source_skills_dir.iterdir()):
-        if not source_skill_dir.is_dir():
-            continue
-
-        source_skill_file = source_skill_dir / "SKILL.md"
-        if not source_skill_file.exists():
-            continue
-
-        target_dir = skills_dir / source_skill_dir.name
-        target_file = target_dir / "SKILL.md"
-
-        if not target_file.exists():
-            import shutil
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_skill_file, target_file)
+    source_dir = Path(__file__).parent / "defaults"
+    seed_defaults(source_dir, skills_dir, "SKILL.md")
 
 
 def load_skills() -> dict[str, Skill]:
