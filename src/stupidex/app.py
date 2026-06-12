@@ -3,10 +3,11 @@ from enum import Enum
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
-from textual.message import Message as TextualMessage
 from textual.timer import Timer
 from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
+from stupidex.agents import get_agent_registry
+from stupidex.agents.manager import SubagentRecord, SubagentState, set_subagent_manager
 from stupidex.commands.session_commands import SessionCommands
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.domain.session import SessionManager
@@ -20,8 +21,6 @@ from stupidex.widgets.message_widget import (
     get_tool_action_label,
 )
 from stupidex.widgets.sidebar import Sidebar, SidebarMainSelected, SidebarSubagentSelected
-from stupidex.agents import get_agent_registry
-from stupidex.agents.manager import set_subagent_manager, SubagentRecord, SubagentState
 
 
 class InterruptState(Enum):
@@ -61,9 +60,8 @@ class Stupidex(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="header"):
             yield Static(self.sessions.active.name if self.sessions.active else "No Session", id="title")
-        with TabbedContent(id="tabs", initial="main"):
-            with TabPane("Main", id="main"):
-                yield ScrollableContainer(id="output")
+        with TabbedContent(id="tabs", initial="main"), TabPane("Main", id="main"):
+            yield ScrollableContainer(id="output")
         yield TextArea(id="input")
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")

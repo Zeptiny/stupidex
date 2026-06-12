@@ -1,9 +1,11 @@
 import asyncio
 import os
 import re
+
+import aiofiles
+
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
-import aiofiles
 
 grep_tool = Tool(
     name="grep",
@@ -52,9 +54,7 @@ def _should_skip_dir(dirname: str) -> bool:
     ignored = set(get_config().ignored_dirs)
     if dirname in ignored:
         return True
-    if dirname.startswith("."):
-        return True
-    return False
+    return bool(dirname.startswith("."))
 
 
 async def execute_grep_tool(
@@ -118,7 +118,7 @@ async def execute_grep_tool(
 
             try:
                 relative_path = os.path.relpath(file_path, base_path)
-                async with aiofiles.open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                async with aiofiles.open(file_path, encoding="utf-8", errors="ignore") as f:
                     line_num = 0
                     async for line in f:
                         line_num += 1

@@ -126,7 +126,7 @@ class ConfigManager:
             defaults = Config()
             with open(HOME_CONFIG_PATH, "w") as f:
                 json.dump(asdict(defaults), f, indent=2)
-        from stupidex.agents import seed_agents_dir, load_agents
+        from stupidex.agents import load_agents, seed_agents_dir
         seed_agents_dir(HOME_AGENTS_DIR)
         load_agents()
 

@@ -1,9 +1,11 @@
 import asyncio
-import os
 import difflib
 import glob as glob_module
+import os
 from pathlib import Path
+
 import aiofiles
+
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.utils import directory_tree
@@ -36,7 +38,7 @@ async def execute_read_tool(file_path: str, offset: int = 1, limit: int | None =
     if limit is None:
         limit = get_config().read_line_limit
     try:
-        async with aiofiles.open(file_path, "r") as f:
+        async with aiofiles.open(file_path) as f:
             lines = await f.readlines()
             # Return <line number> | <line content>
             selected_lines = lines[offset - 1:offset - 1 + limit]
@@ -86,7 +88,7 @@ edit_tool = Tool(
 
 async def execute_edit_tool(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> ExecutorResult:
     try:
-        async with aiofiles.open(file_path, "r") as f:
+        async with aiofiles.open(file_path) as f:
             content = await f.read()
 
         if old_string not in content:

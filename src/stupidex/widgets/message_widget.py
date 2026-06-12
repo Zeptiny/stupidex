@@ -1,4 +1,5 @@
 import time
+
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import ComposeResult

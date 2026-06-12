@@ -1,11 +1,13 @@
 import json
 from collections.abc import AsyncGenerator
+
 import litellm
+
 from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
-from stupidex.llm.static_system_prompt import build_static_system_prompt
-from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
 from stupidex.domain.tool import ExecutorResult
+from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
+from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.tools import get_tool_registry
 
 
