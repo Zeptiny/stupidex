@@ -14,6 +14,15 @@ pip install -e . # Editable Mode, changes take effect immediately.
 stupidex
 ```
 
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+P` | Open command palette |
+| `Ctrl+Enter` | Submit input |
+| `Ctrl+Backspace` | Clear input |
+| `Escape` | Interrupt agent / subagents |
+
 ## Development
 
 The project uses the `src` layout:
