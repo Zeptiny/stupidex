@@ -63,7 +63,6 @@ src/
 - Concurrency control for file locking
 
 ## Subagents
-- Allow for the main agent to interrupt/cancel subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
 
 ## Needs fix
