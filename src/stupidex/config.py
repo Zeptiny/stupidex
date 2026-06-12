@@ -38,6 +38,7 @@ class Config:
     grep_max_results: int = 100
     directory_tree_depth: int = 2
     theme: str = "default"
+    personality: str = "default"
 
 
 _ENV_MAP = {
@@ -50,6 +51,7 @@ _ENV_MAP = {
     "STUPIDEX_GREP_MAX_RESULTS": "grep_max_results",
     "STUPIDEX_DIRECTORY_TREE_DEPTH": "directory_tree_depth",
     "STUPIDEX_THEME": "theme",
+    "STUPIDEX_PERSONALITY": "personality",
 }
 
 
@@ -136,6 +138,8 @@ class ConfigManager:
         from stupidex.skills import load_skills, seed_skills_dir
         seed_skills_dir(HOME_SKILLS_DIR)
         load_skills()
+        from stupidex.personality import load_personalities
+        load_personalities()
 
     @classmethod
     def reset(cls) -> None:
@@ -184,4 +188,20 @@ def set_current_theme(name: str) -> None:
     get_theme_registry().get(name)  # raises ValueError for unknown theme
     cfg = get_config()
     cfg.theme = name
+    ConfigManager.save()
+
+
+def get_current_personality() -> str:
+    return get_config().personality
+
+
+def set_current_personality(name: str) -> None:
+    from stupidex.personality import PERSONALITY_REGISTRY
+    if name not in PERSONALITY_REGISTRY:
+        raise ValueError(
+            f"Unknown personality: '{name}'. "
+            f"Available: {', '.join(sorted(PERSONALITY_REGISTRY))}"
+        )
+    cfg = get_config()
+    cfg.personality = name
     ConfigManager.save()
