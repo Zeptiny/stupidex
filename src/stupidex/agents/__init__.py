@@ -51,14 +51,14 @@ def _load_agents_from_dir(agents_dir: Path) -> dict[str, Agent]:
 
         try:
             agent = Agent(
-                name=name,
-                type=AgentTypes.from_str(agent_type),
-                tier=ModelTier.from_str(tier),
+                name=str(name),
+                type=AgentTypes.from_str(str(agent_type)),
+                tier=ModelTier.from_str(str(tier)),
                 description=description,
                 system_prompt=body.strip(),
                 available_tools=available_tools,
             )
-        except (KeyError, ValueError) as e:
+        except (KeyError, ValueError, AttributeError) as e:
             log.warning("Skipping %s: %s", agent_file, e)
             continue
 
