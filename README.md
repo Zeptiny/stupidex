@@ -82,7 +82,6 @@ src/
 
 
 # TODO - In priority order
-- Skills
 - Concurrency control for file locking
 - MCP 
 - LSP
@@ -118,6 +117,7 @@ src/
 - Bug: Long thinking may eat CPU when uncollapsed
 - Bug: "Offset 1 out of range"- Possibly when reading files without content
 - Message queue for the user
+- Limit availiable skills per subagent
 
 # Considerations
 - Also make the read tool usable with directories?
