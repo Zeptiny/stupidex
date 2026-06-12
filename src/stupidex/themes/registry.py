@@ -1,6 +1,5 @@
 from textual.theme import Theme
 
-
 THEMES: dict[str, Theme] = {
     "default": Theme(
         name="default",
