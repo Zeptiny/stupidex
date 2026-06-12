@@ -29,6 +29,7 @@ class SubagentState(Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 @dataclass
@@ -64,11 +65,33 @@ class SubagentManager:
         self.on_spawn: Callable[[SubagentRecord],
                                 Coroutine[Any, Any, None]] | None = None
 
-    def cancel_all(self) -> None:
+    def cancel_one(self, subagent_id: str) -> bool:
+        """Cancel a single subagent by ID. Returns True if cancelled."""
+        record = self._subagents.get(subagent_id)
+        if record and record.async_task and not record.async_task.done():
+            record.async_task.cancel()
+            return True
+        return False
+
+    def cancel_all(self) -> list[str]:
+        """Cancel all running subagents. Returns list of cancelled IDs."""
+        cancelled = []
         for record in self._subagents.values():
             if record.async_task and not record.async_task.done():
                 record.async_task.cancel()
+                cancelled.append(record.id)
         self.on_spawn = None
+        return cancelled
+
+    def cancel_running(self) -> list[str]:
+        """Cancel all non-terminal subagents. Returns list of cancelled IDs."""
+        terminal = {SubagentState.COMPLETED, SubagentState.FAILED, SubagentState.INTERRUPTED}
+        cancelled = []
+        for record in self._subagents.values():
+            if record.state not in terminal and record.async_task and not record.async_task.done():
+                record.async_task.cancel()
+                cancelled.append(record.id)
+        return cancelled
 
     async def spawn(self, name: str, task: str, agent_type: str, model: str | None = None) -> SubagentRecord:
         """Spawn a subagent as an asyncio task. Returns the record immediately."""
@@ -127,6 +150,10 @@ class SubagentManager:
                         record.result = msg.content
 
                 record.state = SubagentState.COMPLETED
+            except asyncio.CancelledError:
+                record.error = "Interrupted by user"
+                record.state = SubagentState.INTERRUPTED
+                raise
             except Exception as e:
                 record.error = str(e)
                 record.state = SubagentState.FAILED

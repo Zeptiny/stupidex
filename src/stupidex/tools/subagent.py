@@ -168,3 +168,62 @@ async def execute_list_subagents() -> ExecutorResult:
         display=f"{len(states)} subagent(s)",
         content="<subagents>\n" + "\n".join(parts) + "\n</subagents>",
     )
+
+
+interrupt_subagents = Tool(
+    name="interrupt_subagents",
+    description="Interrupt one or more running subagents. Use when you need to stop subagents that are no longer needed or are taking too long. Returns which subagents were cancelled.",
+    parameters=ToolParameter(
+        properties={
+            "subagent_ids": ToolParameterProperties(
+                type="array",
+                description="List of subagent IDs to interrupt. Pass an empty list to interrupt all running subagents.",
+                items={"type": "string"},
+            ),
+        },
+        required=["subagent_ids"]
+    ),
+)
+
+
+async def execute_interrupt_subagents(subagent_ids: list[str]) -> ExecutorResult:
+    manager = get_subagent_manager()
+
+    if not subagent_ids:
+        cancelled = manager.cancel_running()
+        if not cancelled:
+            return ExecutorResult(
+                display="No running subagents to interrupt",
+                content="No running subagents found to interrupt.",
+            )
+        return ExecutorResult(
+            display=f"Interrupted {len(cancelled)} subagent(s)",
+            content=f"Interrupted subagents: {', '.join(cancelled)}",
+        )
+
+    cancelled = []
+    not_found = []
+    already_done = []
+
+    for sid in subagent_ids:
+        record = manager.get_record(sid)
+        if not record:
+            not_found.append(sid)
+        elif record.async_task and not record.async_task.done():
+            manager.cancel_one(sid)
+            cancelled.append(sid)
+        else:
+            already_done.append(sid)
+
+    parts = []
+    if cancelled:
+        parts.append(f"Interrupted: {', '.join(cancelled)}")
+    if already_done:
+        parts.append(f"Already finished: {', '.join(already_done)}")
+    if not_found:
+        parts.append(f"Not found: {', '.join(not_found)}")
+
+    content = ". ".join(parts) + "." if parts else "No subagents matched."
+    display = f"Interrupted {len(cancelled)} subagent(s)" if cancelled else "No subagents interrupted"
+
+    return ExecutorResult(display=display, content=content)

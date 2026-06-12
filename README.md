@@ -63,7 +63,6 @@ src/
 - Concurrency control for file locking
 
 ## Subagents
-- Allow for the main agent to interrupt/cancel subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
 
 ## Needs fix
@@ -73,8 +72,7 @@ src/
 - Support for Anthropic API
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
 - Session saving to disk
-- Context and usage only being updated when the agent finishes it response
-  - Also expands to not updating the footer for subagent viewing
+- Also expands to not updating the footer for subagent viewing
 - Bug: Automatically scrolling down after a message is finished
 - Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded - currently commented
   - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response

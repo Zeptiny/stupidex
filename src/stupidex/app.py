@@ -1,3 +1,6 @@
+import asyncio
+from enum import Enum
+
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.widgets import Input, LoadingIndicator, Static, TabbedContent, TabPane
@@ -18,14 +21,25 @@ from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import set_subagent_manager, SubagentRecord, SubagentState
 
 
+class InterruptState(Enum):
+    IDLE = "idle"
+    CONFIRM_AGENT = "confirm_agent"
+    CONFIRM_SUBAGENTS = "confirm_subagents"
+
+
 class Stupidex(App):
     CSS_PATH = "main.tcss"
-    BINDINGS = [("ctrl+p", "command_palette", "Commands")]
+    BINDINGS = [
+        ("ctrl+p", "command_palette", "Commands"),
+        ("escape", "interrupt", "Interrupt"),
+    ]
     COMMANDS = {SessionCommands}
 
     sessions: SessionManager = SessionManager()
     _subagent_widgets: dict[str, dict[str,
                                       ThinkingMessageWidget | AssistantMessageWidget | None]] = {}
+    _interrupt_state: InterruptState = InterruptState.IDLE
+    _active_worker: object | None = None  # Textual Worker
 
     @property
     def messages(self) -> list[Message]:
@@ -45,6 +59,7 @@ class Stupidex(App):
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
             yield Static("N/A Model", id="model")
+            yield Static("", id="interrupt-hint")
             yield Static("Context: 0 | Response: 0 | Total: 0", id="status")
 
     async def on_mount(self) -> None:
@@ -55,14 +70,82 @@ class Stupidex(App):
         self.query_one("#input", Input).focus()
         self.rerender_footer()
 
+    def _is_streaming(self) -> bool:
+        return self._active_worker is not None and not self._active_worker.is_finished
+
+    def _has_running_subagents(self) -> bool:
+        if not self.sessions.active:
+            return False
+        terminal = {SubagentState.COMPLETED,
+                    SubagentState.FAILED, SubagentState.INTERRUPTED}
+        return any(
+            r.state not in terminal
+            for r in self.sessions.active.subagent_manager._subagents.values()
+        )
+
+    async def action_interrupt(self) -> None:
+        hint = self.query_one("#interrupt-hint", Static)
+
+        if self._interrupt_state == InterruptState.IDLE:
+            if self._is_streaming():
+                self._interrupt_state = InterruptState.CONFIRM_AGENT
+                hint.update(
+                    "[bold yellow]Press Esc again to interrupt agent[/]")
+            elif self._has_running_subagents():
+                self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
+                hint.update(
+                    "[bold red]Press Esc again to interrupt subagents[/]")
+        elif self._interrupt_state == InterruptState.CONFIRM_AGENT:
+            self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
+            if self._active_worker and not self._active_worker.is_finished:
+                self._active_worker.cancel()
+            if self._has_running_subagents():
+                hint.update(
+                    "[bold red]Press Esc again to interrupt subagents[/]")
+            else:
+                self._interrupt_state = InterruptState.IDLE
+                hint.update("")
+        elif self._interrupt_state == InterruptState.CONFIRM_SUBAGENTS:
+            if self.sessions.active:
+                cancelled = self.sessions.active.subagent_manager.cancel_running()
+                if cancelled:
+                    names = []
+                    for sid in cancelled:
+                        record = self.sessions.active.subagent_manager.get_record(
+                            sid)
+                        if record:
+                            names.append(record.label or record.name)
+                    detail = ", ".join(
+                        names) if names else f"{len(cancelled)} subagent(s)"
+                    interrupt_msg = Message(
+                        role=MessageRole.ASSISTANT,
+                        content=f"[Subagents interrupted by user: {detail}]",
+                    )
+                    self.messages.append(interrupt_msg)
+                    try:
+                        await self.mount_message(interrupt_msg)
+                    except Exception:
+                        pass
+            self._interrupt_state = InterruptState.IDLE
+            hint.update("")
+
+    def _reset_interrupt_state(self) -> None:
+        self._interrupt_state = InterruptState.IDLE
+        try:
+            self.query_one("#interrupt-hint", Static).update("")
+        except Exception:
+            pass
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         user_msg = event.value
         event.input.clear()
         msg = Message(role=MessageRole.USER, content=user_msg)
         self.messages.append(msg)
         await self.mount_message(msg)
+        self._reset_interrupt_state()
         self.streaming_started()
-        self.run_worker(self._stream_response())
+        self._active_worker = self.run_worker(
+            self._stream_response(), exit_on_error=False)
 
     async def _stream_response(self) -> None:
         container = self.query_one("#output", ScrollableContainer)
@@ -106,13 +189,31 @@ class Stupidex(App):
                     content_widget = None
                 else:
                     if content_widget is None:
-                        self.messages.append(msg)
-                        content_widget = AssistantMessageWidget(msg)
-                        await container.mount(content_widget)
-                        content_widget.scroll_visible()
+                        if msg.content:
+                            self.messages.append(msg)
+                            content_widget = AssistantMessageWidget(msg)
+                            await container.mount(content_widget)
+                            content_widget.scroll_visible()
+                        elif msg.usage:
+                            self.messages.append(msg)
                     else:
-                        content_widget.update_content(msg.content)
-                        content_widget.msg.usage = msg.usage
+                        if msg.content:
+                            content_widget.update_content(msg.content)
+                        if msg.usage:
+                            content_widget.msg.usage = msg.usage
+                    if msg.usage:
+                        self.rerender_footer()
+        except asyncio.CancelledError:
+            interrupted_msg = Message(
+                role=MessageRole.ASSISTANT,
+                content="[Interrupted by user]",
+            )
+            self.messages.append(interrupted_msg)
+            try:
+                await self.mount_message(interrupted_msg)
+            except Exception:
+                pass
+            raise
         finally:
             self.streaming_finished()
 
@@ -121,6 +222,8 @@ class Stupidex(App):
 
     def streaming_finished(self) -> None:
         self.query_one("#spinner").display = False
+        if self._interrupt_state != InterruptState.CONFIRM_SUBAGENTS:
+            self._reset_interrupt_state()
         self.rerender_footer()
 
     async def _on_subagent_spawned(self, record: SubagentRecord) -> None:
@@ -178,13 +281,15 @@ class Stupidex(App):
             widgets["content"] = None
         else:
             if content_widget is None:
-                w = AssistantMessageWidget(msg)
-                await container.mount(w)
-                widgets["content"] = w
-                w.scroll_visible()
+                if msg.content:
+                    w = AssistantMessageWidget(msg)
+                    await container.mount(w)
+                    widgets["content"] = w
+                    w.scroll_visible()
             else:
-                content_widget.update_content(msg.content)
-                content_widget.refresh()
+                if msg.content:
+                    content_widget.update_content(msg.content)
+                    content_widget.refresh()
 
     async def _on_subagent_state_change(self, subagent_id: str, state: SubagentState) -> None:
         try:
@@ -248,7 +353,8 @@ class Stupidex(App):
     @staticmethod
     def _tab_label(record: SubagentRecord) -> str:
         indicator = {"pending": "◌", "running": "●",
-                     "completed": "✓", "failed": "✗"}
+                     "completed": "✓", "failed": "✗",
+                     "interrupted": "⊘"}
         return f"{indicator.get(record.state.value, '?')} {record.label}"
 
     def rerender_footer(self) -> None:
