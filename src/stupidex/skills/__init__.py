@@ -89,8 +89,8 @@ def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
 def seed_skills_dir(skills_dir: Path) -> None:
     skills_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get the source skills directory (where the default skills are)
-    source_skills_dir = Path(__file__).parent
+    # Get the source defaults directory (where the default skills are)
+    source_skills_dir = Path(__file__).parent / "defaults"
 
     # Copy all skill directories from source
     for source_skill_dir in sorted(source_skills_dir.iterdir()):
