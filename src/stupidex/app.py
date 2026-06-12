@@ -12,10 +12,10 @@ from stupidex.llm.client import stream_response
 from stupidex.widgets.message_widget import (
     AssistantMessageWidget,
     ThinkingMessageWidget,
-    ToolCallMessageWidget,
     ToolResultMessageWidget,
     UserMessageWidget,
     create_message_widget,
+    get_tool_action_label,
 )
 from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import set_subagent_manager, SubagentRecord, SubagentState
@@ -37,7 +37,7 @@ class Stupidex(App):
 
     sessions: SessionManager = SessionManager()
     _subagent_widgets: dict[str, dict[str,
-                                      ThinkingMessageWidget | AssistantMessageWidget | None]] = {}
+                                      ThinkingMessageWidget | AssistantMessageWidget | Static | None]] = {}
     _interrupt_state: InterruptState = InterruptState.IDLE
     _active_worker: object | None = None  # Textual Worker
 
@@ -152,6 +152,7 @@ class Stupidex(App):
 
         thinking_widget: ThinkingMessageWidget | None = None
         content_widget: AssistantMessageWidget | None = None
+        temp_widgets: list[Static] = []
 
         set_subagent_manager(self.sessions.active.subagent_manager)
         self.sessions.active.subagent_manager.on_spawn = self._on_subagent_spawned
@@ -175,13 +176,17 @@ class Stupidex(App):
                         thinking_widget.update_content(msg.content)
                 elif msg.type == MessageType.TOOL_CALL:
                     self.messages.append(msg)
-                    widget = ToolCallMessageWidget(msg)
-                    await container.mount(widget)
-                    widget.scroll_visible()
+                    tool_name = msg.metadata.get("tool_name", "")
+                    temp = Static(get_tool_action_label(tool_name), classes="temp-tool-message")
+                    await container.mount(temp)
+                    temp.scroll_visible()
+                    temp_widgets.append(temp)
                     thinking_widget = None
                     content_widget = None
                 elif msg.type == MessageType.TOOL_RESULT:
                     self.messages.append(msg)
+                    if temp_widgets:
+                        await temp_widgets.pop(0).remove()
                     widget = ToolResultMessageWidget(msg)
                     await container.mount(widget)
                     widget.scroll_visible()
@@ -204,6 +209,12 @@ class Stupidex(App):
                     if msg.usage:
                         self.rerender_footer()
         except asyncio.CancelledError:
+            for tw in temp_widgets:
+                try:
+                    await tw.remove()
+                except Exception:
+                    pass
+            temp_widgets.clear()
             interrupted_msg = Message(
                 role=MessageRole.ASSISTANT,
                 content="[Interrupted by user]",
@@ -248,9 +259,13 @@ class Stupidex(App):
             container = ScrollableContainer()
             await pane.mount(container)
 
-        widgets = self._subagent_widgets.setdefault(subagent_id, {})
+        widgets = self._subagent_widgets.setdefault(subagent_id, {"temp": []})
         thinking_widget = widgets.get("thinking")
         content_widget = widgets.get("content")
+        temp_widgets: list[Static] = widgets.get("temp", [])
+        if isinstance(temp_widgets, list) is False:
+            temp_widgets = []
+            widgets["temp"] = temp_widgets
 
         if msg.type == MessageType.THINKING:
             if thinking_widget is None:
@@ -260,14 +275,17 @@ class Stupidex(App):
                 w.scroll_visible()
             else:
                 thinking_widget.update_content(msg.content)
-                thinking_widget.refresh()
         elif msg.type == MessageType.TOOL_CALL:
-            w = ToolCallMessageWidget(msg)
-            await container.mount(w)
-            w.scroll_visible()
+            tool_name = msg.metadata.get("tool_name", "")
+            temp = Static(get_tool_action_label(tool_name), classes="temp-tool-message")
+            await container.mount(temp)
+            temp.scroll_visible()
+            temp_widgets.append(temp)
             widgets["thinking"] = None
             widgets["content"] = None
         elif msg.type == MessageType.TOOL_RESULT:
+            if temp_widgets:
+                await temp_widgets.pop(0).remove()
             w = ToolResultMessageWidget(msg)
             await container.mount(w)
             w.scroll_visible()
@@ -289,7 +307,6 @@ class Stupidex(App):
             else:
                 if msg.content:
                     content_widget.update_content(msg.content)
-                    content_widget.refresh()
 
     async def _on_subagent_state_change(self, subagent_id: str, state: SubagentState) -> None:
         try:
@@ -309,6 +326,8 @@ class Stupidex(App):
     async def mount_message(self, msg: Message) -> None:
         container = self.query_one("#output", ScrollableContainer)
         widget = create_message_widget(msg)
+        if widget is None:
+            return
         await container.mount(widget)
         widget.scroll_visible()
 
@@ -317,7 +336,8 @@ class Stupidex(App):
         await container.remove_children()
         for msg in self.messages:
             widget = create_message_widget(msg)
-            await container.mount(widget)
+            if widget is not None:
+                await container.mount(widget)
 
     async def rerender_all(self) -> None:
         if not self.sessions.active:

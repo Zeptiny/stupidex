@@ -28,6 +28,7 @@ class Tool:
     name: str
     description: str
     parameters: ToolParameter
+    action_label: str = ""
     type: str = "function"
     strict: bool = True
 

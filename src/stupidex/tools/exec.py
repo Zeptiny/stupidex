@@ -34,6 +34,7 @@ execute_command_tool = Tool(
         },
         required=["command", "description"]
     ),
+    action_label="Running...",
 )
 
 
