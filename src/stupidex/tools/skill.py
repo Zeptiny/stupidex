@@ -42,7 +42,7 @@ async def execute_skill(name: str) -> ExecutorResult:
 
     content = (
         f'<skill_content name="{e(skill.name)}">\n'
-        f'{skill_content}\n'
+        f'{e(skill_content)}\n'
         f'</skill_content>'
     )
 
