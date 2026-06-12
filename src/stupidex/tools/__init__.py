@@ -1,7 +1,7 @@
 from stupidex.tools.file_manipulation import read_tool, execute_read_tool, edit_tool, execute_edit_tool, read_directory, execute_read_directory_tool, glob_tool, execute_glob_tool, write_tool, execute_write_tool
 from stupidex.tools.search import grep_tool, execute_grep_tool
 from stupidex.tools.exec import execute_command_tool, execute_command
-from stupidex.tools.subagent import build_delegate_tool, execute_delegate_to_subagent, wait_for_subagent, execute_wait_for_subagent, list_subagents, execute_list_subagents
+from stupidex.tools.subagent import build_delegate_tool, execute_delegate_to_subagent, wait_for_subagent, execute_wait_for_subagent, list_subagents, execute_list_subagents, interrupt_subagents, execute_interrupt_subagents
 
 
 def get_tool_registry() -> dict[str, dict]:
@@ -16,4 +16,5 @@ def get_tool_registry() -> dict[str, dict]:
         "delegate_to_subagent": {"tool": build_delegate_tool(), "executor": execute_delegate_to_subagent},
         "wait_for_subagent": {"tool": wait_for_subagent, "executor": execute_wait_for_subagent},
         "list_subagents": {"tool": list_subagents, "executor": execute_list_subagents},
+        "interrupt_subagents": {"tool": interrupt_subagents, "executor": execute_interrupt_subagents},
     }
