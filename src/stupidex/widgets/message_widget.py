@@ -72,6 +72,12 @@ class ThinkingMessageWidget(Static):
 
     def update_content(self, content: str) -> None:
         self.msg.content = content
+        try:
+            collapsible = self.query_one(Collapsible)
+        except Exception:
+            return
+        if collapsible.collapsed:
+            return
         now = time.monotonic()
         if now - self._last_render_time >= _THROTTLE_INTERVAL:
             self._last_render_time = now
@@ -92,6 +98,10 @@ class ThinkingMessageWidget(Static):
         self._flush_scheduled = False
         self._last_render_time = time.monotonic()
         self._do_update()
+
+    def on_collapsible_toggle(self, event) -> None:
+        if not event.collapsed:
+            self._do_update()
 
 
 class AssistantMessageWidget(MessageWidget):
