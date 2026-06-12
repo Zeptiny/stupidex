@@ -114,6 +114,7 @@ class Sidebar(Vertical):
     Sidebar .finished-collapse {
         margin: 0;
         padding: 0 0;
+        border: none;
     }
 
     Sidebar .finished-collapse > CollapsibleTitle {
@@ -142,6 +143,7 @@ class Sidebar(Vertical):
     _prompt_tokens: int = 0
     _completion_tokens: int = 0
     _total_tokens: int = 0
+    _usage_by_view: dict = {}
     _subagent_records: list = []
     _active_view: str = "main"
     _last_token_update: float = 0
@@ -175,6 +177,17 @@ class Sidebar(Vertical):
     def set_active(self, view_id: str) -> None:
         self._active_view = view_id
         self._update_active_styles()
+        self._show_usage_for_view(view_id)
+
+    def _show_usage_for_view(self, view_id: str) -> None:
+        usage = self._usage_by_view.get(view_id)
+        if usage:
+            self._prompt_tokens, self._completion_tokens, self._total_tokens = usage
+        else:
+            self._prompt_tokens = 0
+            self._completion_tokens = 0
+            self._total_tokens = 0
+        self._flush_token_update()
 
     def _update_active_styles(self) -> None:
         try:
@@ -197,7 +210,10 @@ class Sidebar(Vertical):
         except Exception:
             pass
 
-    def update_tokens(self, prompt_tokens: int, completion_tokens: int, total_tokens: int) -> None:
+    def update_tokens(self, prompt_tokens: int, completion_tokens: int, total_tokens: int, view_id: str = "main") -> None:
+        self._usage_by_view[view_id] = (prompt_tokens, completion_tokens, total_tokens)
+        if view_id != self._active_view:
+            return
         self._prompt_tokens = prompt_tokens
         self._completion_tokens = completion_tokens
         self._total_tokens = total_tokens

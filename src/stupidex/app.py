@@ -258,6 +258,13 @@ class Stupidex(App):
         await self._update_sidebar_subagents()
 
     async def _on_subagent_message(self, subagent_id: str, msg: Message) -> None:
+        if msg.usage:
+            try:
+                sidebar = self.query_one("#sidebar", Sidebar)
+                sidebar.update_tokens(msg.usage.prompt_tokens, msg.usage.completion_tokens, msg.usage.total_tokens, view_id=subagent_id)
+            except Exception:
+                pass
+
         try:
             pane = self.query_one(f"#sub-{subagent_id}", TabPane)
         except Exception:
@@ -406,7 +413,7 @@ class Stupidex(App):
             u = last_msg.usage
             try:
                 sidebar = self.query_one("#sidebar", Sidebar)
-                sidebar.update_tokens(u.prompt_tokens, u.completion_tokens, u.total_tokens)
+                sidebar.update_tokens(u.prompt_tokens, u.completion_tokens, u.total_tokens, view_id="main")
             except Exception:
                 pass
 

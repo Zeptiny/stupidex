@@ -82,7 +82,6 @@ src/
 - Support for Anthropic API
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
 - Session saving to disk
-- Also expands to not updating the footer for subagent viewing
 - Bug: Automatically scrolling down after a message is finished
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool
