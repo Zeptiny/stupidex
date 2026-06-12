@@ -42,7 +42,7 @@ def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
             name=name,
             description=description,
             location=str(skill_file),
-            content=body.strip() if body.strip() else "This kisll have no contents",
+            content=body.strip(),
         )
         skills[name] = skill
 
