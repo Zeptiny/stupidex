@@ -3,6 +3,7 @@ from enum import Enum
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
+from textual.message import Message as TextualMessage
 from textual.timer import Timer
 from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
@@ -34,8 +35,8 @@ class Stupidex(App):
     BINDINGS = [
         ("ctrl+p", "command_palette", "Commands"),
         ("escape", "interrupt", "Interrupt"),
-        ("ctrl+enter", "submit_input", "Submit"),
-        ("ctrl+backspace", "clear_input", "Clear Input"),
+        ("ctrl+s", "submit_input", "Submit"),
+        ("ctrl+c", "clear_input", "Clear Input"),
     ]
     COMMANDS = {SessionCommands}
 
@@ -164,6 +165,9 @@ class Stupidex(App):
         self.streaming_started()
         self._active_worker = self.run_worker(
             self._stream_response(), exit_on_error=False)
+
+    async def on_submittextarea_submitted(self, event: TextArea.Submitted) -> None:
+        await self.action_submit_input()
 
     def action_clear_input(self) -> None:
         self.query_one("#input", TextArea).clear()

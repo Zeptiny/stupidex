@@ -19,8 +19,8 @@ stupidex
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+P` | Open command palette |
-| `Ctrl+Enter` | Submit input |
-| `Ctrl+Backspace` | Clear input |
+| `Ctrl+S` | Submit input |
+| `Ctrl+C` | Clear input |
 | `Escape` | Interrupt agent / subagents |
 
 ## Development
