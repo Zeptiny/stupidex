@@ -1,4 +1,5 @@
 import json
+import time
 from collections.abc import AsyncGenerator
 
 import litellm
@@ -9,6 +10,8 @@ from stupidex.domain.tool import ExecutorResult
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.tools import get_tool_registry
+
+_YIELD_THROTTLE = 0.1
 
 
 async def stream_response(
@@ -43,17 +46,25 @@ async def stream_response(
         tool_calls: list[dict] = []
         emitted_tool_calls: set[int] = set()
         usage = None
+        last_thinking_yield: float = 0
+        thinking_dirty: bool = False
 
         async for chunk in response:
             delta = chunk.choices[0].delta
 
             if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 thinking += delta.reasoning_content
-                yield Message(
-                    role=MessageRole.ASSISTANT,
-                    content=thinking,
-                    type=MessageType.THINKING,
-                )
+                now = time.monotonic()
+                if now - last_thinking_yield >= _YIELD_THROTTLE:
+                    last_thinking_yield = now
+                    thinking_dirty = False
+                    yield Message(
+                        role=MessageRole.ASSISTANT,
+                        content=thinking,
+                        type=MessageType.THINKING,
+                    )
+                else:
+                    thinking_dirty = True
 
             if delta.content:
                 content += delta.content
@@ -92,6 +103,13 @@ async def stream_response(
                     completion_tokens=chunk.usage.completion_tokens,
                     total_tokens=chunk.usage.total_tokens,
                 )
+
+        if thinking_dirty:
+            yield Message(
+                role=MessageRole.ASSISTANT,
+                content=thinking,
+                type=MessageType.THINKING,
+            )
 
         if not tool_calls:
             yield Message(role=MessageRole.ASSISTANT, content=content, usage=usage)

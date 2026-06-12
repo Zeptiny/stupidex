@@ -252,7 +252,6 @@ Project-level config: `.stupidex.json` (overrides home config).
 - Resolve supplied path in tool to avoid modifying/reading files out of the workspace
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
-- Bug: Long thinking may eat CPU when uncollapsed
 - Bug: "Offset 1 out of range"- Possibly when reading files without content
 - Message queue for the user
 - Limit available skills per subagent
