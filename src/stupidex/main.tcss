@@ -49,7 +49,7 @@ TextArea#input {
 }
 
 #model {
-    color: gray;
+    color: $text-muted;
     width: 16;
 }
 
@@ -60,7 +60,7 @@ TextArea#input {
 }
 
 UserMessageWidget {
-    background: #333333;
+    background: $surface;
     margin: 0 1;
     padding: 1;
 }
@@ -84,7 +84,7 @@ Collapsible.thinking-collapse.-collapsed {
 }
 
 Collapsible.thinking-collapse > CollapsibleTitle {
-    color: orange;
+    color: $warning;
     width: 1fr;
 }
 
@@ -115,7 +115,7 @@ Collapsible.tool-result-collapse.-collapsed {
 }
 
 Collapsible.tool-result-collapse > CollapsibleTitle {
-    color: skyblue;
+    color: $primary;
     text-style: dim;
     width: 1fr;
 }
