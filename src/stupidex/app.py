@@ -185,13 +185,20 @@ class Stupidex(App):
                     content_widget = None
                 else:
                     if content_widget is None:
-                        self.messages.append(msg)
-                        content_widget = AssistantMessageWidget(msg)
-                        await container.mount(content_widget)
-                        content_widget.scroll_visible()
+                        if msg.content:
+                            self.messages.append(msg)
+                            content_widget = AssistantMessageWidget(msg)
+                            await container.mount(content_widget)
+                            content_widget.scroll_visible()
+                        elif msg.usage:
+                            self.messages.append(msg)
                     else:
-                        content_widget.update_content(msg.content)
-                        content_widget.msg.usage = msg.usage
+                        if msg.content:
+                            content_widget.update_content(msg.content)
+                        if msg.usage:
+                            content_widget.msg.usage = msg.usage
+                    if msg.usage:
+                        self.rerender_footer()
         except asyncio.CancelledError:
             interrupted_msg = Message(
                 role=MessageRole.ASSISTANT,
@@ -270,13 +277,15 @@ class Stupidex(App):
             widgets["content"] = None
         else:
             if content_widget is None:
-                w = AssistantMessageWidget(msg)
-                await container.mount(w)
-                widgets["content"] = w
-                w.scroll_visible()
+                if msg.content:
+                    w = AssistantMessageWidget(msg)
+                    await container.mount(w)
+                    widgets["content"] = w
+                    w.scroll_visible()
             else:
-                content_widget.update_content(msg.content)
-                content_widget.refresh()
+                if msg.content:
+                    content_widget.update_content(msg.content)
+                    content_widget.refresh()
 
     async def _on_subagent_state_change(self, subagent_id: str, state: SubagentState) -> None:
         try:

@@ -85,6 +85,9 @@ async def stream_response(
             yield Message(role=MessageRole.ASSISTANT, content=content, usage=usage)
             return
 
+        if content or usage:
+            yield Message(role=MessageRole.ASSISTANT, content=content, usage=usage)
+
         assistant_msg: dict = {"role": "assistant",
                                "content": content or None, "tool_calls": tool_calls}
         api_messages.append(assistant_msg)
