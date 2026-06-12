@@ -75,6 +75,7 @@ _DEFAULT_AGENTS: dict[str, dict] = {
             "edit", "write", "execute_command",
             "delegate_to_subagent", "wait_for_subagent", "list_subagents",
             "interrupt_subagents",
+            "skill", "list_skills",
         ],
     },
     "explorer": {
