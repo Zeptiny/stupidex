@@ -12,6 +12,12 @@ from stupidex.tools.file_manipulation import (
     write_tool,
 )
 from stupidex.tools.search import execute_grep_tool, grep_tool
+from stupidex.tools.skill import (
+    build_list_skills_tool,
+    build_skill_tool,
+    execute_list_skills,
+    execute_skill,
+)
 from stupidex.tools.subagent import (
     build_delegate_tool,
     execute_delegate_to_subagent,
@@ -37,4 +43,6 @@ def get_tool_registry() -> dict[str, dict]:
         "wait_for_subagent": {"tool": wait_for_subagent, "executor": execute_wait_for_subagent},
         "list_subagents": {"tool": list_subagents, "executor": execute_list_subagents},
         "interrupt_subagents": {"tool": interrupt_subagents, "executor": execute_interrupt_subagents},
+        "skill": {"tool": build_skill_tool(), "executor": execute_skill},
+        "list_skills": {"tool": build_list_skills_tool(), "executor": execute_list_skills},
     }

@@ -6,8 +6,10 @@ from pathlib import Path
 HOME_CONFIG_DIR = Path.home() / ".stupidex"
 HOME_CONFIG_PATH = HOME_CONFIG_DIR / "config.json"
 HOME_AGENTS_DIR = HOME_CONFIG_DIR / "agents"
+HOME_SKILLS_DIR = HOME_CONFIG_DIR / "skills"
 PROJECT_CONFIG_NAME = ".stupidex.json"
 PROJECT_AGENTS_DIR = ".stupidex/agents"
+PROJECT_SKILLS_DIR = ".stupidex/skills"
 ENV_PREFIX = "STUPIDEX_"
 
 
@@ -129,6 +131,9 @@ class ConfigManager:
         from stupidex.agents import load_agents, seed_agents_dir
         seed_agents_dir(HOME_AGENTS_DIR)
         load_agents()
+        from stupidex.skills import load_skills, seed_skills_dir
+        seed_skills_dir(HOME_SKILLS_DIR)
+        load_skills()
 
     @classmethod
     def reset(cls) -> None:
