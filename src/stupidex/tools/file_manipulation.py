@@ -183,7 +183,7 @@ glob_tool = Tool(
         },
         required=["directory_path", "pattern"]
     ),
-    action_label="Globing...",
+    action_label="Globbing...",
 )
 
 

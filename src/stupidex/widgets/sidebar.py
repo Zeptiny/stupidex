@@ -143,11 +143,14 @@ class Sidebar(Vertical):
     _prompt_tokens: int = 0
     _completion_tokens: int = 0
     _total_tokens: int = 0
-    _usage_by_view: dict = {}
-    _subagent_records: list = []
     _active_view: str = "main"
     _last_token_update: float = 0
     _token_flush_scheduled: bool = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._usage_by_view: dict = {}
+        self._subagent_records: list = []
 
     def compose(self):
         yield Static("Tokens", id="sidebar-tokens-label")

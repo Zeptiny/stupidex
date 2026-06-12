@@ -48,7 +48,7 @@ src/
       exec.py                  # Executing tools (Currently command tool)
     widgets/
       message_widget.py        # Textual widgets for messages with streaming support
-      sidebar                  # The right sidebar of the interface
+      sidebar.py                  # The right sidebar of the interface
 ```
 
 
@@ -83,7 +83,7 @@ src/
 - Bug: Automatically scrolling down after a message is finished
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool
-- Resolve supplied path in tool to avoid modifing/reading files out of the workspace
+- Resolve supplied path in tool to avoid modifying/reading files out of the workspace
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Bug: Long thinking may eat CPU when uncollapsed

@@ -38,11 +38,14 @@ class Stupidex(App):
     COMMANDS = {SessionCommands}
 
     sessions: SessionManager = SessionManager()
-    _subagent_widgets: dict[str, dict[str,
-                                      ThinkingMessageWidget | AssistantMessageWidget | Static | None]] = {}
     _interrupt_state: InterruptState = InterruptState.IDLE
     _active_worker: object | None = None  # Textual Worker
     _subagent_timer: Timer | None = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._subagent_widgets: dict[str, dict[str,
+                                               ThinkingMessageWidget | AssistantMessageWidget | Static | None]] = {}
 
     @property
     def messages(self) -> list[Message]:
