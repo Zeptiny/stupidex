@@ -3,6 +3,7 @@ from enum import Enum
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
+from textual.timer import Timer
 from textual.widgets import Input, LoadingIndicator, Static, TabbedContent, TabPane
 
 from stupidex.commands.session_commands import SessionCommands
@@ -17,6 +18,7 @@ from stupidex.widgets.message_widget import (
     create_message_widget,
     get_tool_action_label,
 )
+from stupidex.widgets.sidebar import Sidebar, SidebarMainSelected, SidebarSubagentSelected
 from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import set_subagent_manager, SubagentRecord, SubagentState
 
@@ -40,6 +42,7 @@ class Stupidex(App):
                                       ThinkingMessageWidget | AssistantMessageWidget | Static | None]] = {}
     _interrupt_state: InterruptState = InterruptState.IDLE
     _active_worker: object | None = None  # Textual Worker
+    _subagent_timer: Timer | None = None
 
     @property
     def messages(self) -> list[Message]:
@@ -60,7 +63,7 @@ class Stupidex(App):
             yield LoadingIndicator(id="spinner")
             yield Static("N/A Model", id="model")
             yield Static("", id="interrupt-hint")
-            yield Static("Context: 0 | Response: 0 | Total: 0", id="status")
+        yield Sidebar(id="sidebar")
 
     async def on_mount(self) -> None:
         self.sessions.create()
@@ -68,7 +71,12 @@ class Stupidex(App):
         await self.mount_all_messages()
         self.query_one("#input", Input).display = True
         self.query_one("#input", Input).focus()
-        self.rerender_footer()
+        try:
+            sidebar = self.query_one("#sidebar", Sidebar)
+            sidebar.set_active("main")
+        except Exception:
+            pass
+        await self.rerender_footer()
 
     def _is_streaming(self) -> bool:
         return self._active_worker is not None and not self._active_worker.is_finished
@@ -207,7 +215,7 @@ class Stupidex(App):
                         if msg.usage:
                             content_widget.msg.usage = msg.usage
                     if msg.usage:
-                        self.rerender_footer()
+                        await self.rerender_footer()
         except asyncio.CancelledError:
             for tw in temp_widgets:
                 try:
@@ -226,16 +234,16 @@ class Stupidex(App):
                 pass
             raise
         finally:
-            self.streaming_finished()
+            await self.streaming_finished()
 
     def streaming_started(self) -> None:
         self.query_one("#spinner").display = True
 
-    def streaming_finished(self) -> None:
+    async def streaming_finished(self) -> None:
         self.query_one("#spinner").display = False
         if self._interrupt_state != InterruptState.CONFIRM_SUBAGENTS:
             self._reset_interrupt_state()
-        self.rerender_footer()
+        await self.rerender_footer()
 
     async def _on_subagent_spawned(self, record: SubagentRecord) -> None:
         record.on_message = lambda msg, rid=record.id: self._on_subagent_message(
@@ -247,6 +255,7 @@ class Stupidex(App):
         await tabs.add_pane(pane)
         for msg in record.messages[record.messages_mounted:]:
             await self._on_subagent_message(record.id, msg)
+        await self._update_sidebar_subagents()
 
     async def _on_subagent_message(self, subagent_id: str, msg: Message) -> None:
         try:
@@ -318,10 +327,21 @@ class Stupidex(App):
         if not record:
             return
         tab.update(self._tab_label(record))
+        await self._update_sidebar_subagents()
 
-    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        input_widget = self.query_one("#input", Input)
-        input_widget.display = event.pane.id == "main"
+    def on_sidebar_main_selected(self, event: SidebarMainSelected) -> None:
+        tabs = self.query_one("#tabs", TabbedContent)
+        tabs.active = "main"
+        self.query_one("#input", Input).display = True
+        sidebar = self.query_one("#sidebar", Sidebar)
+        sidebar.set_active("main")
+
+    def on_sidebar_subagent_selected(self, event: SidebarSubagentSelected) -> None:
+        tabs = self.query_one("#tabs", TabbedContent)
+        tabs.active = f"sub-{event.subagent_id}"
+        self.query_one("#input", Input).display = False
+        sidebar = self.query_one("#sidebar", Sidebar)
+        sidebar.set_active(event.subagent_id)
 
     async def mount_message(self, msg: Message) -> None:
         container = self.query_one("#output", ScrollableContainer)
@@ -346,7 +366,7 @@ class Stupidex(App):
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
         await self._sync_subagent_tabs()
-        self.rerender_footer()
+        await self.rerender_footer()
 
     async def _sync_subagent_tabs(self) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
@@ -377,21 +397,45 @@ class Stupidex(App):
                      "interrupted": "⊘"}
         return f"{indicator.get(record.state.value, '?')} {record.label}"
 
-    def rerender_footer(self) -> None:
+    async def rerender_footer(self) -> None:
         if not self.sessions.active:
             return
 
         last_msg = self.sessions.active.messages[-1] if self.sessions.active.messages else None
         if last_msg and last_msg.usage:
             u = last_msg.usage
-            self.query_one("#status", Static).update(
-                f"Context: {u.prompt_tokens} | Response: {u.completion_tokens} | Total: {u.total_tokens}"
-            )
-        else:
-            self.query_one("#status", Static).update(
-                "Context: 0 | Response: 0 | Total: 0")
+            try:
+                sidebar = self.query_one("#sidebar", Sidebar)
+                sidebar.update_tokens(u.prompt_tokens, u.completion_tokens, u.total_tokens)
+            except Exception:
+                pass
 
         if self.model:
             self.query_one("#model", Static).update(f"{self.model}")
         else:
             self.query_one("#model", Static).update("No Model")
+
+        await self._update_sidebar_subagents()
+
+    async def _update_sidebar_subagents(self) -> None:
+        try:
+            sidebar = self.query_one("#sidebar", Sidebar)
+        except Exception:
+            return
+        if self.sessions.active:
+            records = list(self.sessions.active.subagent_manager._subagents.values())
+            await sidebar.update_subagents(records)
+        else:
+            await sidebar.update_subagents([])
+        self._manage_subagent_timer()
+
+    def _manage_subagent_timer(self) -> None:
+        has_running = self._has_running_subagents()
+        if has_running and self._subagent_timer is None:
+            self._subagent_timer = self.set_interval(1.0, self._tick_subagent_timer)
+        elif not has_running and self._subagent_timer is not None:
+            self._subagent_timer.stop()
+            self._subagent_timer = None
+
+    async def _tick_subagent_timer(self) -> None:
+        await self._update_sidebar_subagents()
