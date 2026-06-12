@@ -7,7 +7,7 @@ import aiofiles
 
 grep_tool = Tool(
     name="grep",
-    description="Search for a pattern in files within a directory and return matching lines with file paths and line numbers",
+    description="Search file contents using regex. Returns matching lines with file paths and line numbers. Use to find function definitions, variable references, error messages, or any text pattern across the codebase.",
     parameters=ToolParameter(
         properties={
             "pattern": ToolParameterProperties(

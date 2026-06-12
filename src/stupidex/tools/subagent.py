@@ -21,16 +21,16 @@ def build_delegate_tool() -> Tool:
     )
     return Tool(
         name="delegate_to_subagent",
-        description="Delegate a task to a subagent. Subagents do not share context and must be given explicit instructions.",
+        description="Delegate a task to a specialized subagent with an isolated context. Subagents do not share your context — you must provide all necessary information in the task description. Subagents cannot create subagents. Avoid spawning parallel subagents that edit the same files.",
         parameters=ToolParameter(
             properties={
                 "name": ToolParameterProperties(
                     type="string",
-                    description="A descriptive name for this subagent instance"
+                    description="A descriptive name for this subagent instance (e.g. 'explore auth module', 'review payment flow')"
                 ),
                 "task": ToolParameterProperties(
                     type="string",
-                    description="The subagent task with detailed instructions"
+                    description="The complete task description. Include all context the subagent needs: file paths, code snippets, requirements, constraints, and what to return."
                 ),
                 "type": ToolParameterProperties(
                     type="string",
@@ -85,7 +85,7 @@ async def execute_delegate_to_subagent(name: str, task: str, type: str, tier: st
 
 wait_for_subagent = Tool(
     name="wait_for_subagent",
-    description="Wait for one or more subagents to complete and get their results",
+    description="Wait for one or more subagents to complete and get their results. Returns the subagent's final output, status, and any errors. Use after delegate_to_subagent to collect results.",
     parameters=ToolParameter(
         properties={
             "subagent_ids": ToolParameterProperties(
@@ -146,7 +146,7 @@ async def execute_wait_for_subagent(subagent_ids: list[str]) -> ExecutorResult:
 
 list_subagents = Tool(
     name="list_subagents",
-    description="List all subagents and their current states",
+    description="List all active and completed subagents with their current state, task description, and elapsed time. Use to check progress of running subagents or review what was dispatched.",
     parameters=ToolParameter(properties={}, required=[]),
 )
 
