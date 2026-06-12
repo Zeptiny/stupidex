@@ -91,6 +91,10 @@ class Stupidex(App):
                 self._interrupt_state = InterruptState.CONFIRM_AGENT
                 hint.update(
                     "[bold yellow]Press Esc again to interrupt agent[/]")
+            elif self._has_running_subagents():
+                self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
+                hint.update(
+                    "[bold red]Press Esc again to interrupt subagents[/]")
         elif self._interrupt_state == InterruptState.CONFIRM_AGENT:
             self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
             if self._active_worker and not self._active_worker.is_finished:
