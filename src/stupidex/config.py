@@ -146,8 +146,24 @@ class ConfigManager:
         if cls._instance is None:
             return
         HOME_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(HOME_CONFIG_PATH, "w") as f:
-            json.dump(asdict(cls._instance), f, indent=2)
+        tmp = HOME_CONFIG_PATH.with_suffix(".tmp")
+        try:
+            with open(tmp, "w") as f:
+                json.dump(asdict(cls._instance), f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, HOME_CONFIG_PATH)
+            dir_fd = os.open(str(HOME_CONFIG_DIR), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except BaseException:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
 
 def get_config() -> Config:
