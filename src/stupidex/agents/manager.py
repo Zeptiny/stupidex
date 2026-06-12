@@ -3,24 +3,25 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Callable, Any, Coroutine
+from typing import TYPE_CHECKING, Any
 
 from stupidex.domain.agent import Agent
 
 if TYPE_CHECKING:
     from stupidex.domain.message import Message
 
-_current_manager: ContextVar['SubagentManager'] = ContextVar('current_manager')
+_current_manager: ContextVar[SubagentManager] = ContextVar('current_manager')
 
 
-def get_subagent_manager() -> 'SubagentManager':
+def get_subagent_manager() -> SubagentManager:
     return _current_manager.get()
 
 
-def set_subagent_manager(manager: 'SubagentManager') -> None:
+def set_subagent_manager(manager: SubagentManager) -> None:
     _current_manager.set(manager)
 
 
@@ -96,9 +97,9 @@ class SubagentManager:
     async def spawn(self, name: str, task: str, agent_type: str, model: str | None = None) -> SubagentRecord:
         """Spawn a subagent as an asyncio task. Returns the record immediately."""
         # Lazy imports to avoid circular dependency
-        from stupidex.llm.client import stream_response
-        from stupidex.domain.message import Message, MessageRole, MessageType
         from stupidex.agents import get_agent_registry
+        from stupidex.domain.message import Message, MessageRole, MessageType
+        from stupidex.llm.client import stream_response
 
         registry = get_agent_registry()
         if agent_type not in registry:

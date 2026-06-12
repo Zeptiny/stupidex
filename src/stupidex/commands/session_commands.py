@@ -1,5 +1,7 @@
 from functools import partial
+
 from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
+
 from stupidex.llm.models import list_models
 from stupidex.screens.model_picker import ModelPicker
 from stupidex.screens.session_picker import SessionPicker

@@ -23,6 +23,26 @@ stupidex
 | `Ctrl+C` | Clear input |
 | `Escape` | Interrupt agent / subagents |
 
+## Linting
+
+The project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
+Configuration is in `pyproject.toml`:
+
+- **Target**: Python 3.11
+- **Line length**: 120
+- **Rules**: `E`, `F`, `I`, `N`, `W`, `UP`, `B`, `SIM` (with `E501` and `SIM105` ignored)
+
+Run locally:
+
+```bash
+ruff check src/        # lint
+ruff check src/ --fix  # auto-fix
+```
+
+Linting runs automatically on push/PR to `main` via GitHub Actions (`.github/workflows/lint.yml`).
+
+**VSCode**: Install the [Ruff extension](https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff) — the `.vscode/settings.json` is already configured for format-on-save and auto-fix on save.
+
 ## Development
 
 The project uses the `src` layout:
@@ -98,6 +118,8 @@ src/
 - Bug: Long thinking may eat CPU when uncollapsed
 - Bug: "Offset 1 out of range"- Possibly when reading files without content
 - Message queue for the user
+- UI Bug: Selected model is not updating when changing, only when sending message
+- UI Bug: Token usage is not updated when switching/creating sessions
 
 # Considerations
 - Also make the read tool usable with directories?

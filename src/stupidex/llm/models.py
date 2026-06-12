@@ -1,5 +1,7 @@
 from dataclasses import dataclass
+
 import httpx
+
 from stupidex.config import get_config
 
 

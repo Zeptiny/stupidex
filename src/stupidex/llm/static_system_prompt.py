@@ -1,5 +1,6 @@
-from stupidex.domain.message import Message, MessageRole, MessageType
 import platform
+
+from stupidex.domain.message import Message, MessageRole, MessageType
 
 
 def build_static_system_prompt(system_prompt: str) -> Message:
@@ -7,7 +8,7 @@ def build_static_system_prompt(system_prompt: str) -> Message:
     <instructions>
     {system_prompt}
     </instructions>
-    
+
     <user_operating_system>{_get_os_info()}</user_operating_system>
     """
 

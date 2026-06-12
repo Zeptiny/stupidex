@@ -1,10 +1,11 @@
 import os
 from datetime import datetime
 from xml.sax.saxutils import escape
+
+from stupidex.agents.manager import get_subagent_manager
 from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.utils import directory_tree
-from stupidex.agents.manager import get_subagent_manager
 
 
 def build_dynamic_system_prompt() -> Message:

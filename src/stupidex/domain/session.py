@@ -1,9 +1,10 @@
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-import uuid
+
+from stupidex.agents.manager import SubagentManager
 from stupidex.config import get_config
 from stupidex.domain.message import Message
-from stupidex.agents.manager import SubagentManager
 
 
 @dataclass

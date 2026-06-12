@@ -1,6 +1,7 @@
 from textual.screen import Screen
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
+
 from stupidex.domain.session import Session
 
 

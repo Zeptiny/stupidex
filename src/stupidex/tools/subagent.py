@@ -1,12 +1,11 @@
 import time
 from xml.sax.saxutils import escape
 
-from stupidex.config import get_model_for_tier
-from stupidex.domain.agent import ModelTier, TIER_DESCRIPTIONS
-from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import get_subagent_manager
-from stupidex.domain.agent import AgentTypes
+from stupidex.config import get_model_for_tier
+from stupidex.domain.agent import TIER_DESCRIPTIONS, AgentTypes, ModelTier
+from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 
 
 def build_delegate_tool() -> Tool:

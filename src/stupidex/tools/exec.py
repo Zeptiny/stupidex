@@ -2,9 +2,9 @@ import asyncio
 import os
 import shlex
 import signal
+
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
-
 
 execute_command_tool = Tool(
     name="execute_command",
@@ -71,7 +71,7 @@ async def execute_command(
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except (OSError, AttributeError):
