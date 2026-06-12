@@ -8,7 +8,7 @@ from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParame
 
 execute_command_tool = Tool(
     name="execute_command",
-    description="Execute a system command using subprocess and return the output",
+    description="Execute a shell command and return its output. Use for running tests, git commands, build tools, linting, and other CLI operations. Prefer this over writing scripts — run commands directly.",
     parameters=ToolParameter(
         properties={
             "command": ToolParameterProperties(
@@ -17,7 +17,7 @@ execute_command_tool = Tool(
             ),
             "description": ToolParameterProperties(
                 type="string",
-                description="A brief description of what the command does(for display purposes)"
+                description="A brief description of what the command does (for display purposes)"
             ),
             "working_directory": ToolParameterProperties(
                 type="string",

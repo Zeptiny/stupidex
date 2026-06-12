@@ -10,7 +10,7 @@ from stupidex.utils import directory_tree
 
 read_tool = Tool(
     name="read",
-    description="Read the content of a file in the current working directory",
+    description="Read the content of a file. Returns lines with line numbers. Use offset/limit to read specific sections of large files rather than reading the entire file.",
     parameters=ToolParameter(
         properties={
             "file_path": ToolParameterProperties(
@@ -57,7 +57,7 @@ async def execute_read_tool(file_path: str, offset: int = 1, limit: int | None =
 
 edit_tool = Tool(
     name="edit",
-    description="Edit a file in the current working directory",
+    description="Replace an exact string match in a file. The old_string must be found exactly once in the file (unless replace_all is true). Use replace_all=false for targeted single edits; use replace_all=true for renaming a variable/function across a file.",
     parameters=ToolParameter(
         properties={
             "file_path": ToolParameterProperties(
@@ -66,15 +66,15 @@ edit_tool = Tool(
             ),
             "old_string": ToolParameterProperties(
                 type="string",
-                description="The string to be replaced in the file"
+                description="The exact string to find and replace. Must match the file content exactly, including whitespace and indentation."
             ),
             "new_string": ToolParameterProperties(
                 type="string",
-                description="The new string to replace the old string"
+                description="The replacement string"
             ),
             "replace_all": ToolParameterProperties(
                 type="boolean",
-                description="Whether to replace all occurrences of the old string (default: false)"
+                description="Whether to replace all occurrences of the old string (default: false). Use true for renames."
             ),
         },
         required=["file_path", "old_string", "new_string"]
@@ -119,7 +119,7 @@ async def execute_edit_tool(file_path: str, old_string: str, new_string: str, re
 
 read_directory = Tool(
     name="read_directory",
-    description="Read the contents of a directory",
+    description="List the contents of a directory as a tree. Use this to understand project structure before reading individual files. Returns directory names with trailing / and file names.",
     parameters=ToolParameter(
         properties={
             "directory_path": ToolParameterProperties(
@@ -162,7 +162,7 @@ async def execute_read_directory_tool(directory_path: str, max_depth: int | None
 
 glob_tool = Tool(
     name="glob",
-    description="Search for files matching a glob pattern in a directory and return their relative paths",
+    description="Find files matching a glob pattern. Use to locate files by name when you know the pattern (e.g. '*.py', '**/*.test.ts'). Returns matching file paths sorted by modification time.",
     parameters=ToolParameter(
         properties={
             "directory_path": ToolParameterProperties(
@@ -217,16 +217,16 @@ async def execute_glob_tool(directory_path: str, pattern: str, include_hidden: b
 
 write_tool = Tool(
     name="write",
-    description="Create new files or rewrite file content, directories are auto created",
+    description="Create a new file or completely rewrite an existing file. Parent directories are created automatically. WARNING: This overwrites the entire file — use edit for partial changes to existing files.",
     parameters=ToolParameter(
         properties={
             "file_path": ToolParameterProperties(
                 type="string",
-                description="The file directory, relative to the current working directory"
+                description="The file path, relative to the current working directory"
             ),
             "content": ToolParameterProperties(
                 type="string",
-                description="The file content"
+                description="The complete file content to write"
             ),
         },
         required=["file_path", "content"]
