@@ -20,7 +20,7 @@ from stupidex.widgets.message_widget import (
     create_message_widget,
     get_tool_action_label,
 )
-from stupidex.widgets.sidebar import Sidebar, SidebarMainSelected, SidebarSubagentSelected
+from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, SidebarSubagentSelected
 
 
 class InterruptState(Enum):
@@ -36,6 +36,7 @@ class Stupidex(App):
         ("escape", "interrupt", "Interrupt"),
         ("ctrl+s", "submit_input", "Submit"),
         ("ctrl+c", "clear_input", "Clear Input"),
+        ("ctrl+b", "toggle_sidebar_focus", "Toggle Sidebar"),
     ]
     COMMANDS = {SessionCommands}
 
@@ -169,6 +170,27 @@ class Stupidex(App):
 
     def action_clear_input(self) -> None:
         self.query_one("#input", TextArea).clear()
+
+    def action_toggle_sidebar_focus(self) -> None:
+        focused = self.focused
+        if isinstance(focused, NavEntry):
+            self._switch_to_main_view()
+            self.query_one("#input", TextArea).focus()
+        else:
+            try:
+                sidebar = self.query_one("#sidebar", Sidebar)
+                entries = sidebar._get_focusable_entries()
+                if entries:
+                    entries[0].focus()
+            except Exception:
+                pass
+
+    def _switch_to_main_view(self) -> None:
+        tabs = self.query_one("#tabs", TabbedContent)
+        tabs.active = "main"
+        self.query_one("#input", TextArea).display = True
+        sidebar = self.query_one("#sidebar", Sidebar)
+        sidebar.set_active("main")
 
     async def _stream_response(self) -> None:
         container = self.query_one("#output", ScrollableContainer)

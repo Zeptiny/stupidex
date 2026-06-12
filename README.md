@@ -48,7 +48,10 @@ OPENAI_API_KEY="your key" stupidex
 | `Ctrl+P` | Open command palette |
 | `Ctrl+S` | Submit input |
 | `Ctrl+C` | Clear input |
+| `Ctrl+B` | Toggle focus between input and sidebar |
 | `Escape` | Interrupt agent / subagents |
+| `↑` / `↓` | Navigate sidebar entries (when sidebar is focused) |
+| `Enter` / `Space` | Activate sidebar entry or toggle collapsible section |
 
 ## Agents
 
@@ -253,7 +256,6 @@ Project-level config: `.stupidex.json` (overrides home config).
 - Bug: "Offset 1 out of range"- Possibly when reading files without content
 - Message queue for the user
 - Limit available skills per subagent
-- UI: Cannot use keyboard to navigate between agents
 
 # Considerations
 - Make the read tool usable with directories?
