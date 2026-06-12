@@ -423,14 +423,19 @@ class Stupidex(App):
         if not self.sessions.active:
             return
 
-        last_msg = self.sessions.active.messages[-1] if self.sessions.active.messages else None
-        if last_msg and last_msg.usage:
-            u = last_msg.usage
-            try:
-                sidebar = self.query_one("#sidebar", Sidebar)
-                sidebar.update_tokens(u.prompt_tokens, u.completion_tokens, u.total_tokens, view_id="main")
-            except Exception:
-                pass
+        last_usage = None
+        for msg in reversed(self.sessions.active.messages):
+            if msg.usage:
+                last_usage = msg.usage
+                break
+        try:
+            sidebar = self.query_one("#sidebar", Sidebar)
+            if last_usage:
+                sidebar.update_tokens(last_usage.prompt_tokens, last_usage.completion_tokens, last_usage.total_tokens, view_id="main")
+            else:
+                sidebar.update_tokens(0, 0, 0, view_id="main")
+        except Exception:
+            pass
 
         if self.model:
             self.query_one("#model", Static).update(f"{self.model}")

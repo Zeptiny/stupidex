@@ -54,9 +54,9 @@ class SessionCommands(Provider):
             case "/model":
                 models = list_models()
 
-                def on_picked(result: str | None):
+                async def on_picked(result: str | None):
                     if result:
                         self.app.sessions.change_model(result)
-                        self.app.rerender_footer()
+                        await self.app.rerender_footer()
 
                 self.app.push_screen(ModelPicker(models), on_picked)
