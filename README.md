@@ -53,6 +53,16 @@ src/
 
 # TODO - In priority order
 - Todo management tool
+  - Should act more as a task tool
+    - Subagents can be assigned a task at their creation, receiving that information
+    - Task have states
+      - open, in progress, blocked, abandoned, done, needs_review, under_review
+    - Send system reminder if the agent tries to exit when not all tasks are done
+      - This can also be sent to normal subagents when trying to exit without message
+        - Should we even have normal subagents in this case?
+    - Reviewers are dispatched
+      - Spec reviewer + code quality reviewer
+    - THIS WILL REQUIRE A PLANNING MODE, POSSIBLY USING A DEDICATED TOOL FOR THAT
 - Provider selector
 - MCP 
 - Interrupt agent during streaming
