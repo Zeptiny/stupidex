@@ -180,6 +180,8 @@ def get_current_theme() -> str:
 
 
 def set_current_theme(name: str) -> None:
+    from stupidex.themes import get_theme_registry
+    get_theme_registry().get(name)  # raises ValueError for unknown theme
     cfg = get_config()
     cfg.theme = name
     ConfigManager.save()
