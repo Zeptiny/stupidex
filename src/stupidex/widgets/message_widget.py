@@ -41,7 +41,7 @@ class MessageWidget(Static):
 
 class UserMessageWidget(MessageWidget):
     def _build_renderable(self):
-        return Panel(Markdown(self.msg.content), style="green")
+        return Markdown(self.msg.content)
 
 
 class ThinkingMessageWidget(Static):
@@ -87,7 +87,7 @@ class ThinkingMessageWidget(Static):
 
 class AssistantMessageWidget(MessageWidget):
     def _build_renderable(self):
-        return Panel(Markdown(self.msg.content))
+        return Markdown(self.msg.content)
 
 
 class ToolCallMessageWidget(MessageWidget):

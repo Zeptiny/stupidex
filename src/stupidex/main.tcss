@@ -61,9 +61,19 @@ Input#input {
     margin-right: 2;
 }
 
+UserMessageWidget {
+    background: #333333;
+    margin: 0 1;
+    padding: 1;
+}
+
+AssistantMessageWidget {
+    margin: 0 1;
+    padding: 1;
+}
+
 /* Collapse widgets: override Textual defaults to match Rich.Panel style */
 Collapsible.thinking-collapse {
-    border: round orange;
     background: transparent;
     height: auto;
     margin: 0;
@@ -88,7 +98,6 @@ Collapsible.thinking-collapse > Contents {
 }
 
 Collapsible.tool-result-collapse {
-    border: round skyblue;
     background: transparent;
     height: auto;
     margin: 0;
