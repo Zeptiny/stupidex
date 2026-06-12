@@ -52,6 +52,10 @@ src/
 
 
 # TODO - In priority order
+- Skills
+- Concurrency control for file locking
+- MCP 
+- LSP
 - Todo management tool
   - Should act more as a task tool
     - Subagents can be assigned a task at their creation, receiving that information
@@ -64,13 +68,7 @@ src/
       - Spec reviewer + code quality reviewer
     - THIS WILL REQUIRE A PLANNING MODE, POSSIBLY USING A DEDICATED TOOL FOR THAT
 - Provider selector
-- MCP 
-- Interrupt agent during streaming
-  - How to handle subagents in this case?
-- Skills
-- LSP
 - Approval / permission system
-- Concurrency control for file locking
 - AGENTS.md handling
   - Also /init command for it
 
@@ -86,9 +84,6 @@ src/
 - Session saving to disk
 - Also expands to not updating the footer for subagent viewing
 - Bug: Automatically scrolling down after a message is finished
-- Bug: Both TOOL_CALL and TOOL_RESPONSE widgets are shown after it is responded - currently commented
-  - Have a default message for each tool (Such as "Reading...") to be used and then delete/replace the call with the response
-  - Show the TOOL_CALL while the agent is writing the tool (Or in a similar way)
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool
 - Resolve supplied path in tool to avoid modifing/reading files out of the workspace
@@ -100,7 +95,6 @@ src/
 # Considerations
 - Also make the read tool usable with directories?
 - Remove the list_subagents tool?
-
 
 # Some ground rules
 - Absolute imports only
