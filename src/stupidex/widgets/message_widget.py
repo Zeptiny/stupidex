@@ -1,3 +1,4 @@
+import time
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
@@ -6,12 +7,16 @@ from textual.widgets import Collapsible, Static
 
 from stupidex.domain.message import Message, MessageRole, MessageType
 
+_THROTTLE_INTERVAL = 0.2
+
 
 class MessageWidget(Static):
     """Base widget for displaying a chat message."""
 
     def __init__(self, msg: Message, **kwargs):
         self.msg = msg
+        self._last_render_time: float = 0
+        self._flush_scheduled: bool = False
         super().__init__(self._build_renderable(), **kwargs)
 
     def _build_renderable(self):
@@ -19,6 +24,18 @@ class MessageWidget(Static):
 
     def update_content(self, content: str) -> None:
         self.msg.content = content
+        now = time.monotonic()
+        if now - self._last_render_time >= _THROTTLE_INTERVAL:
+            self._last_render_time = now
+            self.update(self._build_renderable())
+        elif not self._flush_scheduled:
+            self._flush_scheduled = True
+            remaining = _THROTTLE_INTERVAL - (now - self._last_render_time)
+            self.set_timer(remaining, self._flush_update)
+
+    def _flush_update(self) -> None:
+        self._flush_scheduled = False
+        self._last_render_time = time.monotonic()
         self.update(self._build_renderable())
 
 
@@ -32,6 +49,8 @@ class ThinkingMessageWidget(Static):
 
     def __init__(self, msg: Message, **kwargs):
         self.msg = msg
+        self._last_render_time: float = 0
+        self._flush_scheduled: bool = False
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
@@ -44,11 +63,26 @@ class ThinkingMessageWidget(Static):
 
     def update_content(self, content: str) -> None:
         self.msg.content = content
+        now = time.monotonic()
+        if now - self._last_render_time >= _THROTTLE_INTERVAL:
+            self._last_render_time = now
+            self._do_update()
+        elif not self._flush_scheduled:
+            self._flush_scheduled = True
+            remaining = _THROTTLE_INTERVAL - (now - self._last_render_time)
+            self.set_timer(remaining, self._flush_update)
+
+    def _do_update(self) -> None:
         try:
             content_widget = self.query_one(".thinking-content", Static)
             content_widget.update(self.msg.content)
         except Exception:
             pass
+
+    def _flush_update(self) -> None:
+        self._flush_scheduled = False
+        self._last_render_time = time.monotonic()
+        self._do_update()
 
 
 class AssistantMessageWidget(MessageWidget):
