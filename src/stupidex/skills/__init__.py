@@ -31,8 +31,8 @@ def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
 
         metadata, body = parse_frontmatter(content)
 
-        name = metadata.get('name', path.name)
-        description = metadata.get('description', '')
+        name = metadata.get("name", path.name)
+        description = metadata.get("description", "")
 
         if not description:
             log.warning("Skipping %s: no description in frontmatter", skill_file)
@@ -42,7 +42,7 @@ def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
             name=name,
             description=description,
             location=str(skill_file),
-            content=body.strip() if body.strip() else content,
+            content=body.strip() if body.strip() else "This kisll have no contents",
         )
         skills[name] = skill
 

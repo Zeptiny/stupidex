@@ -42,7 +42,7 @@ Keep this lightweight:
 
 ### Step 4: Stage and commit
 
-If on the default branch (`main`, `master`), warn the user and ask whether to continue or create a feature branch first.
+If on the repository's default branch, warn the user and ask whether to continue or create a feature branch first.
 
 Write the commit message:
 - **Subject line**: Concise, imperative mood, focused on *why* not *what*
