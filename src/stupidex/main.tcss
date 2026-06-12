@@ -30,8 +30,9 @@ TabbedContent Tabs {
     display: none;
 }
 
-Input#input {
-    height: 3;
+TextArea#input {
+    height: 5;
+    min-height: 3;
 }
 
 #footer {

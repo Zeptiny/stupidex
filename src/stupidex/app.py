@@ -4,7 +4,7 @@ from enum import Enum
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.timer import Timer
-from textual.widgets import Input, LoadingIndicator, Static, TabbedContent, TabPane
+from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
 from stupidex.commands.session_commands import SessionCommands
 from stupidex.domain.message import Message, MessageRole, MessageType
@@ -34,6 +34,8 @@ class Stupidex(App):
     BINDINGS = [
         ("ctrl+p", "command_palette", "Commands"),
         ("escape", "interrupt", "Interrupt"),
+        ("ctrl+enter", "submit_input", "Submit"),
+        ("ctrl+backspace", "clear_input", "Clear Input"),
     ]
     COMMANDS = {SessionCommands}
 
@@ -61,7 +63,7 @@ class Stupidex(App):
         with TabbedContent(id="tabs", initial="main"):
             with TabPane("Main", id="main"):
                 yield ScrollableContainer(id="output")
-        yield Input(id="input")
+        yield TextArea(id="input")
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
             yield Static("N/A Model", id="model")
@@ -72,8 +74,8 @@ class Stupidex(App):
         self.sessions.create()
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
-        self.query_one("#input", Input).display = True
-        self.query_one("#input", Input).focus()
+        self.query_one("#input", TextArea).display = True
+        self.query_one("#input", TextArea).focus()
         try:
             sidebar = self.query_one("#sidebar", Sidebar)
             sidebar.set_active("main")
@@ -147,11 +149,14 @@ class Stupidex(App):
         except Exception:
             pass
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def action_submit_input(self) -> None:
         if self._is_streaming():
             return
-        user_msg = event.value
-        event.input.clear()
+        text_area = self.query_one("#input", TextArea)
+        user_msg = text_area.text.strip()
+        if not user_msg:
+            return
+        text_area.clear()
         msg = Message(role=MessageRole.USER, content=user_msg)
         self.messages.append(msg)
         await self.mount_message(msg)
@@ -159,6 +164,9 @@ class Stupidex(App):
         self.streaming_started()
         self._active_worker = self.run_worker(
             self._stream_response(), exit_on_error=False)
+
+    def action_clear_input(self) -> None:
+        self.query_one("#input", TextArea).clear()
 
     async def _stream_response(self) -> None:
         container = self.query_one("#output", ScrollableContainer)
@@ -344,14 +352,14 @@ class Stupidex(App):
     def on_sidebar_main_selected(self, event: SidebarMainSelected) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
         tabs.active = "main"
-        self.query_one("#input", Input).display = True
+        self.query_one("#input", TextArea).display = True
         sidebar = self.query_one("#sidebar", Sidebar)
         sidebar.set_active("main")
 
     def on_sidebar_subagent_selected(self, event: SidebarSubagentSelected) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
         tabs.active = f"sub-{event.subagent_id}"
-        self.query_one("#input", Input).display = False
+        self.query_one("#input", TextArea).display = False
         sidebar = self.query_one("#sidebar", Sidebar)
         sidebar.set_active(event.subagent_id)
 
