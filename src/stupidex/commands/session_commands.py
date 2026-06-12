@@ -3,15 +3,18 @@ from functools import partial
 from textual.app import App
 from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
 
+from stupidex.config import set_current_theme
 from stupidex.llm.models import list_models
 from stupidex.screens.model_picker import ModelPicker
 from stupidex.screens.session_picker import SessionPicker
+from stupidex.screens.theme_picker import ThemePicker
 
 COMMANDS = {
     "/new": "Start a new session",
     "/switch": "Switch to another session",
     "/delete": "Delete a session",
     "/model": "Change the model for the current session",
+    "/theme": "Switch the application theme",
 }
 
 
@@ -49,6 +52,14 @@ async def execute_command(app: App, cmd: str) -> None:
                     await app.rerender_footer()
 
             app.push_screen(ModelPicker(models), on_picked)
+        case "/theme":
+
+            async def on_theme_picked(result: str | None):
+                if result:
+                    app.switch_theme(result)
+                    set_current_theme(result)
+
+            app.push_screen(ThemePicker(), on_theme_picked)
 
 
 class SessionCommands(Provider):

@@ -9,9 +9,11 @@ from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, Te
 from stupidex.agents import get_agent_registry
 from stupidex.agents.manager import SubagentRecord, SubagentState, set_subagent_manager
 from stupidex.commands.session_commands import SessionCommands, execute_command
+from stupidex.config import get_current_theme
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.domain.session import SessionManager
 from stupidex.llm.client import stream_response
+from stupidex.themes import get_theme_registry
 from stupidex.widgets.command_picker import CommandPicker
 from stupidex.widgets.message_widget import (
     AssistantMessageWidget,
@@ -51,6 +53,20 @@ class Stupidex(App):
         self._subagent_widgets: dict[
             str, dict[str, ThinkingMessageWidget | AssistantMessageWidget | Static | None]
         ] = {}
+        self._setup_themes()
+
+    def _setup_themes(self) -> None:
+        registry = get_theme_registry()
+        for name in registry.list_themes():
+            self.register_theme(registry.get(name))
+        current = get_current_theme()
+        if current in registry.list_themes():
+            self.theme = current
+
+    def switch_theme(self, name: str) -> None:
+        registry = get_theme_registry()
+        theme = registry.get(name)
+        self.theme = theme.name
 
     @property
     def messages(self) -> list[Message]:

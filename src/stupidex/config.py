@@ -37,6 +37,7 @@ class Config:
     read_line_limit: int = 1000
     grep_max_results: int = 100
     directory_tree_depth: int = 2
+    theme: str = "default"
 
 
 _ENV_MAP = {
@@ -48,6 +49,7 @@ _ENV_MAP = {
     "STUPIDEX_READ_LINE_LIMIT": "read_line_limit",
     "STUPIDEX_GREP_MAX_RESULTS": "grep_max_results",
     "STUPIDEX_DIRECTORY_TREE_DEPTH": "directory_tree_depth",
+    "STUPIDEX_THEME": "theme",
 }
 
 
@@ -139,6 +141,30 @@ class ConfigManager:
     def reset(cls) -> None:
         cls._instance = None
 
+    @classmethod
+    def save(cls) -> None:
+        if cls._instance is None:
+            return
+        HOME_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = HOME_CONFIG_PATH.with_suffix(".tmp")
+        try:
+            with open(tmp, "w") as f:
+                json.dump(asdict(cls._instance), f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, HOME_CONFIG_PATH)
+            dir_fd = os.open(str(HOME_CONFIG_DIR), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except BaseException:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
 
 def get_config() -> Config:
     return ConfigManager.load()
@@ -147,3 +173,15 @@ def get_config() -> Config:
 def get_model_for_tier(tier: str) -> str:
     cfg = get_config()
     return cfg.tier_models.get(tier, cfg.default_model)
+
+
+def get_current_theme() -> str:
+    return get_config().theme
+
+
+def set_current_theme(name: str) -> None:
+    from stupidex.themes import get_theme_registry
+    get_theme_registry().get(name)  # raises ValueError for unknown theme
+    cfg = get_config()
+    cfg.theme = name
+    ConfigManager.save()
