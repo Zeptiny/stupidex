@@ -6,6 +6,8 @@ from textual.widgets import Collapsible, Static
 
 from stupidex.agents.manager import SubagentRecord, SubagentState
 
+_TOKEN_THROTTLE_INTERVAL = 0.5
+
 
 class SidebarSubagentSelected(Message):
     """Emitted when a subagent entry is clicked."""
@@ -142,6 +144,8 @@ class Sidebar(Vertical):
     _total_tokens: int = 0
     _subagent_records: list = []
     _active_view: str = "main"
+    _last_token_update: float = 0
+    _token_flush_scheduled: bool = False
 
     def compose(self):
         yield Static("Tokens", id="sidebar-tokens-label")
@@ -197,9 +201,21 @@ class Sidebar(Vertical):
         self._prompt_tokens = prompt_tokens
         self._completion_tokens = completion_tokens
         self._total_tokens = total_tokens
+        now = time.monotonic()
+        if now - self._last_token_update >= _TOKEN_THROTTLE_INTERVAL:
+            self._last_token_update = now
+            self._flush_token_update()
+        elif not self._token_flush_scheduled:
+            self._token_flush_scheduled = True
+            remaining = _TOKEN_THROTTLE_INTERVAL - (now - self._last_token_update)
+            self.set_timer(remaining, self._flush_token_update)
+
+    def _flush_token_update(self) -> None:
+        self._token_flush_scheduled = False
+        self._last_token_update = time.monotonic()
         try:
             self.query_one("#token-info", Static).update(
-                f"Context:  {prompt_tokens}\nResponse: {completion_tokens}\nTotal:    {total_tokens}"
+                f"Context:  {self._prompt_tokens}\nResponse: {self._completion_tokens}\nTotal:    {self._total_tokens}"
             )
         except Exception:
             pass
