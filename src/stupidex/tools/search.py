@@ -33,6 +33,7 @@ grep_tool = Tool(
         },
         required=["pattern", "directory_path"]
     ),
+    action_label="Grepping...",
 )
 
 

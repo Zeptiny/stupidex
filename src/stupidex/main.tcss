@@ -26,8 +26,13 @@ TabPane {
     height: 1fr;
 }
 
-Input#input {
-    height: 3;
+TabbedContent Tabs {
+    display: none;
+}
+
+TextArea#input {
+    height: 5;
+    min-height: 3;
 }
 
 #footer {
@@ -54,16 +59,19 @@ Input#input {
     margin-left: 2;
 }
 
-#status {
-    color: gray;
-    width: 1fr;
-    text-align: right;
-    margin-right: 2;
+UserMessageWidget {
+    background: #333333;
+    margin: 0 1;
+    padding: 1;
+}
+
+AssistantMessageWidget {
+    margin: 0 1;
+    padding: 0 1 1 1;
 }
 
 /* Collapse widgets: override Textual defaults to match Rich.Panel style */
 Collapsible.thinking-collapse {
-    border: round orange;
     background: transparent;
     height: auto;
     margin: 0;
@@ -71,7 +79,8 @@ Collapsible.thinking-collapse {
 }
 
 Collapsible.thinking-collapse.-collapsed {
-    padding-bottom: 0;
+    margin: 0;
+    margin-bottom: 1;
 }
 
 Collapsible.thinking-collapse > CollapsibleTitle {
@@ -81,6 +90,7 @@ Collapsible.thinking-collapse > CollapsibleTitle {
 
 Collapsible.thinking-collapse > Contents {
     height: auto;
+    padding: 1 2;
 }
 
 .thinking-content {
@@ -88,11 +98,16 @@ Collapsible.thinking-collapse > Contents {
 }
 
 Collapsible.tool-result-collapse {
-    border: round skyblue;
     background: transparent;
     height: auto;
-    margin: 0;
+    margin-top: -1;
     padding: 0;
+}
+
+Collapsible.tool-result-collapse > Contents {
+    height: auto;
+    margin: 0 1;
+    padding: 0 2;
 }
 
 Collapsible.tool-result-collapse.-collapsed {
@@ -101,9 +116,12 @@ Collapsible.tool-result-collapse.-collapsed {
 
 Collapsible.tool-result-collapse > CollapsibleTitle {
     color: skyblue;
+    text-style: dim;
     width: 1fr;
 }
 
-Collapsible.tool-result-collapse > Contents {
-    height: auto;
+.temp-tool-message {
+    padding: 0 1;
+    color: $text-muted;
+    text-style: italic;
 }

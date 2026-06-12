@@ -1,13 +1,21 @@
 import time
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widgets import Collapsible, Static
 
 from stupidex.domain.message import Message, MessageRole, MessageType
+from stupidex.tools import get_tool_registry
 
 _THROTTLE_INTERVAL = 0.2
+
+
+def get_tool_action_label(tool_name: str) -> str:
+    registry = get_tool_registry()
+    entry = registry.get(tool_name)
+    if entry and entry["tool"].action_label:
+        return entry["tool"].action_label
+    return f"Using {tool_name}..."
 
 
 class MessageWidget(Static):
@@ -41,7 +49,7 @@ class MessageWidget(Static):
 
 class UserMessageWidget(MessageWidget):
     def _build_renderable(self):
-        return Panel(Markdown(self.msg.content), style="green")
+        return Markdown(self.msg.content)
 
 
 class ThinkingMessageWidget(Static):
@@ -87,13 +95,7 @@ class ThinkingMessageWidget(Static):
 
 class AssistantMessageWidget(MessageWidget):
     def _build_renderable(self):
-        return Panel(Markdown(self.msg.content))
-
-
-class ToolCallMessageWidget(MessageWidget):
-    def _build_renderable(self):
-        tool = self.msg.metadata.get("tool_name", "unknown")
-        return Panel(Markdown(f"`{tool}`"), title="Tool Call", style="blue")
+        return Markdown(self.msg.content)
 
 
 class ToolResultMessageWidget(Static):
@@ -113,13 +115,13 @@ class ToolResultMessageWidget(Static):
         )
 
 
-def create_message_widget(msg: Message) -> Static:
+def create_message_widget(msg: Message) -> Static | None:
     """Factory function to create the appropriate widget for a message."""
     match msg.type:
         case MessageType.THINKING:
             return ThinkingMessageWidget(msg)
         case MessageType.TOOL_CALL:
-            return ToolCallMessageWidget(msg)
+            return None
         case MessageType.TOOL_RESULT:
             return ToolResultMessageWidget(msg)
         case _:

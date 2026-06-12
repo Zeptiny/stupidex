@@ -28,6 +28,7 @@ read_tool = Tool(
         },
         required=["file_path"]
     ),
+    action_label="Reading...",
 )
 
 
@@ -79,6 +80,7 @@ edit_tool = Tool(
         },
         required=["file_path", "old_string", "new_string"]
     ),
+    action_label="Editing...",
 )
 
 
@@ -137,6 +139,7 @@ read_directory = Tool(
         },
         required=["directory_path"]
     ),
+    action_label="Browsing...",
 )
 
 
@@ -180,6 +183,7 @@ glob_tool = Tool(
         },
         required=["directory_path", "pattern"]
     ),
+    action_label="Globbing...",
 )
 
 
@@ -231,6 +235,7 @@ write_tool = Tool(
         },
         required=["file_path", "content"]
     ),
+    action_label="Writing...",
 )
 
 

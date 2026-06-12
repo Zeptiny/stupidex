@@ -48,6 +48,7 @@ def build_delegate_tool() -> Tool:
             },
             required=["name", "task", "type"]
         ),
+        action_label="Delegating...",
     )
 
 
@@ -96,6 +97,7 @@ wait_for_subagent = Tool(
         },
         required=["subagent_ids"]
     ),
+    action_label="Waiting...",
 )
 
 
@@ -148,6 +150,7 @@ list_subagents = Tool(
     name="list_subagents",
     description="List all active and completed subagents with their current state, task description, and elapsed time. Use to check progress of running subagents or review what was dispatched.",
     parameters=ToolParameter(properties={}, required=[]),
+    action_label="Checking subagents...",
 )
 
 
@@ -183,6 +186,7 @@ interrupt_subagents = Tool(
         },
         required=["subagent_ids"]
     ),
+    action_label="Interrupting...",
 )
 
 

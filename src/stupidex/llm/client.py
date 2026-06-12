@@ -39,6 +39,7 @@ async def stream_response(
         thinking = ""
         content = ""
         tool_calls: list[dict] = []
+        emitted_tool_calls: set[int] = set()
         usage = None
 
         async for chunk in response:
@@ -74,6 +75,15 @@ async def stream_response(
                         if tc_delta.function.arguments:
                             tc["function"]["arguments"] += tc_delta.function.arguments
 
+                    if tc["function"]["name"] and tc_delta.index not in emitted_tool_calls:
+                        emitted_tool_calls.add(tc_delta.index)
+                        yield Message(
+                            role=MessageRole.ASSISTANT,
+                            content=f"Calling tool: {tc['function']['name']}",
+                            type=MessageType.TOOL_CALL,
+                            metadata={"tool_name": tc["function"]["name"]},
+                        )
+
             if hasattr(chunk, "usage") and chunk.usage:
                 usage = Usage(
                     prompt_tokens=chunk.usage.prompt_tokens,
@@ -85,8 +95,8 @@ async def stream_response(
             yield Message(role=MessageRole.ASSISTANT, content=content, usage=usage)
             return
 
-        if content or usage:
-            yield Message(role=MessageRole.ASSISTANT, content=content, usage=usage)
+        if usage:
+            yield Message(role=MessageRole.ASSISTANT, content="", usage=usage)
 
         assistant_msg: dict = {"role": "assistant",
                                "content": content or None, "tool_calls": tool_calls}
@@ -95,17 +105,6 @@ async def stream_response(
         for tc in tool_calls:
             name = tc["function"]["name"]
             args = json.loads(tc["function"]["arguments"])
-
-            # Yield a TOOL_CALL message to show what tool is being called
-            # TODO: Not much use yet as it only shows after the agent finished writing the tool call,
-            # if we can update to show while its writing it would improve the responsiveness (Ex: large file writes)
-            # Currently uncommented because of subagents
-            yield Message(
-                role=MessageRole.ASSISTANT,
-                content=f"Calling tool: {name}",
-                type=MessageType.TOOL_CALL,
-                metadata={"tool_name": name, "tool_args": args},
-            )
 
             if name not in filtered_tools:
                 result = ExecutorResult(
