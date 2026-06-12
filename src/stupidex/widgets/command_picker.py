@@ -28,7 +28,8 @@ class CommandPicker(OptionList):
         if not query.startswith("/"):
             self.hide()
             return
-        raw = query.lstrip("/").split()[0] if query.lstrip("/") else ""
+        parts = query.lstrip("/").strip().split()
+        raw = parts[0] if parts else ""
         self._filtered = []
         for cmd, desc in self._all_commands.items():
             cmd_name = cmd.lstrip("/")
