@@ -85,6 +85,19 @@ System prompt content here...
 | `implementer` | subagent | papudo | Writes and edits code |
 | `reviewer` | subagent | papaca | Code review for bugs and improvements |
 
+### Agent Tiers
+
+Tiers control the intelligence/speed tradeoff for each agent. Lower tiers use faster, cheaper models; higher tiers use more capable models for complex reasoning.
+
+| Tier | Intelligence | Speed | Expected Use Cases |
+|------|--------------|-------|-------------------|
+| `tolo` | Low | Very Fast | Simple, mechanical tasks: file listing, basic searches, reading files, glob matching. No complex reasoning needed. |
+| `tainha` | Medium | Fast | Code exploration, grep analysis, understanding file structure, reading comprehension, summarizing findings. |
+| `papudo` | High | Standard | Implementation tasks, writing code, refactoring, multi-file changes, bug fixes, following code conventions. |
+| `papaca` | Very High | Slower | Architecture decisions, complex debugging, code review, design analysis, evaluating trade-offs, careful judgment. |
+
+Map tiers to models in `~/.stupidex/config.json` under `tier_models`. Assign cheaper models to low tiers and more capable models to high tiers to optimize cost and latency.
+
 ## Skills
 
 Skills are reusable workflow templates that guide the agent through complex tasks. Defined as markdown files with YAML frontmatter.
