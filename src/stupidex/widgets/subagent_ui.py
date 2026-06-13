@@ -7,13 +7,10 @@ from textual.timer import Timer
 from textual.widgets import Static, TabbedContent, TabPane
 
 from stupidex.agents.manager import SubagentRecord, SubagentState
-from stupidex.domain.message import Message, MessageRole, MessageType
+from stupidex.domain.message import Message
 from stupidex.widgets.message_widget import (
-    AssistantMessageWidget,
-    ThinkingMessageWidget,
-    ToolResultMessageWidget,
-    UserMessageWidget,
-    get_tool_action_label,
+    StreamWidgetState,
+    mount_streamed_message,
 )
 from stupidex.widgets.sidebar import Sidebar
 
@@ -72,54 +69,18 @@ class SubagentUIManager:
             container = ScrollableContainer()
             await pane.mount(container)
 
-        widgets = self._widgets.setdefault(subagent_id, {"temp": []})
-        thinking_widget = widgets.get("thinking")
-        content_widget = widgets.get("content")
-        temp_widgets: list[Static] = widgets.get("temp", [])
-        if isinstance(temp_widgets, list) is False:
-            temp_widgets = []
-            widgets["temp"] = temp_widgets
+        raw = self._widgets.setdefault(subagent_id, {"temp": []})
+        state = StreamWidgetState(
+            thinking=raw.get("thinking"),
+            content=raw.get("content"),
+            temp=raw.get("temp") if isinstance(raw.get("temp"), list) else [],
+        )
 
-        if msg.type == MessageType.THINKING:
-            if thinking_widget is None:
-                w = ThinkingMessageWidget(msg)
-                await container.mount(w)
-                widgets["thinking"] = w
-                w.scroll_visible()
-            else:
-                thinking_widget.update_content(msg.content)
-        elif msg.type == MessageType.TOOL_CALL:
-            tool_name = msg.metadata.get("tool_name", "")
-            temp = Static(get_tool_action_label(tool_name), classes="temp-tool-message")
-            await container.mount(temp)
-            temp.scroll_visible()
-            temp_widgets.append(temp)
-            widgets["thinking"] = None
-            widgets["content"] = None
-        elif msg.type == MessageType.TOOL_RESULT:
-            if temp_widgets:
-                await temp_widgets.pop(0).remove()
-            w = ToolResultMessageWidget(msg)
-            await container.mount(w)
-            w.scroll_visible()
-            widgets["thinking"] = None
-            widgets["content"] = None
-        elif msg.role == MessageRole.USER:
-            w = UserMessageWidget(msg)
-            await container.mount(w)
-            w.scroll_visible()
-            widgets["thinking"] = None
-            widgets["content"] = None
-        else:
-            if content_widget is None:
-                if msg.content:
-                    w = AssistantMessageWidget(msg)
-                    await container.mount(w)
-                    widgets["content"] = w
-                    w.scroll_visible()
-            else:
-                if msg.content:
-                    content_widget.update_content(msg.content)
+        await mount_streamed_message(container, msg, state)
+
+        raw["thinking"] = state.thinking
+        raw["content"] = state.content
+        raw["temp"] = state.temp
 
     async def on_state_change(self, subagent_id: str, state: SubagentState) -> None:
         try:

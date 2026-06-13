@@ -1,4 +1,6 @@
 import time
+from dataclasses import dataclass, field
+from typing import Any
 
 from rich.markdown import Markdown
 from rich.text import Text
@@ -139,3 +141,55 @@ def create_message_widget(msg: Message) -> Static | None:
             if msg.role == MessageRole.USER:
                 return UserMessageWidget(msg)
             return AssistantMessageWidget(msg)
+
+
+@dataclass
+class StreamWidgetState:
+    """Tracks the current thinking/content/temp widgets for a message stream."""
+    thinking: Any = None
+    content: Any = None
+    temp: list[Static] = field(default_factory=list)
+
+
+async def mount_streamed_message(container, msg: Message, state: StreamWidgetState) -> None:
+    """Mount or update widgets for a streamed message."""
+    if msg.type == MessageType.THINKING:
+        if state.thinking is None:
+            w = ThinkingMessageWidget(msg)
+            await container.mount(w)
+            state.thinking = w
+            w.scroll_visible()
+        else:
+            state.thinking.update_content(msg.content)
+    elif msg.type == MessageType.TOOL_CALL:
+        tool_name = msg.metadata.get("tool_name", "")
+        temp = Static(get_tool_action_label(tool_name), classes="temp-tool-message")
+        await container.mount(temp)
+        temp.scroll_visible()
+        state.temp.append(temp)
+        state.thinking = None
+        state.content = None
+    elif msg.type == MessageType.TOOL_RESULT:
+        if state.temp:
+            await state.temp.pop(0).remove()
+        w = ToolResultMessageWidget(msg)
+        await container.mount(w)
+        w.scroll_visible()
+        state.thinking = None
+        state.content = None
+    elif msg.role == MessageRole.USER:
+        w = UserMessageWidget(msg)
+        await container.mount(w)
+        w.scroll_visible()
+        state.thinking = None
+        state.content = None
+    else:
+        if state.content is None:
+            if msg.content:
+                w = AssistantMessageWidget(msg)
+                await container.mount(w)
+                state.content = w
+                w.scroll_visible()
+        else:
+            if msg.content:
+                state.content.update_content(msg.content)

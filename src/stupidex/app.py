@@ -19,8 +19,10 @@ from stupidex.widgets.message_widget import (
     AssistantMessageWidget,
     ThinkingMessageWidget,
     ToolResultMessageWidget,
+    StreamWidgetState,
     create_message_widget,
     get_tool_action_label,
+    mount_streamed_message,
 )
 from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, SidebarSubagentSelected
 from stupidex.widgets.subagent_ui import SubagentUIManager
@@ -245,9 +247,7 @@ class Stupidex(App):
     async def _stream_response(self) -> None:
         container = self.query_one("#output", ScrollableContainer)
 
-        thinking_widget: ThinkingMessageWidget | None = None
-        content_widget: AssistantMessageWidget | None = None
-        temp_widgets: list[Static] = []
+        ws = StreamWidgetState()
 
         self._subagent_ui.setup(self.sessions.active.subagent_manager)
 
@@ -260,55 +260,25 @@ class Stupidex(App):
                 available_tools=general.available_tools,
                 system_prompt=system_prompt,
             ):
-                if msg.type == MessageType.THINKING:
-                    if thinking_widget is None:
+                if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT):
+                    self.messages.append(msg)
+                elif msg.type == MessageType.TEXT:
+                    if msg.content or msg.usage:
                         self.messages.append(msg)
-                        thinking_widget = ThinkingMessageWidget(msg)
-                        await container.mount(thinking_widget)
-                        thinking_widget.scroll_visible()
-                    else:
-                        thinking_widget.update_content(msg.content)
-                elif msg.type == MessageType.TOOL_CALL:
-                    self.messages.append(msg)
-                    tool_name = msg.metadata.get("tool_name", "")
-                    temp = Static(get_tool_action_label(tool_name), classes="temp-tool-message")
-                    await container.mount(temp)
-                    temp.scroll_visible()
-                    temp_widgets.append(temp)
-                    thinking_widget = None
-                    content_widget = None
-                elif msg.type == MessageType.TOOL_RESULT:
-                    self.messages.append(msg)
-                    if temp_widgets:
-                        await temp_widgets.pop(0).remove()
-                    widget = ToolResultMessageWidget(msg)
-                    await container.mount(widget)
-                    widget.scroll_visible()
-                    thinking_widget = None
-                    content_widget = None
-                else:
-                    if content_widget is None:
-                        if msg.content:
-                            self.messages.append(msg)
-                            content_widget = AssistantMessageWidget(msg)
-                            await container.mount(content_widget)
-                            content_widget.scroll_visible()
-                        elif msg.usage:
-                            self.messages.append(msg)
-                    else:
-                        if msg.content:
-                            content_widget.update_content(msg.content)
-                        if msg.usage:
-                            content_widget.msg.usage = msg.usage
-                    if msg.usage:
-                        await self.rerender_footer()
+
+                await mount_streamed_message(container, msg, ws)
+
+                if ws.content and msg.usage:
+                    ws.content.msg.usage = msg.usage
+                if msg.usage:
+                    await self.rerender_footer()
         except asyncio.CancelledError:
-            for tw in temp_widgets:
+            for tw in ws.temp:
                 try:
                     await tw.remove()
                 except Exception:
                     pass
-            temp_widgets.clear()
+            ws.temp.clear()
             interrupted_msg = Message(
                 role=MessageRole.ASSISTANT,
                 content="[Interrupted by user]",
