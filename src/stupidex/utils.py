@@ -114,7 +114,7 @@ def directory_tree(path: str, max_depth: int, include_hidden: bool = False, _dep
     ignored = set(get_config().ignored_dirs)
     if not include_hidden:
         entries = [
-            e for e in entries if e not in ignored or not e.startswith(".")]
+            e for e in entries if e not in ignored and not e.startswith(".")]
 
     for i, entry in enumerate(entries):
         full_path = os.path.join(path, entry)

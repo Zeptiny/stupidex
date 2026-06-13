@@ -105,7 +105,7 @@ async def execute_grep_tool(
                     collected.append(os.path.join(root, filename))
             return collected
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         file_paths = await loop.run_in_executor(None, _collect_files)
 
         for file_path in file_paths:
