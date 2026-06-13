@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -13,8 +14,17 @@ from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.tools import get_tool_registry
 
+log = logging.getLogger(__name__)
+
 _YIELD_THROTTLE = 0.1
 _TOOL_TIMEOUT = 60
+
+
+def _raise_first_task_exception(results: tuple[Any, ...]) -> None:
+    """Re-raise the first non-cancellation exception from gathered task results."""
+    for r in results:
+        if isinstance(r, BaseException) and not isinstance(r, asyncio.CancelledError):
+            raise r
 
 
 def _validate_tool_args(tool: Tool, args: dict) -> str | None:
@@ -71,10 +81,11 @@ async def _execute_tool(
                         display=f"Timeout in {name}",
                         content=f"Tool '{name}' timed out after {_TOOL_TIMEOUT}s.",
                     )
-                except Exception as e:
+                except Exception:
+                    log.exception("Tool '%s' raised an exception", name)
                     result = ExecutorResult(
                         display=f"Error in {name}",
-                        content=f"Tool '{name}' raised an exception: {type(e).__name__}: {e}",
+                        content=f"Tool '{name}' failed with an internal error.",
                     )
 
     return Message(
@@ -266,15 +277,18 @@ async def stream_response(
         except asyncio.CancelledError:
             stream_t.cancel()
             executor_t.cancel()
-            await asyncio.gather(stream_t, executor_t, return_exceptions=True)
+            _raise_first_task_exception(
+                await asyncio.gather(stream_t, executor_t, return_exceptions=True))
             raise
         except BaseException:
             stream_t.cancel()
             executor_t.cancel()
-            await asyncio.gather(stream_t, executor_t, return_exceptions=True)
+            _raise_first_task_exception(
+                await asyncio.gather(stream_t, executor_t, return_exceptions=True))
             raise
         else:
-            await asyncio.gather(stream_t, executor_t, return_exceptions=True)
+            _raise_first_task_exception(
+                await asyncio.gather(stream_t, executor_t, return_exceptions=True))
 
         if not tool_calls_started.is_set():
             return
