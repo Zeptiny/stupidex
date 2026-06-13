@@ -13,6 +13,7 @@ from stupidex.config import get_current_theme
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.domain.session import SessionManager
 from stupidex.llm.client import stream_response
+from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
 from stupidex.widgets.command_picker import CommandPicker
 from stupidex.widgets.message_widget import (
@@ -259,11 +260,12 @@ class Stupidex(App):
 
         try:
             general = get_agent_registry()["general"]
+            system_prompt = append_personality(general.system_prompt)
             async for msg in stream_response(
                 messages=self.messages,
                 model=self.model,
                 available_tools=general.available_tools,
-                system_prompt=general.system_prompt,
+                system_prompt=system_prompt,
             ):
                 if msg.type == MessageType.THINKING:
                     if thinking_widget is None:
