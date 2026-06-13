@@ -47,6 +47,9 @@ async def execute_command(app: App, cmd: str) -> None:
             app.push_screen(OptionPicker(items), on_picked)
         case "/model":
             models = await list_models()
+            if not models:
+                app.notify("Failed to fetch models", severity="error")
+                return
             items = [PickerItem(label=m.id, id=m.id) for m in models]
 
             async def on_picked(result: str | None):
