@@ -195,6 +195,8 @@ async def _stream_task(
                                      "content": content or None, "tool_calls": tool_calls})
                 assistant_appended.set()
                 tool_calls_started.set()
+            if usage:
+                await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
             await ready_q.put(tool_calls[prev_index])
 
         if not tool_calls:
