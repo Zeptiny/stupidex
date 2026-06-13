@@ -6,13 +6,17 @@ from stupidex.themes import get_theme_registry
 
 
 class ThemePicker(Screen[str]):
-    def __init__(self) -> None:
+    def __init__(self, current: str = "") -> None:
         super().__init__()
         self._registry = get_theme_registry()
+        self._current = current
 
     def compose(self):
         yield OptionList(*[
-            Option(name, id=name)
+            Option(
+                f"● {name}" if name == self._current else f"  {name}",
+                id=name,
+            )
             for name in self._registry.list_themes()
         ])
 
