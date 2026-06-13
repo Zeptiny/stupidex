@@ -71,8 +71,3 @@ def get_skill_registry() -> dict[str, Skill]:
     if not SKILL_REGISTRY:
         return load_skills()
     return SKILL_REGISTRY
-
-
-def get_skill(name: str) -> Skill | None:
-    registry = get_skill_registry()
-    return registry.get(name)
