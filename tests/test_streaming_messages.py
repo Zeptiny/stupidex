@@ -1,0 +1,326 @@
+import asyncio
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from stupidex.domain.message import (
+    Message,
+    MessageRole,
+    MessageType,
+    StreamHistoryState,
+    Usage,
+    record_streamed_message,
+)
+from stupidex.llm import client as llm_client
+from stupidex.widgets import message_widget
+
+
+def chunk(*, reasoning: str = "", content: str = "", tool_calls=None):
+    delta = SimpleNamespace(
+        reasoning_content=reasoning,
+        content=content,
+        tool_calls=tool_calls,
+    )
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
+def tool_delta(index: int):
+    return SimpleNamespace(
+        index=index,
+        id=f"call-{index}",
+        function=SimpleNamespace(name="read", arguments='{"file_path":"README.md"}'),
+    )
+
+
+class StreamHistoryTest(unittest.TestCase):
+    def test_record_streamed_message_updates_cumulative_snapshots(self):
+        history = []
+        state = StreamHistoryState()
+
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Let me read", MessageType.THINKING),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Let me read the file", MessageType.THINKING),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Calling tool: read", MessageType.TOOL_CALL),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.TOOL, "file contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Answer", MessageType.TEXT),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Answer done", MessageType.TEXT),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "", MessageType.TEXT, usage=Usage(1, 2, 3)),
+            state,
+        )
+
+        self.assertEqual(
+            [(msg.type, msg.content) for msg in history],
+            [
+                (MessageType.THINKING, "Let me read the file"),
+                (MessageType.TOOL_RESULT, "file contents"),
+                (MessageType.TEXT, "Answer done"),
+            ],
+        )
+        self.assertEqual(history[-1].usage, Usage(1, 2, 3))
+
+    def test_api_history_excludes_display_only_stream_messages(self):
+        history = [
+            Message(MessageRole.USER, "hello"),
+            Message(MessageRole.ASSISTANT, "hidden reasoning", MessageType.THINKING),
+            Message(MessageRole.ASSISTANT, "Calling tool: read", MessageType.TOOL_CALL),
+            Message(MessageRole.TOOL, "tool output", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            Message(MessageRole.ASSISTANT, "", MessageType.TEXT, usage=Usage(1, 2, 3)),
+            Message(MessageRole.ASSISTANT, "final answer", MessageType.TEXT),
+        ]
+
+        self.assertEqual(
+            llm_client._history_to_api_messages(history),
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "final answer"},
+            ],
+        )
+
+
+class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
+    async def test_dirty_thinking_flushes_before_content_display(self):
+        async def response():
+            yield chunk(reasoning="The user is")
+            yield chunk(reasoning=" asking for help")
+            yield chunk(content="Hey!")
+
+        msg_q = asyncio.Queue(maxsize=1)
+        ready_q = asyncio.Queue()
+        api_messages = []
+        assistant_appended = asyncio.Event()
+        tool_calls_started = asyncio.Event()
+
+        stream_t = asyncio.create_task(
+            llm_client._stream_task(
+                response(),
+                msg_q,
+                ready_q,
+                api_messages,
+                assistant_appended,
+                tool_calls_started,
+            )
+        )
+        executor_t = asyncio.create_task(
+            llm_client._executor_task(
+                msg_q,
+                ready_q,
+                api_messages,
+                {},
+                assistant_appended,
+            )
+        )
+
+        messages = []
+        while True:
+            msg = await msg_q.get()
+            if msg is None:
+                break
+            messages.append(msg)
+
+        await asyncio.gather(stream_t, executor_t)
+
+        full_thinking_index = next(
+            i for i, msg in enumerate(messages)
+            if msg.type == MessageType.THINKING and msg.content == "The user is asking for help"
+        )
+        content_index = next(
+            i for i, msg in enumerate(messages)
+            if msg.type == MessageType.TEXT and msg.content == "Hey!"
+        )
+
+        self.assertLess(full_thinking_index, content_index)
+
+    async def test_dirty_thinking_flushes_before_tool_call_display(self):
+        async def response():
+            yield chunk(reasoning="Let me wait")
+            yield chunk(reasoning=" for subagents")
+            yield chunk(tool_calls=[tool_delta(0)])
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"result {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        original_execute_tool = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            msg_q = asyncio.Queue(maxsize=1)
+            ready_q = asyncio.Queue()
+            api_messages = []
+            assistant_appended = asyncio.Event()
+            tool_calls_started = asyncio.Event()
+
+            stream_t = asyncio.create_task(
+                llm_client._stream_task(
+                    response(),
+                    msg_q,
+                    ready_q,
+                    api_messages,
+                    assistant_appended,
+                    tool_calls_started,
+                )
+            )
+            executor_t = asyncio.create_task(
+                llm_client._executor_task(
+                    msg_q,
+                    ready_q,
+                    api_messages,
+                    {},
+                    assistant_appended,
+                )
+            )
+
+            messages = []
+            while True:
+                msg = await msg_q.get()
+                if msg is None:
+                    break
+                messages.append(msg)
+
+            await asyncio.gather(stream_t, executor_t)
+        finally:
+            llm_client._execute_tool = original_execute_tool
+
+        full_thinking_index = next(
+            i for i, msg in enumerate(messages)
+            if msg.type == MessageType.THINKING and msg.content == "Let me wait for subagents"
+        )
+        tool_call_index = next(
+            i for i, msg in enumerate(messages)
+            if msg.type == MessageType.TOOL_CALL
+        )
+
+        self.assertLess(full_thinking_index, tool_call_index)
+
+    async def test_dirty_thinking_flushes_before_async_tool_result(self):
+        async def response():
+            yield chunk(reasoning="Let me read")
+            yield chunk(reasoning=" the source files")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[tool_delta(1)])
+            await asyncio.sleep(0.01)
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"result {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        original_execute_tool = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            msg_q = asyncio.Queue(maxsize=1)
+            ready_q = asyncio.Queue()
+            api_messages = []
+            assistant_appended = asyncio.Event()
+            tool_calls_started = asyncio.Event()
+
+            stream_t = asyncio.create_task(
+                llm_client._stream_task(
+                    response(),
+                    msg_q,
+                    ready_q,
+                    api_messages,
+                    assistant_appended,
+                    tool_calls_started,
+                )
+            )
+            executor_t = asyncio.create_task(
+                llm_client._executor_task(
+                    msg_q,
+                    ready_q,
+                    api_messages,
+                    {},
+                    assistant_appended,
+                )
+            )
+
+            messages = []
+            while True:
+                msg = await msg_q.get()
+                if msg is None:
+                    break
+                messages.append(msg)
+
+            await asyncio.gather(stream_t, executor_t)
+        finally:
+            llm_client._execute_tool = original_execute_tool
+
+        full_thinking_index = next(
+            i for i, msg in enumerate(messages)
+            if msg.type == MessageType.THINKING and msg.content == "Let me read the source files"
+        )
+        first_tool_result_index = next(
+            i for i, msg in enumerate(messages)
+            if msg.type == MessageType.TOOL_RESULT
+        )
+
+        self.assertLess(full_thinking_index, first_tool_result_index)
+
+
+class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
+    async def test_thinking_flushes_before_first_assistant_text_widget_mount(self):
+        events = []
+
+        class FakeThinking:
+            def flush(self):
+                events.append("flush")
+
+        class FakeAssistantWidget:
+            def __init__(self, msg):
+                self.msg = msg
+
+            def scroll_visible(self):
+                pass
+
+        class FakeContainer:
+            async def mount(self, widget):
+                events.append("mount")
+                self.widget = widget
+
+        container = FakeContainer()
+        state = message_widget.StreamWidgetState(thinking=FakeThinking())
+
+        with patch.object(message_widget, "AssistantMessageWidget", FakeAssistantWidget):
+            await message_widget.mount_streamed_message(
+                container,
+                Message(MessageRole.ASSISTANT, "Hi!", MessageType.TEXT),
+                state,
+            )
+
+        self.assertEqual(events, ["flush", "mount"])
+        self.assertIs(state.content, container.widget)
+
+
+if __name__ == "__main__":
+    unittest.main()

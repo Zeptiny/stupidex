@@ -39,6 +39,18 @@ def _validate_tool_args(tool: Tool, args: dict) -> str | None:
     return None
 
 
+def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    """Convert persisted display history to API history."""
+    api_messages = []
+    for msg in messages:
+        if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT):
+            continue
+        if not msg.content and not msg.tool_calls:
+            continue
+        api_messages.append(msg.to_dict())
+    return api_messages
+
+
 async def _execute_tool(
     tc: dict,
     filtered_tools: dict[str, dict[str, Any]],
@@ -116,6 +128,18 @@ async def _stream_task(
         thinking_dirty: bool = False
         prev_index: int | None = None
 
+        async def flush_thinking() -> None:
+            nonlocal thinking_dirty, last_thinking_yield
+            if not thinking_dirty:
+                return
+            last_thinking_yield = time.monotonic()
+            thinking_dirty = False
+            await msg_q.put(Message(
+                role=MessageRole.ASSISTANT,
+                content=thinking,
+                type=MessageType.THINKING,
+            ))
+
         async for chunk in response:
             if not chunk.choices:
                 continue
@@ -136,6 +160,7 @@ async def _stream_task(
                     thinking_dirty = True
 
             if delta.content:
+                await flush_thinking()
                 content += delta.content
                 await msg_q.put(Message(
                     role=MessageRole.ASSISTANT,
@@ -158,6 +183,7 @@ async def _stream_task(
                             tc["function"]["arguments"] += tc_delta.function.arguments
 
                     if tc["function"]["name"] and tc_delta.index not in emitted_tool_calls:
+                        await flush_thinking()
                         emitted_tool_calls.add(tc_delta.index)
                         await msg_q.put(Message(
                             role=MessageRole.ASSISTANT,
@@ -167,6 +193,7 @@ async def _stream_task(
                         ))
 
                     if prev_index is not None and prev_index != tc_delta.index:
+                        await flush_thinking()
                         if not tool_calls_started.is_set():
                             api_messages.append({"role": "assistant",
                                                  "content": content or None, "tool_calls": tool_calls})
@@ -182,12 +209,7 @@ async def _stream_task(
                     total_tokens=chunk.usage.total_tokens,
                 )
 
-        if thinking_dirty:
-            await msg_q.put(Message(
-                role=MessageRole.ASSISTANT,
-                content=thinking,
-                type=MessageType.THINKING,
-            ))
+        await flush_thinking()
 
         if prev_index is not None:
             if not tool_calls_started.is_set():
@@ -240,7 +262,7 @@ async def stream_response(
     system_msg = build_static_system_prompt(system_prompt)
     dynamic_prompt = await build_dynamic_system_prompt()
     api_messages: list[dict[str, Any]] = [system_msg.to_dict()] + \
-        [m.to_dict() for m in messages] + \
+        _history_to_api_messages(messages) + \
         [dynamic_prompt.to_dict()]
 
     registry = get_tool_registry()

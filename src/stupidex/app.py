@@ -8,7 +8,7 @@ from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, Te
 from stupidex.agents import get_agent_registry
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
-from stupidex.domain.message import Message, MessageRole, MessageType
+from stupidex.domain.message import Message, MessageRole, StreamHistoryState, record_streamed_message
 from stupidex.domain.session import SessionManager
 from stupidex.llm.client import stream_response
 from stupidex.personality import append_personality
@@ -54,7 +54,7 @@ class Stupidex(App):
             self.register_theme(registry.get(name))
         current = get_current_theme()
         if current in registry.list_themes():
-            self.theme = current
+            self.theme = registry.get(current).name
 
     def switch_theme(self, name: str) -> None:
         registry = get_theme_registry()
@@ -243,6 +243,7 @@ class Stupidex(App):
         container = self.query_one("#output", ScrollableContainer)
 
         ws = StreamWidgetState()
+        history_state = StreamHistoryState()
 
         self._subagent_ui.setup(self.sessions.active.subagent_manager)
 
@@ -255,8 +256,7 @@ class Stupidex(App):
                 available_tools=general.available_tools,
                 system_prompt=system_prompt,
             ):
-                if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT) or msg.type == MessageType.TEXT and (msg.content or msg.usage):
-                    self.messages.append(msg)
+                record_streamed_message(self.messages, msg, history_state)
 
                 await mount_streamed_message(container, msg, ws)
 

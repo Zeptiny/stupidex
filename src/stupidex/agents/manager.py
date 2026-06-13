@@ -144,7 +144,13 @@ class SubagentManager:
         """Spawn a subagent as an asyncio task. Returns the record immediately."""
         # Lazy imports to avoid circular dependency
         from stupidex.agents import get_agent_registry
-        from stupidex.domain.message import Message, MessageRole, MessageType
+        from stupidex.domain.message import (
+            Message,
+            MessageRole,
+            MessageType,
+            StreamHistoryState,
+            record_streamed_message,
+        )
         from stupidex.llm.client import stream_response
 
         registry = get_agent_registry()
@@ -173,6 +179,7 @@ class SubagentManager:
             try:
                 user_msg = Message(role=MessageRole.USER, content=task)
                 subagent_messages = [user_msg]
+                history_state = StreamHistoryState()
                 record.messages.append(user_msg)
                 if record.on_message:
                     record.messages_mounted += 1
@@ -186,9 +193,10 @@ class SubagentManager:
                     available_tools=agent.available_tools,
                     system_prompt=agent.system_prompt,
                 ):
-                    record.messages.append(msg)
+                    appended = record_streamed_message(record.messages, msg, history_state)
                     if record.on_message:
-                        record.messages_mounted += 1
+                        if appended:
+                            record.messages_mounted += 1
                         try:
                             await record.on_message(msg)
                         except Exception:
