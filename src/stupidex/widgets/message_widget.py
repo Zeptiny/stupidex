@@ -101,6 +101,11 @@ class ThinkingMessageWidget(Static):
         self._last_render_time = time.monotonic()
         self._do_update()
 
+    def flush(self) -> None:
+        """Force immediate update, bypassing throttle."""
+        self._flush_scheduled = False
+        self._do_update()
+
     def on_collapsible_toggle(self, event) -> None:
         if not event.collapsed:
             self._do_update()
@@ -167,7 +172,8 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
         await container.mount(temp)
         temp.scroll_visible()
         state.temp.append(temp)
-        state.thinking = None
+        if state.thinking:
+            state.thinking.flush()
         state.content = None
     elif msg.type == MessageType.TOOL_RESULT:
         if state.temp:
@@ -175,6 +181,8 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
         w = ToolResultMessageWidget(msg)
         await container.mount(w)
         w.scroll_visible()
+        if state.thinking:
+            state.thinking.flush()
         state.thinking = None
         state.content = None
     elif msg.role == MessageRole.USER:
