@@ -6,7 +6,6 @@ from textual.containers import Horizontal, ScrollableContainer
 from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
 from stupidex.agents import get_agent_registry
-from stupidex.agents.manager import SubagentState
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.message import Message, MessageRole, MessageType
@@ -16,12 +15,8 @@ from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
 from stupidex.widgets.command_picker import CommandPicker
 from stupidex.widgets.message_widget import (
-    AssistantMessageWidget,
-    ThinkingMessageWidget,
-    ToolResultMessageWidget,
     StreamWidgetState,
     create_message_widget,
-    get_tool_action_label,
     mount_streamed_message,
 )
 from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, SidebarSubagentSelected
@@ -260,11 +255,8 @@ class Stupidex(App):
                 available_tools=general.available_tools,
                 system_prompt=system_prompt,
             ):
-                if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT):
+                if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT) or msg.type == MessageType.TEXT and (msg.content or msg.usage):
                     self.messages.append(msg)
-                elif msg.type == MessageType.TEXT:
-                    if msg.content or msg.usage:
-                        self.messages.append(msg)
 
                 await mount_streamed_message(container, msg, ws)
 

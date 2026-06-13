@@ -1,4 +1,3 @@
-import time
 from xml.sax.saxutils import escape
 
 from stupidex.agents import get_agent_registry

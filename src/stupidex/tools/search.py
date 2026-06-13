@@ -106,7 +106,6 @@ async def execute_grep_tool(
 
         # Search files with bounded concurrency
         semaphore = asyncio.Semaphore(32)
-        total_matches = 0
         results: list[str] = []
 
         async def _search_file(file_path: str) -> list[str] | None:

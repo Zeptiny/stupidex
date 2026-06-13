@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.containers import ScrollableContainer
 from textual.timer import Timer
-from textual.widgets import Static, TabbedContent, TabPane
+from textual.widgets import TabbedContent, TabPane
 
 from stupidex.agents.manager import SubagentRecord, SubagentState
 from stupidex.domain.message import Message
