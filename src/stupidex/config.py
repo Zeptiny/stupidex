@@ -128,10 +128,12 @@ class ConfigManager:
     @classmethod
     def ensure_home_config(cls) -> None:
         HOME_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(HOME_CONFIG_DIR), 0o700)
         if not HOME_CONFIG_PATH.exists():
             defaults = Config()
             with open(HOME_CONFIG_PATH, "w") as f:
                 json.dump(asdict(defaults), f, indent=2)
+            os.chmod(str(HOME_CONFIG_PATH), 0o600)
         from stupidex.agents import load_agents, seed_agents_dir
         seed_agents_dir(HOME_AGENTS_DIR)
         load_agents()
@@ -157,6 +159,7 @@ class ConfigManager:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, HOME_CONFIG_PATH)
+            os.chmod(str(HOME_CONFIG_PATH), 0o600)
             dir_fd = os.open(str(HOME_CONFIG_DIR), os.O_RDONLY)
             try:
                 os.fsync(dir_fd)
