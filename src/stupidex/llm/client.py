@@ -22,9 +22,10 @@ async def stream_response(
 ) -> AsyncGenerator[Message, None]:
     cfg = get_config()
     system_msg = build_static_system_prompt(system_prompt)
+    dynamic_prompt = await build_dynamic_system_prompt()
     api_messages = [system_msg.to_dict()] + \
         [m.to_dict() for m in messages] + \
-        [build_dynamic_system_prompt().to_dict()]
+        [dynamic_prompt.to_dict()]
 
     registry = get_tool_registry()
     filtered_tools = {k: v for k, v in registry.items()
