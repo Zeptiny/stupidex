@@ -6,12 +6,24 @@ import litellm
 
 from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
-from stupidex.domain.tool import ExecutorResult
+from stupidex.domain.tool import ExecutorResult, Tool
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.tools import get_tool_registry
 
 _YIELD_THROTTLE = 0.1
+
+
+def _validate_tool_args(tool: Tool, args: dict) -> str | None:
+    """Return error message if args are invalid, None if ok."""
+    known = set(tool.parameters.properties.keys())
+    unknown = set(args.keys()) - known
+    if unknown:
+        return f"Unknown parameters: {', '.join(sorted(unknown))}. Expected: {', '.join(sorted(known))}"
+    for req in tool.parameters.required:
+        if req not in args:
+            return f"Missing required parameter: {req}"
+    return None
 
 
 async def stream_response(
@@ -140,14 +152,22 @@ async def stream_response(
                         content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools.keys())}",
                     )
                 else:
-                    executor = filtered_tools[name]["executor"]
-                    try:
-                        result = await executor(**args)
-                    except Exception as e:
+                    tool_def = filtered_tools[name]["tool"]
+                    validation_error = _validate_tool_args(tool_def, args)
+                    if validation_error:
                         result = ExecutorResult(
-                            display=f"Error in {name}",
-                            content=f"Tool '{name}' raised an exception: {type(e).__name__}: {e}",
+                            display=f"Invalid args for {name}",
+                            content=f"Error: {validation_error}",
                         )
+                    else:
+                        executor = filtered_tools[name]["executor"]
+                        try:
+                            result = await executor(**args)
+                        except Exception as e:
+                            result = ExecutorResult(
+                                display=f"Error in {name}",
+                                content=f"Tool '{name}' raised an exception: {type(e).__name__}: {e}",
+                            )
 
             # Yield a TOOL_RESULT message with the execution result
             yield Message(
