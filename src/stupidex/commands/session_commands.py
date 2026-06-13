@@ -63,9 +63,20 @@ async def execute_command(app: App, cmd: str) -> None:
                     set_current_theme(result)
 
             app.push_screen(ThemePicker(), on_theme_picked)
+        case "/personality":
+            personalities = load_personalities()
+            current = get_current_personality()
+
+            async def on_personality_picked(result: str | None):
+                if result:
+                    set_current_personality(result)
+
+            app.push_screen(PersonalityPicker(list(personalities.keys()), current), on_personality_picked)
 
 
 class SessionCommands(Provider):
+    COMMANDS = COMMANDS
+
     async def discover(self) -> Hits:
         for cmd, desc in COMMANDS.items():
             yield DiscoveryHit(cmd, partial(self.run_command, cmd), help=desc)
@@ -78,53 +89,4 @@ class SessionCommands(Provider):
                 yield Hit(score, matcher.highlight(cmd), partial(self.run_command, cmd), help=desc)
 
     async def run_command(self, cmd: str) -> None:
-        match cmd:
-            case "/new":
-                self.app.sessions.create()
-                await self.app.rerender_all()
-            case "/switch":
-                sessions = list(self.app.sessions.sessions.values())
-
-                async def on_picked(result: str | None):
-                    if result:
-                        self.app.sessions.switch(result)
-                        await self.app.rerender_all()
-
-                self.app.push_screen(SessionPicker(sessions), on_picked)
-            case "/delete":
-                sessions = list(self.app.sessions.sessions.values())
-
-                async def on_picked(result: str | None):
-                    if result:
-                        self.app.sessions.delete(result)
-                        if self.app.sessions.active is None:
-                            self.app.sessions.create()
-                        await self.app.rerender_all()
-
-                self.app.push_screen(SessionPicker(sessions), on_picked)
-            case "/model":
-                models = list_models()
-
-                async def on_picked(result: str | None):
-                    if result:
-                        self.app.sessions.change_model(result)
-                        await self.app.rerender_footer()
-
-                self.app.push_screen(ModelPicker(models), on_picked)
-            case "/theme":
-                async def on_theme_picked(result: str | None):
-                    if result:
-                        self.app.switch_theme(result)
-                        set_current_theme(result)
-
-                self.app.push_screen(ThemePicker(), on_theme_picked)
-            case "/personality":
-                personalities = load_personalities()
-                current = get_current_personality()
-
-                async def on_personality_picked(result: str | None):
-                    if result:
-                        set_current_personality(result)
-
-                self.app.push_screen(PersonalityPicker(list(personalities.keys()), current), on_personality_picked)
         await execute_command(self.app, cmd)
