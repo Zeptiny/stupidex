@@ -184,9 +184,6 @@ class Stupidex(App):
         self.streaming_started()
         self._active_worker = self.run_worker(self._stream_response(), exit_on_error=False)
 
-    async def on_submittextarea_submitted(self, event: TextArea.Submitted) -> None:
-        await self.action_submit_input()
-
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "input":
             return
