@@ -3,11 +3,10 @@ from enum import Enum
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
-from textual.timer import Timer
 from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
 from stupidex.agents import get_agent_registry
-from stupidex.agents.manager import SubagentRecord, SubagentState, set_subagent_manager
+from stupidex.agents.manager import SubagentState
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.message import Message, MessageRole, MessageType
@@ -20,11 +19,11 @@ from stupidex.widgets.message_widget import (
     AssistantMessageWidget,
     ThinkingMessageWidget,
     ToolResultMessageWidget,
-    UserMessageWidget,
     create_message_widget,
     get_tool_action_label,
 )
 from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, SidebarSubagentSelected
+from stupidex.widgets.subagent_ui import SubagentUIManager
 
 
 class InterruptState(Enum):
@@ -44,16 +43,12 @@ class Stupidex(App):
     ]
     COMMANDS = {SessionCommands}
 
-    sessions: SessionManager = SessionManager()
-    _interrupt_state: InterruptState = InterruptState.IDLE
-    _active_worker: object | None = None  # Textual Worker
-    _subagent_timer: Timer | None = None
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._subagent_widgets: dict[
-            str, dict[str, ThinkingMessageWidget | AssistantMessageWidget | Static | None]
-        ] = {}
+        self.sessions: SessionManager = SessionManager()
+        self._interrupt_state: InterruptState = InterruptState.IDLE
+        self._active_worker: object | None = None
+        self._subagent_ui = SubagentUIManager(self)
         self._setup_themes()
 
     def _setup_themes(self) -> None:
@@ -109,8 +104,7 @@ class Stupidex(App):
     def _has_running_subagents(self) -> bool:
         if not self.sessions.active:
             return False
-        terminal = {SubagentState.COMPLETED, SubagentState.FAILED, SubagentState.INTERRUPTED}
-        return any(r.state not in terminal for r in self.sessions.active.subagent_manager._subagents.values())
+        return self._subagent_ui.has_running(self.sessions.active.subagent_manager)
 
     async def action_interrupt(self) -> None:
         try:
@@ -255,8 +249,7 @@ class Stupidex(App):
         content_widget: AssistantMessageWidget | None = None
         temp_widgets: list[Static] = []
 
-        set_subagent_manager(self.sessions.active.subagent_manager)
-        self.sessions.active.subagent_manager.on_spawn = self._on_subagent_spawned
+        self._subagent_ui.setup(self.sessions.active.subagent_manager)
 
         try:
             general = get_agent_registry()["general"]
@@ -338,97 +331,6 @@ class Stupidex(App):
             self._reset_interrupt_state()
         await self.rerender_footer()
 
-    async def _on_subagent_spawned(self, record: SubagentRecord) -> None:
-        record.on_message = lambda msg, rid=record.id: self._on_subagent_message(rid, msg)
-        record.on_state_change = lambda state, rid=record.id: self._on_subagent_state_change(rid, state)
-        tabs = self.query_one("#tabs", TabbedContent)
-        pane = TabPane(self._tab_label(record), id=f"sub-{record.id}")
-        await tabs.add_pane(pane)
-        for msg in record.messages[record.messages_mounted :]:
-            await self._on_subagent_message(record.id, msg)
-        await self._update_sidebar_subagents()
-
-    async def _on_subagent_message(self, subagent_id: str, msg: Message) -> None:
-        if msg.usage:
-            try:
-                sidebar = self.query_one("#sidebar", Sidebar)
-                sidebar.update_tokens(
-                    msg.usage.prompt_tokens, msg.usage.completion_tokens, msg.usage.total_tokens, view_id=subagent_id
-                )
-            except Exception:
-                pass
-
-        try:
-            pane = self.query_one(f"#sub-{subagent_id}", TabPane)
-        except Exception:
-            return
-        try:
-            container = pane.query_one(ScrollableContainer)
-        except Exception:
-            container = ScrollableContainer()
-            await pane.mount(container)
-
-        widgets = self._subagent_widgets.setdefault(subagent_id, {"temp": []})
-        thinking_widget = widgets.get("thinking")
-        content_widget = widgets.get("content")
-        temp_widgets: list[Static] = widgets.get("temp", [])
-        if isinstance(temp_widgets, list) is False:
-            temp_widgets = []
-            widgets["temp"] = temp_widgets
-
-        if msg.type == MessageType.THINKING:
-            if thinking_widget is None:
-                w = ThinkingMessageWidget(msg)
-                await container.mount(w)
-                widgets["thinking"] = w
-                w.scroll_visible()
-            else:
-                thinking_widget.update_content(msg.content)
-        elif msg.type == MessageType.TOOL_CALL:
-            tool_name = msg.metadata.get("tool_name", "")
-            temp = Static(get_tool_action_label(tool_name), classes="temp-tool-message")
-            await container.mount(temp)
-            temp.scroll_visible()
-            temp_widgets.append(temp)
-            widgets["thinking"] = None
-            widgets["content"] = None
-        elif msg.type == MessageType.TOOL_RESULT:
-            if temp_widgets:
-                await temp_widgets.pop(0).remove()
-            w = ToolResultMessageWidget(msg)
-            await container.mount(w)
-            w.scroll_visible()
-            widgets["thinking"] = None
-            widgets["content"] = None
-        elif msg.role == MessageRole.USER:
-            w = UserMessageWidget(msg)
-            await container.mount(w)
-            w.scroll_visible()
-            widgets["thinking"] = None
-            widgets["content"] = None
-        else:
-            if content_widget is None:
-                if msg.content:
-                    w = AssistantMessageWidget(msg)
-                    await container.mount(w)
-                    widgets["content"] = w
-                    w.scroll_visible()
-            else:
-                if msg.content:
-                    content_widget.update_content(msg.content)
-
-    async def _on_subagent_state_change(self, subagent_id: str, state: SubagentState) -> None:
-        try:
-            tabs = self.query_one("#tabs", TabbedContent)
-            tab = tabs.get_tab(f"sub-{subagent_id}")
-        except Exception:
-            return
-        record = self.sessions.active.subagent_manager.get_record(subagent_id)
-        if not record:
-            return
-        tab.update(self._tab_label(record))
-        await self._update_sidebar_subagents()
-
     def on_sidebar_main_selected(self, event: SidebarMainSelected) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
         tabs.active = "main"
@@ -465,32 +367,8 @@ class Stupidex(App):
 
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
-        await self._sync_subagent_tabs()
+        await self._subagent_ui.sync_tabs(self.sessions.active.subagent_manager)
         await self.rerender_footer()
-
-    async def _sync_subagent_tabs(self) -> None:
-        tabs = self.query_one("#tabs", TabbedContent)
-        pane_ids = [p.id for p in tabs.query("TabPane") if p.id and p.id.startswith("sub-")]
-        for pane_id in pane_ids:
-            await tabs.remove_pane(pane_id)
-        self._subagent_widgets.clear()
-        if not self.sessions.active:
-            return
-        manager = self.sessions.active.subagent_manager
-        manager.on_spawn = self._on_subagent_spawned
-        set_subagent_manager(manager)
-        for record in manager._subagents.values():
-            pane = TabPane(self._tab_label(record), id=f"sub-{record.id}")
-            await tabs.add_pane(pane)
-            record.on_message = lambda msg, rid=record.id: self._on_subagent_message(rid, msg)
-            record.on_state_change = lambda state, rid=record.id: self._on_subagent_state_change(rid, state)
-            for msg in record.messages:
-                await self._on_subagent_message(record.id, msg)
-
-    @staticmethod
-    def _tab_label(record: SubagentRecord) -> str:
-        indicator = {"pending": "◌", "running": "●", "completed": "✓", "failed": "✗", "interrupted": "⊘"}
-        return f"{indicator.get(record.state.value, '?')} {record.label}"
 
     async def rerender_footer(self) -> None:
         if not self.sessions.active:
@@ -517,27 +395,4 @@ class Stupidex(App):
         else:
             self.query_one("#model", Static).update("No Model")
 
-        await self._update_sidebar_subagents()
-
-    async def _update_sidebar_subagents(self) -> None:
-        try:
-            sidebar = self.query_one("#sidebar", Sidebar)
-        except Exception:
-            return
-        if self.sessions.active:
-            records = list(self.sessions.active.subagent_manager._subagents.values())
-            await sidebar.update_subagents(records)
-        else:
-            await sidebar.update_subagents([])
-        self._manage_subagent_timer()
-
-    def _manage_subagent_timer(self) -> None:
-        has_running = self._has_running_subagents()
-        if has_running and self._subagent_timer is None:
-            self._subagent_timer = self.set_interval(1.0, self._tick_subagent_timer)
-        elif not has_running and self._subagent_timer is not None:
-            self._subagent_timer.stop()
-            self._subagent_timer = None
-
-    async def _tick_subagent_timer(self) -> None:
-        await self._update_sidebar_subagents()
+        await self._subagent_ui.update_sidebar()

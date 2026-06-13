@@ -50,6 +50,15 @@ class SubagentState(Enum):
     INTERRUPTED = "interrupted"
 
 
+SUBAGENT_INDICATORS: dict[SubagentState, str] = {
+    SubagentState.PENDING: "◌",
+    SubagentState.RUNNING: "●",
+    SubagentState.COMPLETED: "✓",
+    SubagentState.FAILED: "✗",
+    SubagentState.INTERRUPTED: "⊘",
+}
+
+
 @dataclass
 class SubagentRecord:
     id: str
