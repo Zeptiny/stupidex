@@ -220,6 +220,12 @@ src/
 Project-level config: `.stupidex.json` (overrides home config).
 
 ## TODO - In priority order
+- Sandboxing for shell command execution, file operations, and project-level config/agent/skill overrides
+  - Arbitrary shell command execution with no sandboxing or allowlist (exec.py)
+  - Unrestricted file read/write/edit to arbitrary paths including sensitive system files (file_manipulation.py)
+  - 24 bare `except Exception` blocks that silently swallow errors across app.py
+  - `write` tool creates arbitrary directory trees with `mkdir(parents=True)` (file_manipulation.py)
+  - Error messages leak command strings and file paths in tool execution errors (exec.py)
 - Concurrency control for file locking
 - MCP
 - LSP
