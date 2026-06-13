@@ -125,16 +125,29 @@ async def stream_response(
 
         for tc in tool_calls:
             name = tc["function"]["name"]
-            args = json.loads(tc["function"]["arguments"])
 
-            if name not in filtered_tools:
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except json.JSONDecodeError:
                 result = ExecutorResult(
-                    display=f"Unknown tool: {name}",
-                    content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools.keys())}",
+                    display=f"Invalid arguments for {name}",
+                    content=f"Error: Could not parse arguments for tool '{name}': invalid JSON.",
                 )
             else:
-                executor = filtered_tools[name]["executor"]
-                result = await executor(**args)
+                if name not in filtered_tools:
+                    result = ExecutorResult(
+                        display=f"Unknown tool: {name}",
+                        content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools.keys())}",
+                    )
+                else:
+                    executor = filtered_tools[name]["executor"]
+                    try:
+                        result = await executor(**args)
+                    except Exception as e:
+                        result = ExecutorResult(
+                            display=f"Error in {name}",
+                            content=f"Tool '{name}' raised an exception: {type(e).__name__}: {e}",
+                        )
 
             # Yield a TOOL_RESULT message with the execution result
             yield Message(
