@@ -10,7 +10,6 @@ dependencies = [
     "textual",
     "litellm",
     "httpx",
-    "pathlib",
     "aiofiles",
 ]
 

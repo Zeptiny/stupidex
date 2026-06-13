@@ -31,7 +31,7 @@ class CommandPicker(OptionList):
         parts = query.lstrip("/").strip().split()
         raw = parts[0] if parts else ""
         self._filtered = []
-        for cmd, desc in self._all_commands.items():
+        for cmd, _desc in self._all_commands.items():
             cmd_name = cmd.lstrip("/")
             if not raw or cmd_name.startswith(raw) or raw in cmd_name:
                 self._filtered.append(cmd)

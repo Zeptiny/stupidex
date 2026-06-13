@@ -191,16 +191,18 @@ glob_tool = Tool(
 
 async def execute_glob_tool(directory_path: str, pattern: str, include_hidden: bool = False) -> ExecutorResult:
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Build the full pattern path
         full_pattern = os.path.join(directory_path, pattern)
 
-        # Use glob to find matching files
         matches = await loop.run_in_executor(
-            None, lambda: glob_module.glob(
-                full_pattern, recursive=True, include_hidden=include_hidden)
+            None, lambda: glob_module.glob(full_pattern, recursive=True)
         )
+        if not include_hidden:
+            matches = [m for m in matches if not any(
+                p.startswith('.') for p in Path(m).parts
+            )]
 
         if not matches:
             return ExecutorResult(display=f"No matches for {pattern}", content=f"No files found matching pattern '{pattern}' in '{directory_path}'.")
@@ -218,7 +220,7 @@ async def execute_glob_tool(directory_path: str, pattern: str, include_hidden: b
 
         return ExecutorResult(display=f"Found {len(relative_paths)} matches for {pattern}", content="\n".join(result_lines))
     except Exception as e:
-        return ExecutorResult(display=f"Glob error pattern: {pattern}", content=f"Error searching for files using apttern {pattern}: {e}")
+        return ExecutorResult(display=f"Glob error pattern: {pattern}", content=f"Error searching for files using pattern {pattern}: {e}")
 
 
 write_tool = Tool(

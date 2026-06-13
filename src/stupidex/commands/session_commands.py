@@ -3,7 +3,7 @@ from functools import partial
 from textual.app import App
 from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
 
-from stupidex.config import get_current_personality, set_current_personality, set_current_theme
+from stupidex.config import get_current_personality, get_current_theme, set_current_personality, set_current_theme
 from stupidex.llm.models import list_models
 from stupidex.personality import load_personalities
 from stupidex.screens.model_picker import ModelPicker
@@ -62,7 +62,8 @@ async def execute_command(app: App, cmd: str) -> None:
                     app.switch_theme(result)
                     set_current_theme(result)
 
-            app.push_screen(ThemePicker(), on_theme_picked)
+            current = get_current_theme()
+            app.push_screen(ThemePicker(current), on_theme_picked)
         case "/personality":
             personalities = load_personalities()
             current = get_current_personality()
