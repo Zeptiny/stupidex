@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from xml.sax.saxutils import escape
 
-from stupidex.agents.manager import get_subagent_manager
+from stupidex.agents.manager import format_subagent_attrs, get_subagent_manager
 from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.utils import directory_tree
@@ -40,7 +40,7 @@ async def build_dynamic_system_prompt() -> Message:
         parts = []
         for s in states:
             e = escape
-            attrs = f'id="{e(s["id"])}" name="{e(s["name"])}" type="{e(s["type"])}" state="{e(s["state"])}" elapsed="{s["elapsed"]}s"'
+            attrs = format_subagent_attrs(s["id"], s["name"], s["type"], s["state"], s["elapsed"])
             task_block = f"<task>\n{e(s['task'])}\n</task>" if s.get(
                 "task") else ""
             parts.append(

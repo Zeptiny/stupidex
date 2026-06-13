@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from xml.sax.saxutils import escape
 
 from stupidex.domain.agent import Agent
 
@@ -57,6 +58,17 @@ SUBAGENT_INDICATORS: dict[SubagentState, str] = {
     SubagentState.FAILED: "✗",
     SubagentState.INTERRUPTED: "⊘",
 }
+
+
+def format_subagent_attrs(
+    id: str, name: str, type: str, state: str, elapsed: float | None = None
+) -> str:
+    """Build XML attribute string for subagent elements."""
+    e = escape
+    attrs = f'id="{e(id)}" name="{e(name)}" type="{e(type)}" state="{e(state)}"'
+    if elapsed is not None:
+        attrs += f' elapsed="{elapsed}s"'
+    return attrs
 
 
 @dataclass
