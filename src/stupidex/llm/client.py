@@ -146,7 +146,12 @@ async def stream_response(
                     content=f"Error: Could not parse arguments for tool '{name}': invalid JSON.",
                 )
             else:
-                if name not in filtered_tools:
+                if not isinstance(args, dict):
+                    result = ExecutorResult(
+                        display=f"Invalid arguments for {name}",
+                        content=f"Error: Arguments for tool '{name}' must be a JSON object, got {type(args).__name__}.",
+                    )
+                elif name not in filtered_tools:
                     result = ExecutorResult(
                         display=f"Unknown tool: {name}",
                         content=f"Error: tool '{name}' does not exist. Available tools: {', '.join(filtered_tools.keys())}",
