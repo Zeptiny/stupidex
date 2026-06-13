@@ -97,6 +97,14 @@ class SubagentRecord:
     def type(self) -> str:
         return self.agent.type.value
 
+    @property
+    def elapsed_seconds(self) -> float | None:
+        if self.end_time:
+            return round(self.end_time - self.start_time, 1)
+        elif self.start_time:
+            return round(time.time() - self.start_time, 1)
+        return None
+
 
 class SubagentManager:
     def __init__(self) -> None:
@@ -224,19 +232,13 @@ class SubagentManager:
         """Return state info for all tracked subagents."""
         states = []
         for record in self._subagents.values():
-            elapsed = None
-            if record.end_time:
-                elapsed = round(record.end_time - record.start_time, 1)
-            elif record.start_time:
-                elapsed = round(time.time() - record.start_time, 1)
-
             states.append({
                 "id": record.id,
                 "name": record.name,
                 "type": record.type,
                 "task": record.task,
                 "state": record.state.value,
-                "elapsed": elapsed,
+                "elapsed": record.elapsed_seconds,
             })
         return states
 

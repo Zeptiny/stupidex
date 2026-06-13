@@ -420,11 +420,8 @@ class Sidebar(Vertical):
         return SUBAGENT_INDICATORS.get(state, "?")
 
     def _get_elapsed(self, record: SubagentRecord) -> str | None:
-        if record.end_time:
-            elapsed = record.end_time - record.start_time
-        elif record.start_time:
-            elapsed = time.time() - record.start_time
-        else:
+        elapsed = record.elapsed_seconds
+        if elapsed is None:
             return None
         if elapsed < 60:
             return f"{elapsed:.0f}s"

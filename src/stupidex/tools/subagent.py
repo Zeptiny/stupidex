@@ -112,11 +112,7 @@ async def execute_wait_for_subagent(subagent_ids: list[str]) -> ExecutorResult:
     parts = []
     for sid, record in records.items():
         status = record.state.value
-        elapsed = None
-        if record.end_time:
-            elapsed = round(record.end_time - record.start_time, 1)
-        elif record.start_time:
-            elapsed = round(time.time() - record.start_time, 1)
+        elapsed = record.elapsed_seconds
 
         e = escape
         attrs = format_subagent_attrs(sid, record.name, record.type, status, elapsed)
