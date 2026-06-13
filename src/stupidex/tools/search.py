@@ -49,14 +49,6 @@ async def _is_binary(file_path: str) -> bool:
         return True
 
 
-def _should_skip_dir(dirname: str) -> bool:
-    """Check if a directory should be skipped based on ignored_dirs config."""
-    ignored = set(get_config().ignored_dirs)
-    if dirname in ignored:
-        return True
-    return bool(dirname.startswith("."))
-
-
 async def execute_grep_tool(
     pattern: str,
     directory_path: str,
@@ -84,15 +76,19 @@ async def execute_grep_tool(
                 content=f"Error: Directory '{directory_path}' does not exist.",
             )
 
+        # Build ignored set once instead of per-directory
+        ignored = frozenset(get_config().ignored_dirs)
+
+        def _should_skip_dir(dirname: str) -> bool:
+            if dirname in ignored:
+                return True
+            return bool(dirname.startswith("."))
+
         # If include_pattern is given, compile it as a regex for matching filenames
         file_regex = None
         if include_pattern:
-            # Convert simple glob to regex: *.py -> .*\.py$
             glob_regex = include_pattern.replace(".", r"\.").replace("*", ".*")
             file_regex = re.compile(f"^{glob_regex}$", re.IGNORECASE)
-
-        results: list[str] = []
-        total_matches = 0
 
         # Collect all file paths using os.walk (blocking) in executor
         def _collect_files():
@@ -108,28 +104,38 @@ async def execute_grep_tool(
         loop = asyncio.get_running_loop()
         file_paths = await loop.run_in_executor(None, _collect_files)
 
-        for file_path in file_paths:
-            if total_matches >= max_results:
-                break
+        # Search files with bounded concurrency
+        semaphore = asyncio.Semaphore(32)
+        total_matches = 0
+        results: list[str] = []
 
-            # Skip binary files
+        async def _search_file(file_path: str) -> list[str] | None:
             if await _is_binary(file_path):
-                continue
+                return None
+            async with semaphore:
+                try:
+                    relative_path = os.path.relpath(file_path, base_path)
+                    matches = []
+                    async with aiofiles.open(file_path, encoding="utf-8", errors="ignore") as f:
+                        line_num = 0
+                        async for line in f:
+                            line_num += 1
+                            if regex.search(line):
+                                matches.append(f"{relative_path}:{line_num}: {line.rstrip()}")
+                    return matches
+                except (PermissionError, OSError):
+                    return None
 
-            try:
-                relative_path = os.path.relpath(file_path, base_path)
-                async with aiofiles.open(file_path, encoding="utf-8", errors="ignore") as f:
-                    line_num = 0
-                    async for line in f:
-                        line_num += 1
-                        if regex.search(line):
-                            results.append(
-                                f"{relative_path}:{line_num}: {line.rstrip()}")
-                            total_matches += 1
-                            if total_matches >= max_results:
-                                break
-            except (PermissionError, OSError):
-                continue
+        tasks = [_search_file(fp) for fp in file_paths]
+        for coro in asyncio.as_completed(tasks):
+            matches = await coro
+            if matches:
+                for match in matches:
+                    results.append(match)
+                    if len(results) >= max_results:
+                        break
+            if len(results) >= max_results:
+                break
 
         if not results:
             return ExecutorResult(
@@ -137,15 +143,14 @@ async def execute_grep_tool(
                 content=f"No matches found for pattern '{pattern}' in '{directory_path}'.",
             )
 
-        output_lines = [
-            f"Found {total_matches} match(es) for pattern '{pattern}':"]
+        output_lines = [f"Found {len(results)} match(es) for pattern '{pattern}':"]
         output_lines.extend(results)
 
-        if total_matches >= max_results:
+        if len(results) >= max_results:
             output_lines.append(f"\n... (truncated to {max_results} results)")
 
         return ExecutorResult(
-            display=f"Found {total_matches} matches for '{pattern}'",
+            display=f"Found {len(results)} matches for '{pattern}'",
             content="\n".join(output_lines),
         )
 
