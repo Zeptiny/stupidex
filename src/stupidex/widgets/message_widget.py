@@ -122,15 +122,15 @@ class ErrorMessageWidget(Static):
     DEFAULT_CSS = """
     ErrorMessageWidget {
         background: #3a1010;
-        border: tall #dc143c;
+        border: wide #dc143c;
         margin: 0 1;
-        padding: 1;
+        padding: 0 1;
+        height: auto;
     }
 
     ErrorMessageWidget .error-title {
         text-style: bold;
         color: #ff4444;
-        margin-bottom: 1;
     }
 
     ErrorMessageWidget .error-detail {
