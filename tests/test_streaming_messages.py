@@ -407,7 +407,7 @@ class ClassifyErrorTest(unittest.TestCase):
             ],
         )
 
-    def test_error_messages_not_recorded_in_history(self):
+    def test_error_messages_pass_through_record_streamed_message(self):
         history = []
         state = StreamHistoryState()
         error_msg = Message(
@@ -420,6 +420,29 @@ class ClassifyErrorTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0].type, MessageType.ERROR)
+
+    def test_timeout_error_is_classified(self):
+        exc = litellm.Timeout(
+            message="Request timed out", llm_provider="openai", model="gpt-4"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Request Timed Out")
+        self.assertIn("time", detail.lower())
+
+    def test_internal_server_error_is_classified(self):
+        exc = litellm.InternalServerError(
+            message="Internal error", llm_provider="openai", model="gpt-4"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Server Error")
+        self.assertIn("Internal error", detail)
+
+    def test_service_unavailable_error_is_classified(self):
+        exc = litellm.ServiceUnavailableError(
+            message="Service down", llm_provider="openai", model="gpt-4"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Service Unavailable")
 
 
 if __name__ == "__main__":

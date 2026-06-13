@@ -119,14 +119,33 @@ class AssistantMessageWidget(MessageWidget):
 class ErrorMessageWidget(Static):
     """Widget for displaying error messages. Content is never sent to the LLM."""
 
+    DEFAULT_CSS = """
+    ErrorMessageWidget {
+        background: #3a1010;
+        border: tall #dc143c;
+        margin: 0 1;
+        padding: 1;
+    }
+
+    ErrorMessageWidget .error-title {
+        text-style: bold;
+        color: #ff4444;
+        margin-bottom: 1;
+    }
+
+    ErrorMessageWidget .error-detail {
+        color: #cc8888;
+    }
+    """
+
     def __init__(self, msg: Message, **kwargs):
         self.msg = msg
-        super().__init__(self._build_renderable(), **kwargs)
+        super().__init__(**kwargs)
 
-    def _build_renderable(self):
+    def compose(self) -> ComposeResult:
         title = self.msg.metadata.get("error_title", "Error")
-        detail = self.msg.content
-        return Text(f"{title}\n{detail}", style="bold #ff4444")
+        yield Static(title, classes="error-title")
+        yield Static(self.msg.content, classes="error-detail")
 
 
 class ToolResultMessageWidget(Static):

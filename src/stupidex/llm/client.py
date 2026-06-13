@@ -19,25 +19,35 @@ log = logging.getLogger(__name__)
 
 _YIELD_THROTTLE = 0.1
 _TOOL_TIMEOUT = 60
+_ERROR_DETAIL_MAX_LEN = 200
 
 
 def classify_error(exc: Exception) -> tuple[str, str]:
     """Map an exception to a (title, detail) pair for user-facing display."""
+    detail = str(exc)[:_ERROR_DETAIL_MAX_LEN] or type(exc).__name__
     if isinstance(exc, litellm.AuthenticationError):
         return "Authentication Failed", "Invalid or missing API key. Check your configuration."
     if isinstance(exc, litellm.RateLimitError):
         return "Rate Limit Exceeded", "Too many requests. Please wait and try again."
+    if isinstance(exc, litellm.Timeout):
+        return "Request Timed Out", "The API did not respond in time. Try again later."
     if isinstance(exc, litellm.APIConnectionError):
         return "Connection Failed", "Could not reach the API server. Check your network and base_url."
     if isinstance(exc, litellm.BadRequestError):
-        return "Invalid Request", str(exc)[:200] if str(exc) else "The request was rejected by the API."
+        return "Invalid Request", detail or "The request was rejected by the API."
+    if isinstance(exc, litellm.InternalServerError):
+        return "Server Error", detail or "The API server encountered an internal error."
+    if isinstance(exc, litellm.ServiceUnavailableError):
+        return "Service Unavailable", detail or "The API service is temporarily unavailable."
+    if isinstance(exc, litellm.BadGatewayError):
+        return "Bad Gateway", detail or "The API server returned a bad gateway error."
     if isinstance(exc, litellm.APIError):
-        return "API Error", str(exc)[:200] if str(exc) else "The API returned an error."
+        return "API Error", detail or "The API returned an error."
     if isinstance(exc, httpx.TimeoutException):
         return "Request Timed Out", "The API did not respond in time. Try again later."
     if isinstance(exc, httpx.HTTPError):
-        return "HTTP Error", str(exc)[:200] if str(exc) else "An HTTP error occurred."
-    return "Unexpected Error", str(exc)[:200] if str(exc) else type(exc).__name__
+        return "HTTP Error", detail or "An HTTP error occurred."
+    return "Unexpected Error", detail
 
 
 def _raise_first_task_exception(results: tuple[Any, ...]) -> None:

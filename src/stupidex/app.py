@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from enum import Enum
 
 from textual.app import App, ComposeResult
@@ -21,6 +22,8 @@ from stupidex.widgets.message_widget import (
 )
 from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, SidebarSubagentSelected
 from stupidex.widgets.subagent_ui import SubagentUIManager
+
+log = logging.getLogger(__name__)
 
 
 class InterruptState(Enum):
@@ -279,17 +282,32 @@ class Stupidex(App):
                 pass
             raise
         except Exception as exc:
-            title, detail = classify_error(exc)
-            error_msg = Message(
-                role=MessageRole.ASSISTANT,
-                content=detail,
-                type=MessageType.ERROR,
-                metadata={"error_title": title},
-            )
+            log.exception("Stream response failed")
+            for tw in ws.temp:
+                try:
+                    await tw.remove()
+                except Exception:
+                    pass
+            ws.temp.clear()
+            try:
+                title, detail = classify_error(exc)
+                error_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=detail,
+                    type=MessageType.ERROR,
+                    metadata={"error_title": title},
+                )
+            except Exception:
+                error_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=str(exc)[:200] or type(exc).__name__,
+                    type=MessageType.ERROR,
+                    metadata={"error_title": "Unexpected Error"},
+                )
             try:
                 await mount_streamed_message(container, error_msg, ws)
             except Exception:
-                pass
+                log.exception("Failed to mount error widget")
         finally:
             await self.streaming_finished()
 
