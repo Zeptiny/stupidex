@@ -194,6 +194,8 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
     else:
         if state.content is None:
             if msg.content:
+                if state.thinking:
+                    state.thinking.flush()
                 w = AssistantMessageWidget(msg)
                 await container.mount(w)
                 state.content = w

@@ -42,3 +42,56 @@ class Message:
         if self.tool_calls:
             d["tool_calls"] = self.tool_calls
         return d
+
+
+@dataclass
+class StreamHistoryState:
+    """Tracks persisted messages while cumulative stream snapshots arrive."""
+    thinking: Message | None = None
+    content: Message | None = None
+
+
+def record_streamed_message(history: list[Message], msg: Message, state: StreamHistoryState) -> bool:
+    """Record a streamed message without persisting duplicate cumulative snapshots."""
+    if msg.type == MessageType.THINKING:
+        if state.thinking is None:
+            history.append(msg)
+            state.thinking = msg
+            return True
+        state.thinking.content = msg.content
+        if msg.usage:
+            state.thinking.usage = msg.usage
+        return False
+
+    if msg.type == MessageType.TOOL_CALL:
+        return False
+
+    if msg.type == MessageType.TOOL_RESULT:
+        history.append(msg)
+        state.thinking = None
+        state.content = None
+        return True
+
+    if msg.role == MessageRole.USER:
+        history.append(msg)
+        state.thinking = None
+        state.content = None
+        return True
+
+    if msg.type == MessageType.TEXT:
+        appended = False
+        if msg.content:
+            if state.content is None:
+                history.append(msg)
+                state.content = msg
+                appended = True
+            else:
+                state.content.content = msg.content
+        if msg.usage and state.content:
+            state.content.usage = msg.usage
+        return appended
+
+    history.append(msg)
+    state.thinking = None
+    state.content = None
+    return True
