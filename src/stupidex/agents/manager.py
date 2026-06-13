@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Callable, Coroutine
@@ -14,7 +15,23 @@ from stupidex.domain.agent import Agent
 if TYPE_CHECKING:
     from stupidex.domain.message import Message
 
+log = logging.getLogger(__name__)
+
 _current_manager: ContextVar[SubagentManager] = ContextVar('current_manager')
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("Unhandled exception in background task: %s", exc, exc_info=exc)
+
+
+def _fire_and_forget(coro: Coroutine) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    task.add_done_callback(_log_task_exception)
+    return task
 
 
 def get_subagent_manager() -> SubagentManager:
@@ -123,7 +140,7 @@ class SubagentManager:
         async def _run() -> None:
             record.state = SubagentState.RUNNING
             if record.on_state_change:
-                asyncio.create_task(record.on_state_change(record.state))
+                _fire_and_forget(record.on_state_change(record.state))
             try:
                 user_msg = Message(role=MessageRole.USER, content=task)
                 subagent_messages = [user_msg]
@@ -161,11 +178,11 @@ class SubagentManager:
             finally:
                 record.end_time = time.time()
                 if record.on_state_change:
-                    asyncio.create_task(record.on_state_change(record.state))
+                    _fire_and_forget(record.on_state_change(record.state))
 
         record.async_task = None  # set below
         if self.on_spawn:
-            asyncio.create_task(self.on_spawn(record))
+            _fire_and_forget(self.on_spawn(record))
         record.async_task = asyncio.create_task(_run())
         return record
 
