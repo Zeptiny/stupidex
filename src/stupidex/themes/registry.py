@@ -1,8 +1,10 @@
-from textual.theme import Theme
+from textual.theme import BUILTIN_THEMES, Theme
 
 THEMES: dict[str, Theme] = {
-    "default": Theme(
-        name="default",
+    "default": BUILTIN_THEMES["textual-dark"],
+    "solarized-light": BUILTIN_THEMES["solarized-light"],
+    "bluey": Theme(
+        name="bluey",
         primary="#1E90FF",
         secondary="#7B61FF",
         warning="#FFA62B",
