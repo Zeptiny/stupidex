@@ -199,12 +199,8 @@ def get_current_personality() -> str:
 
 
 def set_current_personality(name: str) -> None:
-    from stupidex.personality import PERSONALITY_REGISTRY
-    if name not in PERSONALITY_REGISTRY:
-        raise ValueError(
-            f"Unknown personality: '{name}'. "
-            f"Available: {', '.join(sorted(PERSONALITY_REGISTRY))}"
-        )
+    from stupidex.personality import get_personality_registry
+    get_personality_registry().get(name)  # raises ValueError for unknown
     cfg = get_config()
     cfg.personality = name
     ConfigManager.save()
