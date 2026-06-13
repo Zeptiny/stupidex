@@ -16,19 +16,16 @@ read_tool = Tool(
     parameters=ToolParameter(
         properties={
             "file_path": ToolParameterProperties(
-                type="string",
-                description="The path to the file to read, relative to the current working directory"
+                type="string", description="The path to the file to read, relative to the current working directory"
             ),
             "offset": ToolParameterProperties(
-                type="integer",
-                description="The line number to start from (default: 1, 1 indexed)"
+                type="integer", description="The line number to start from (default: 1, 1 indexed)"
             ),
             "limit": ToolParameterProperties(
-                type="integer",
-                description="The maximum number of lines to read (default: 100)"
+                type="integer", description="The maximum number of lines to read (default: 100)"
             ),
         },
-        required=["file_path"]
+        required=["file_path"],
     ),
     action_label="Reading...",
 )
@@ -48,13 +45,21 @@ async def execute_read_tool(file_path: str, offset: int = 1, limit: int | None =
                     selected_lines.append((line_num, raw_line.rstrip()))
             line_count = line_num
 
+        if line_count == 0:
+            return ExecutorResult(
+                display=f"Read {file_path} is empty", content=f"File {file_path} is empty ({line_count} lines)"
+            )
+
         if offset > line_count:
-            return ExecutorResult(display=f"Offset {offset} out of range", content=f"Offset of {offset} is greater than the file line count {line_count}")
+            return ExecutorResult(
+                display=f"Read {file_path}, offset {offset} out of range",
+                content=f"Offset of {offset} is greater than the file line count {line_count}",
+            )
 
         return ExecutorResult(
             display=f"Read {file_path} lines {offset}-{min(offset + limit - 1, line_count)}",
-            content=f"Showing lines {offset}-{min(offset + limit - 1, line_count)} of {line_count}\n" +
-            "\n".join(f"{num} | {line}" for num, line in selected_lines)
+            content=f"Showing lines {offset}-{min(offset + limit - 1, line_count)} of {line_count}\n"
+            + "\n".join(f"{num} | {line}" for num, line in selected_lines),
         )
 
     except Exception as e:
@@ -67,35 +72,36 @@ edit_tool = Tool(
     parameters=ToolParameter(
         properties={
             "file_path": ToolParameterProperties(
-                type="string",
-                description="The path to the file to edit, relative to the current working directory"
+                type="string", description="The path to the file to edit, relative to the current working directory"
             ),
             "old_string": ToolParameterProperties(
                 type="string",
-                description="The exact string to find and replace. Must match the file content exactly, including whitespace and indentation."
+                description="The exact string to find and replace. Must match the file content exactly, including whitespace and indentation.",
             ),
-            "new_string": ToolParameterProperties(
-                type="string",
-                description="The replacement string"
-            ),
+            "new_string": ToolParameterProperties(type="string", description="The replacement string"),
             "replace_all": ToolParameterProperties(
                 type="boolean",
-                description="Whether to replace all occurrences of the old string (default: false). Use true for renames."
+                description="Whether to replace all occurrences of the old string (default: false). Use true for renames.",
             ),
         },
-        required=["file_path", "old_string", "new_string"]
+        required=["file_path", "old_string", "new_string"],
     ),
     action_label="Editing...",
 )
 
 
-async def execute_edit_tool(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> ExecutorResult:
+async def execute_edit_tool(
+    file_path: str, old_string: str, new_string: str, replace_all: bool = False
+) -> ExecutorResult:
     try:
         async with aiofiles.open(file_path) as f:
             content = await f.read()
 
         if old_string not in content:
-            return ExecutorResult(display=f"String not found in {file_path}", content=f"String '{old_string}' not found in file '{file_path}'. No changes made.")
+            return ExecutorResult(
+                display=f"String not found in {file_path}",
+                content=f"String '{old_string}' not found in file '{file_path}'. No changes made.",
+            )
 
         if replace_all:
             new_content = content.replace(old_string, new_string)
@@ -111,7 +117,7 @@ async def execute_edit_tool(file_path: str, old_string: str, new_string: str, re
             new_content.splitlines(keepends=True),
             fromfile=f"old/{file_path}",
             tofile=f"new/{file_path}",
-            lineterm=""
+            lineterm="",
         )
         diff_text = "\n".join(diff)
 
@@ -131,24 +137,25 @@ read_directory = Tool(
         properties={
             "directory_path": ToolParameterProperties(
                 type="string",
-                description="The path to the directory to read, relative to the current working directory"
+                description="The path to the directory to read, relative to the current working directory",
             ),
             "max_depth": ToolParameterProperties(
-                type="integer",
-                description="The max depth of the directory tree (Default 2)"
+                type="integer", description="The max depth of the directory tree (Default 2)"
             ),
             "include_hidden": ToolParameterProperties(
                 type="boolean",
-                description="Whether to include hidden files and directories (starting with . or cache/builds/dist/envs/tooling directories) (default: false)"
+                description="Whether to include hidden files and directories (starting with . or cache/builds/dist/envs/tooling directories) (default: false)",
             ),
         },
-        required=["directory_path"]
+        required=["directory_path"],
     ),
     action_label="Browsing...",
 )
 
 
-async def execute_read_directory_tool(directory_path: str, max_depth: int | None = None, include_hidden: bool = False) -> ExecutorResult:
+async def execute_read_directory_tool(
+    directory_path: str, max_depth: int | None = None, include_hidden: bool = False
+) -> ExecutorResult:
     if max_depth is None:
         max_depth = get_config().directory_tree_depth
     try:
@@ -168,25 +175,24 @@ async def execute_read_directory_tool(directory_path: str, max_depth: int | None
             content=f"Error reading directory {directory_path}: {e}",
         )
 
+
 glob_tool = Tool(
     name="glob",
     description="Find files matching a glob pattern. Use to locate files by name when you know the pattern (e.g. '*.py', '**/*.test.ts'). Returns matching file paths sorted by modification time.",
     parameters=ToolParameter(
         properties={
             "directory_path": ToolParameterProperties(
-                type="string",
-                description="The directory to search in, relative to the current working directory"
+                type="string", description="The directory to search in, relative to the current working directory"
             ),
             "pattern": ToolParameterProperties(
                 type="string",
-                description="The glob pattern to match file names (e.g., '*.py', '**/*.txt', 'src/**/*.py')"
+                description="The glob pattern to match file names (e.g., '*.py', '**/*.txt', 'src/**/*.py')",
             ),
             "include_hidden": ToolParameterProperties(
-                type="boolean",
-                description="Whether to include hidden files (starting with .) (default: false)"
+                type="boolean", description="Whether to include hidden files (starting with .) (default: false)"
             ),
         },
-        required=["directory_path", "pattern"]
+        required=["directory_path", "pattern"],
     ),
     action_label="Globbing...",
 )
@@ -199,31 +205,33 @@ async def execute_glob_tool(directory_path: str, pattern: str, include_hidden: b
         # Build the full pattern path
         full_pattern = os.path.join(directory_path, pattern)
 
-        matches = await loop.run_in_executor(
-            None, lambda: glob_module.glob(full_pattern, recursive=True)
-        )
+        matches = await loop.run_in_executor(None, lambda: glob_module.glob(full_pattern, recursive=True))
         if not include_hidden:
-            matches = [m for m in matches if not any(
-                p.startswith('.') for p in Path(m).parts
-            )]
+            matches = [m for m in matches if not any(p.startswith(".") for p in Path(m).parts)]
 
         if not matches:
-            return ExecutorResult(display=f"No matches for {pattern}", content=f"No files found matching pattern '{pattern}' in '{directory_path}'.")
+            return ExecutorResult(
+                display=f"No matches for {pattern}",
+                content=f"No files found matching pattern '{pattern}' in '{directory_path}'.",
+            )
 
         # Convert to relative paths and sort
         relative_paths = sorted(matches)
 
-        result_lines = [
-            f"Found {len(relative_paths)} file(s) matching '{pattern}':"]
+        result_lines = [f"Found {len(relative_paths)} file(s) matching '{pattern}':"]
         for path in relative_paths:
             if os.path.isdir(path):
                 result_lines.append(f"{path}/")
             else:
                 result_lines.append(path)
 
-        return ExecutorResult(display=f"Found {len(relative_paths)} matches for {pattern}", content="\n".join(result_lines))
+        return ExecutorResult(
+            display=f"Found {len(relative_paths)} matches for {pattern}", content="\n".join(result_lines)
+        )
     except Exception as e:
-        return ExecutorResult(display=f"Glob error pattern: {pattern}", content=f"Error searching for files using pattern {pattern}: {e}")
+        return ExecutorResult(
+            display=f"Glob error pattern: {pattern}", content=f"Error searching for files using pattern {pattern}: {e}"
+        )
 
 
 write_tool = Tool(
@@ -232,15 +240,11 @@ write_tool = Tool(
     parameters=ToolParameter(
         properties={
             "file_path": ToolParameterProperties(
-                type="string",
-                description="The file path, relative to the current working directory"
+                type="string", description="The file path, relative to the current working directory"
             ),
-            "content": ToolParameterProperties(
-                type="string",
-                description="The complete file content to write"
-            ),
+            "content": ToolParameterProperties(type="string", description="The complete file content to write"),
         },
-        required=["file_path", "content"]
+        required=["file_path", "content"],
     ),
     action_label="Writing...",
 )
@@ -257,9 +261,8 @@ async def execute_write_tool(file_path: str, content: str) -> ExecutorResult:
         lines = content.splitlines()
         return ExecutorResult(
             display=f"Wrote {len(lines)} lines to {path}",
-            content=f"File written successfully, path: {path}, Showing lines 1-{len(lines)} of written file:\n" +
-            "\n".join(f"{i + 1} | {line.rstrip()}" for i,
-                      line in enumerate(lines))
+            content=f"File written successfully, path: {path}, Showing lines 1-{len(lines)} of written file:\n"
+            + "\n".join(f"{i + 1} | {line.rstrip()}" for i, line in enumerate(lines)),
         )
     except Exception as e:
         return ExecutorResult(display=f"Write error {file_path}", content=f"Error writing file: {e}")
