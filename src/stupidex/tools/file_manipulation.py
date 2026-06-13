@@ -38,21 +38,24 @@ async def execute_read_tool(file_path: str, offset: int = 1, limit: int | None =
     if limit is None:
         limit = get_config().read_line_limit
     try:
+        selected_lines: list[tuple[int, str]] = []
+        line_count = 0
         async with aiofiles.open(file_path) as f:
-            lines = await f.readlines()
-            # Return <line number> | <line content>
-            selected_lines = lines[offset - 1:offset - 1 + limit]
-            line_count = len(lines)
+            line_num = 0
+            async for raw_line in f:
+                line_num += 1
+                if line_num >= offset and line_num < offset + limit:
+                    selected_lines.append((line_num, raw_line.rstrip()))
+            line_count = line_num
 
-            if offset > line_count:
-                return ExecutorResult(display=f"Offset {offset} out of range", content=f"Offset of {offset} is greater than the file line count {line_count}")
+        if offset > line_count:
+            return ExecutorResult(display=f"Offset {offset} out of range", content=f"Offset of {offset} is greater than the file line count {line_count}")
 
-            return ExecutorResult(
-                display=f"Read {file_path} lines {offset}-{min(offset + limit - 1, line_count)}",
-                content=f"Showing lines {offset}-{min(offset + limit - 1, line_count)} of {line_count}\n" +
-                "\n".join(f"{i + offset} | {line.rstrip()}" for i,
-                          line in enumerate(selected_lines))
-            )
+        return ExecutorResult(
+            display=f"Read {file_path} lines {offset}-{min(offset + limit - 1, line_count)}",
+            content=f"Showing lines {offset}-{min(offset + limit - 1, line_count)} of {line_count}\n" +
+            "\n".join(f"{num} | {line}" for num, line in selected_lines)
+        )
 
     except Exception as e:
         return ExecutorResult(display=f"Read error {file_path}", content=f"Error reading file {file_path}: {e}")
