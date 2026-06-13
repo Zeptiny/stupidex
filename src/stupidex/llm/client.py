@@ -5,6 +5,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import httpx
 import litellm
 
 from stupidex.config import get_config
@@ -18,6 +19,25 @@ log = logging.getLogger(__name__)
 
 _YIELD_THROTTLE = 0.1
 _TOOL_TIMEOUT = 60
+
+
+def classify_error(exc: Exception) -> tuple[str, str]:
+    """Map an exception to a (title, detail) pair for user-facing display."""
+    if isinstance(exc, litellm.AuthenticationError):
+        return "Authentication Failed", "Invalid or missing API key. Check your configuration."
+    if isinstance(exc, litellm.RateLimitError):
+        return "Rate Limit Exceeded", "Too many requests. Please wait and try again."
+    if isinstance(exc, litellm.APIConnectionError):
+        return "Connection Failed", "Could not reach the API server. Check your network and base_url."
+    if isinstance(exc, litellm.BadRequestError):
+        return "Invalid Request", str(exc)[:200] if str(exc) else "The request was rejected by the API."
+    if isinstance(exc, litellm.APIError):
+        return "API Error", str(exc)[:200] if str(exc) else "The API returned an error."
+    if isinstance(exc, httpx.TimeoutException):
+        return "Request Timed Out", "The API did not respond in time. Try again later."
+    if isinstance(exc, httpx.HTTPError):
+        return "HTTP Error", str(exc)[:200] if str(exc) else "An HTTP error occurred."
+    return "Unexpected Error", str(exc)[:200] if str(exc) else type(exc).__name__
 
 
 def _raise_first_task_exception(results: tuple[Any, ...]) -> None:
@@ -43,7 +63,7 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
     """Convert persisted display history to API history."""
     api_messages = []
     for msg in messages:
-        if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT):
+        if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT, MessageType.ERROR):
             continue
         if not msg.content and not msg.tool_calls:
             continue

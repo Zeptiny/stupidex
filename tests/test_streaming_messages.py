@@ -3,6 +3,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
+import litellm
+
 from stupidex.domain.message import (
     Message,
     MessageRole,
@@ -12,6 +15,7 @@ from stupidex.domain.message import (
     record_streamed_message,
 )
 from stupidex.llm import client as llm_client
+from stupidex.llm.client import classify_error
 from stupidex.widgets import message_widget
 
 
@@ -320,6 +324,102 @@ class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, ["flush", "mount"])
         self.assertIs(state.content, container.widget)
+
+
+class ClassifyErrorTest(unittest.TestCase):
+    def test_authentication_error(self):
+        exc = litellm.AuthenticationError(
+            message="Invalid API key", llm_provider="openai", model="gpt-4"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Authentication Failed")
+        self.assertIn("API key", detail)
+
+    def test_rate_limit_error(self):
+        exc = litellm.RateLimitError(
+            message="Rate limit", llm_provider="openai", model="gpt-4"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Rate Limit Exceeded")
+        self.assertIn("wait", detail)
+
+    def test_api_connection_error(self):
+        exc = litellm.APIConnectionError(
+            message="Connection refused", llm_provider="openai", model="gpt-4"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Connection Failed")
+        self.assertIn("network", detail.lower())
+
+    def test_bad_request_error(self):
+        exc = litellm.BadRequestError(
+            message="Invalid model", llm_provider="openai", model="bad-model"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Invalid Request")
+        self.assertIn("Invalid model", detail)
+
+    def test_generic_api_error(self):
+        exc = litellm.APIError(
+            status_code=500,
+            message="Server error",
+            llm_provider="openai",
+            model="gpt-4",
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "API Error")
+        self.assertIn("Server error", detail)
+
+    def test_timeout_error(self):
+        exc = httpx.TimeoutException("Connection timed out")
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Request Timed Out")
+
+    def test_http_error(self):
+        exc = httpx.HTTPError("Bad gateway")
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "HTTP Error")
+        self.assertIn("Bad gateway", detail)
+
+    def test_generic_exception(self):
+        exc = RuntimeError("something broke")
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Unexpected Error")
+        self.assertIn("something broke", detail)
+
+    def test_error_messages_excluded_from_api_history(self):
+        history = [
+            Message(MessageRole.USER, "hello"),
+            Message(MessageRole.ASSISTANT, "answer", MessageType.TEXT),
+            Message(
+                MessageRole.ASSISTANT,
+                "Invalid API key",
+                MessageType.ERROR,
+                metadata={"error_title": "Authentication Failed"},
+            ),
+        ]
+        api_messages = llm_client._history_to_api_messages(history)
+        self.assertEqual(
+            api_messages,
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "answer"},
+            ],
+        )
+
+    def test_error_messages_not_recorded_in_history(self):
+        history = []
+        state = StreamHistoryState()
+        error_msg = Message(
+            MessageRole.ASSISTANT,
+            "Invalid API key",
+            MessageType.ERROR,
+            metadata={"error_title": "Authentication Failed"},
+        )
+        result = record_streamed_message(history, error_msg, state)
+        self.assertTrue(result)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].type, MessageType.ERROR)
 
 
 if __name__ == "__main__":

@@ -139,3 +139,21 @@ Collapsible.tool-result-collapse > CollapsibleTitle {
     color: $text-muted;
     text-style: italic;
 }
+
+.error-widget {
+    background: #3a1010;
+    border: tall #dc143c;
+    margin: 0 1;
+    padding: 1;
+    color: #ff6b6b;
+}
+
+.error-widget .error-title {
+    text-style: bold;
+    color: #ff4444;
+    margin-bottom: 1;
+}
+
+.error-widget .error-detail {
+    color: #cc8888;
+}

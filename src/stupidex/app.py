@@ -8,9 +8,9 @@ from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, Te
 from stupidex.agents import get_agent_registry
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
-from stupidex.domain.message import Message, MessageRole, StreamHistoryState, record_streamed_message
+from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
 from stupidex.domain.session import SessionManager
-from stupidex.llm.client import stream_response
+from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
 from stupidex.widgets.command_picker import CommandPicker
@@ -278,6 +278,18 @@ class Stupidex(App):
             except Exception:
                 pass
             raise
+        except Exception as exc:
+            title, detail = classify_error(exc)
+            error_msg = Message(
+                role=MessageRole.ASSISTANT,
+                content=detail,
+                type=MessageType.ERROR,
+                metadata={"error_title": title},
+            )
+            try:
+                await mount_streamed_message(container, error_msg, ws)
+            except Exception:
+                pass
         finally:
             await self.streaming_finished()
 
