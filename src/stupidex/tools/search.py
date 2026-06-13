@@ -109,9 +109,9 @@ async def execute_grep_tool(
         results: list[str] = []
 
         async def _search_file(file_path: str) -> list[str] | None:
-            if await _is_binary(file_path):
-                return None
             async with semaphore:
+                if await _is_binary(file_path):
+                    return None
                 try:
                     relative_path = os.path.relpath(file_path, base_path)
                     matches = []
