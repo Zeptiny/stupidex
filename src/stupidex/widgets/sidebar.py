@@ -24,7 +24,10 @@ class SidebarMainSelected(Message):
 
 
 class NavEntry(Static):
-    """Clickable navigation entry."""
+    """Clickable and keyboard-navigable navigation entry."""
+
+    can_focus = True
+    BINDINGS = [("enter", "activate"), ("space", "activate")]
 
     class Pressed(Message):
         def __init__(self, nav_entry: "NavEntry") -> None:
@@ -42,9 +45,14 @@ class NavEntry(Static):
     def on_click(self) -> None:
         self.post_message(self.Pressed(self))
 
+    def action_activate(self) -> None:
+        self.post_message(self.Pressed(self))
+
 
 class Sidebar(Vertical):
     """Right sidebar showing token counts, subagents, and working directory."""
+
+    BINDINGS = [("up", "navigate_up"), ("down", "navigate_down")]
 
     DEFAULT_CSS = """
     Sidebar {
@@ -83,6 +91,11 @@ class Sidebar(Vertical):
 
     Sidebar NavEntry:hover {
         background: $surface-darken-1;
+    }
+
+    Sidebar NavEntry:focus {
+        background: $accent-darken-1;
+        color: $text;
     }
 
     Sidebar NavEntry.-active {
@@ -177,6 +190,48 @@ class Sidebar(Vertical):
             else:
                 self.post_message(
                     SidebarSubagentSelected(event.control.view_id))
+
+    def _get_focusable_entries(self) -> list[NavEntry | Collapsible]:
+        entries: list[NavEntry | Collapsible] = []
+        try:
+            nav = self.query_one("#sidebar-nav")
+            entries.extend(nav.query(NavEntry))
+        except Exception:
+            pass
+        try:
+            container = self.query_one("#subagent-entries", Vertical)
+            for child in container.children:
+                if isinstance(child, NavEntry):
+                    entries.append(child)
+                elif isinstance(child, Collapsible):
+                    entries.append(child)
+                    if not child.collapsed:
+                        entries.extend(child.query(NavEntry))
+        except Exception:
+            pass
+        return entries
+
+    def action_navigate_up(self) -> None:
+        entries = self._get_focusable_entries()
+        if not entries:
+            return
+        focused = self.app.focused
+        if focused in entries:
+            idx = entries.index(focused)
+            entries[(idx - 1) % len(entries)].focus()
+        else:
+            entries[-1].focus()
+
+    def action_navigate_down(self) -> None:
+        entries = self._get_focusable_entries()
+        if not entries:
+            return
+        focused = self.app.focused
+        if focused in entries:
+            idx = entries.index(focused)
+            entries[(idx + 1) % len(entries)].focus()
+        else:
+            entries[0].focus()
 
     def set_active(self, view_id: str) -> None:
         self._active_view = view_id
@@ -334,6 +389,7 @@ class Sidebar(Vertical):
                 title=finished_label,
                 collapsed=was_finished_collapsed,
             )
+            collapse.can_focus = True
             await container.mount(collapse)
             contents = collapse.query_one("Contents")
             await contents.mount(*done_entries)
