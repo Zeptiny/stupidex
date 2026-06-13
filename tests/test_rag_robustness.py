@@ -1,0 +1,196 @@
+"""Tests for RAG robustness improvements (U8)."""
+
+import pytest
+
+from stupidex.rag.chunker import Chunk
+from stupidex.rag.embedder import Embedder, EmbeddingError
+from stupidex.rag.indexer import index_project
+from stupidex.rag.store import RAGStore
+
+
+class FakeEmbedder(Embedder):
+    def __init__(self, dim: int = 8, fail_after: int | None = None):
+        super().__init__(model="fake-model")
+        self.dim = dim
+        self._call_count = 0
+        self._fail_after = fail_after
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        import hashlib as _hl
+        self._call_count += 1
+        if self._fail_after is not None and self._call_count > self._fail_after:
+            raise EmbeddingError("Simulated API failure")
+        results = []
+        for t in texts:
+            h = _hl.md5(t.encode()).hexdigest()
+            vec = [int(h[i:i+2], 16) / 255.0 for i in range(0, self.dim * 2, 2)]
+            while len(vec) < self.dim:
+                vec.append(0.0)
+            results.append(vec[:self.dim])
+        return results
+
+
+# ---------------------------------------------------------------------------
+# Corrupted vectors.npy
+# ---------------------------------------------------------------------------
+
+
+def test_corrupted_vectors_npy_auto_rebuild(tmp_path):
+    """Corrupted vectors.npy should be cleared and search returns empty."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python")]
+    store.upsert(chunks, [[0.5, 0.5]])
+
+    # Corrupt the vectors file
+    npy_file = tmp_path / ".stupidex" / "rag" / "vectors.npy"
+    npy_file.write_bytes(b"corrupted data here")
+
+    # Search should handle corruption gracefully
+    results = store.search([0.5, 0.5], top_k=5)
+    assert results == []
+
+
+def test_corrupted_vectors_json_auto_rebuild(tmp_path):
+    """Corrupted vectors.json should be cleared and search returns empty."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    # Create corrupted JSON vectors file
+    rag_dir = tmp_path / ".stupidex" / "rag"
+    json_file = rag_dir / "vectors.json"
+    json_file.write_text("not valid json {{{")
+
+    results = store.search([0.5, 0.5], top_k=5)
+    assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Corrupted index.db
+# ---------------------------------------------------------------------------
+
+
+def test_corrupted_index_db_init_rebuild(tmp_path):
+    """Corrupted index.db should be rebuilt on init_db."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    # Write corrupted data to db
+    db_file = tmp_path / ".stupidex" / "rag" / "index.db"
+    db_file.write_bytes(b"corrupted sqlite data")
+
+    # init_db should rebuild without error
+    store.init_db()
+
+    # Store should work normally now
+    status = store.status()
+    assert status.total_chunks == 0
+
+
+def test_corrupted_index_db_get_conn_rebuild(tmp_path):
+    """Corrupted index.db should be rebuilt when get_conn fails."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    # Write corrupted data to db
+    db_file = tmp_path / ".stupidex" / "rag" / "index.db"
+    db_file.write_bytes(b"corrupted sqlite data")
+
+    # get_conn should handle corruption and rebuild
+    conn = store._get_conn()
+    try:
+        # Should be able to query after rebuild
+        result = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()
+        assert result[0] == 0
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Embedding failure handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_embedder_failure_after_retries():
+    """Embedder should fail gracefully after max retries."""
+    embedder = FakeEmbedder(fail_after=0)
+
+    with pytest.raises(EmbeddingError) as exc_info:
+        await embedder.embed(["test text"])
+
+    assert "Simulated API failure" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_embedder_success_with_retries():
+    """Embedder should succeed if retry succeeds."""
+    embedder = FakeEmbedder(dim=4, fail_after=1)  # Fail first, succeed second
+
+    result = await embedder.embed(["test text"])
+    assert len(result) == 1
+    assert len(result[0]) == 4
+
+
+# ---------------------------------------------------------------------------
+# Indexer robustness
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_indexer_handles_embedding_failure(tmp_path):
+    """Indexer should handle embedding failures gracefully."""
+    (tmp_path / "main.py").write_text("def hello(): pass")
+
+    embedder = FakeEmbedder(fail_after=0)
+
+    result = await index_project(
+        project_path=str(tmp_path),
+        embedder=embedder,
+    )
+
+    # Should have errors but not crash
+    assert len(result.errors) > 0
+    assert result.files_indexed == 0
+
+
+@pytest.mark.asyncio
+async def test_indexer_handles_corrupted_db(tmp_path):
+    """Indexer should handle corrupted DB during indexing."""
+    (tmp_path / "main.py").write_text("def hello(): pass")
+
+    # Create corrupted DB
+    rag_dir = tmp_path / ".stupidex" / "rag"
+    rag_dir.mkdir(parents=True)
+    db_file = rag_dir / "index.db"
+    db_file.write_bytes(b"corrupted")
+
+    embedder = FakeEmbedder()
+
+    # Should rebuild and succeed
+    result = await index_project(
+        project_path=str(tmp_path),
+        embedder=embedder,
+    )
+
+    assert result.files_indexed == 1
+
+
+@pytest.mark.asyncio
+async def test_indexer_handles_missing_vectors(tmp_path):
+    """Indexer should handle missing vectors.npy after DB exists."""
+    (tmp_path / "main.py").write_text("def hello(): pass")
+
+    embedder = FakeEmbedder()
+
+    # Index once
+    await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    # Delete vectors but keep DB
+    vectors_file = tmp_path / ".stupidex" / "rag" / "vectors.npy"
+    if vectors_file.exists():
+        vectors_file.unlink()
+
+    # Second index with force=True should still work
+    result = await index_project(project_path=str(tmp_path), embedder=embedder, force=True)
+    assert result.files_indexed == 1

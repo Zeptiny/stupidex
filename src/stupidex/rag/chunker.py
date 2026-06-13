@@ -1,0 +1,157 @@
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class Chunk:
+    file_path: str
+    content: str
+    start_line: int
+    end_line: int
+    language: str
+
+
+def _detect_language(file_path: str) -> str:
+    ext = Path(file_path).suffix.lower()
+    return {
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".tsx": "tsx",
+        ".jsx": "jsx",
+        ".rs": "rust",
+        ".go": "go",
+        ".java": "java",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".h": "c",
+        ".hpp": "cpp",
+        ".md": "markdown",
+        ".json": "json",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".toml": "toml",
+        ".css": "css",
+        ".html": "html",
+        ".sh": "shell",
+        ".sql": "sql",
+        ".rb": "ruby",
+        ".php": "php",
+        ".swift": "swift",
+        ".kt": "kotlin",
+    }.get(ext, ext.lstrip(".") or "unknown")
+
+
+def _is_binary(content: str) -> bool:
+    return "\0" in content
+
+
+def _find_break_points(lines: list[str]) -> list[int]:
+    """Find natural break points (blank lines) for smarter chunking."""
+    breaks = []
+    for i, line in enumerate(lines):
+        if not line.strip():
+            breaks.append(i)
+    return breaks
+
+
+def _pick_break_after(breaks: list[int], after_line: int, target_line: int) -> int | None:
+    """Pick the closest break point to target_line that is strictly after after_line."""
+    candidates = [b for b in breaks if b > after_line]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda b: abs(b - target_line))
+
+
+def chunk_file(
+    file_path: str,
+    content: str,
+    chunk_size: int = 2000,
+    chunk_overlap: int = 200,
+) -> list[Chunk]:
+    """Split source code into overlapping chunks.
+
+    Chunks respect natural break points (blank lines) when possible.
+    Binary files and empty files return empty lists.
+    """
+    if _is_binary(content) or not content.strip():
+        return []
+
+    language = _detect_language(file_path)
+    lines = content.splitlines(keepends=True)
+    total_chars = len(content)
+
+    if total_chars <= chunk_size:
+        return [
+            Chunk(
+                file_path=file_path,
+                content=content,
+                start_line=1,
+                end_line=len(lines),
+                language=language,
+            )
+        ]
+
+    break_points = _find_break_points(lines)
+    chunks: list[Chunk] = []
+    char_pos = 0
+    min_chunk = chunk_size // 4
+
+    while char_pos < total_chars:
+        end_char = min(char_pos + chunk_size, total_chars)
+        remaining = total_chars - char_pos
+
+        if remaining <= chunk_size:
+            pass
+        elif break_points:
+            current_line = _line_at_char(lines, char_pos)
+            target_line = _line_at_char(lines, end_char)
+            bp = _pick_break_after(break_points, current_line, target_line)
+            if bp is not None:
+                bp_char = _char_at_line(lines, bp)
+                if bp_char > char_pos + min_chunk and bp_char < end_char:
+                    end_char = bp_char
+
+        if end_char <= char_pos:
+            end_char = min(char_pos + chunk_size, total_chars)
+
+        chunk_text = content[char_pos:end_char]
+        start_line = _line_at_char(lines, char_pos) + 1
+        end_line = _line_at_char(lines, end_char) + 1
+
+        chunks.append(
+            Chunk(
+                file_path=file_path,
+                content=chunk_text,
+                start_line=start_line,
+                end_line=end_line,
+                language=language,
+            )
+        )
+
+        if remaining <= chunk_size:
+            break
+
+        char_pos += max(1, end_char - char_pos - chunk_overlap)
+
+    return chunks
+
+
+def _line_at_char(lines: list[str], char_pos: int) -> int:
+    """Return the 0-indexed line number for a character position."""
+    cumulative = 0
+    for i, line in enumerate(lines):
+        cumulative += len(line)
+        if cumulative > char_pos:
+            return i
+    return len(lines) - 1
+
+
+def _char_at_line(lines: list[str], line_idx: int) -> int:
+    """Return the character position at the start of a line index."""
+    cumulative = 0
+    for i, line in enumerate(lines):
+        if i >= line_idx:
+            break
+        cumulative += len(line)
+    return cumulative

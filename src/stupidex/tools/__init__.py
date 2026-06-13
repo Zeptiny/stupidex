@@ -11,8 +11,13 @@ from stupidex.tools.file_manipulation import (
     read_tool,
     write_tool,
 )
+from stupidex.tools.rag import (
+    execute_rag_index,
+    execute_rag_search,
+    rag_index_tool,
+    rag_search_tool,
+)
 from stupidex.tools.search import execute_grep_tool, grep_tool
-from stupidex.tools.todo import execute_todo, todo_tool
 from stupidex.tools.skill import (
     build_list_skills_tool,
     build_skill_tool,
@@ -29,6 +34,7 @@ from stupidex.tools.subagent import (
     list_subagents,
     wait_for_subagent,
 )
+from stupidex.tools.todo import execute_todo, todo_tool
 
 _TOOL_REGISTRY: dict[str, dict] | None = None
 
@@ -44,6 +50,8 @@ def get_tool_registry() -> dict[str, dict]:
         "glob": {"tool": glob_tool, "executor": execute_glob_tool},
         "write": {"tool": write_tool, "executor": execute_write_tool},
         "grep": {"tool": grep_tool, "executor": execute_grep_tool},
+        "rag_search": {"tool": rag_search_tool, "executor": execute_rag_search},
+        "rag_index": {"tool": rag_index_tool, "executor": execute_rag_index},
         "todo": {"tool": todo_tool, "executor": execute_todo},
         "execute_command": {"tool": execute_command_tool, "executor": execute_command},
         "delegate_to_subagent": {"tool": build_delegate_tool(), "executor": execute_delegate_to_subagent},

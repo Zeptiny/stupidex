@@ -8,8 +8,8 @@
 - [x] Modelo local (Ollama) - não apenas API paga
   - Ele funciona com modelos locais desde que foneçam API compatível com OpenAI (Anthropic planejada)
 - [ ] MCP com ao menos 1 tool e 1 resource implementados
-- [ ] Pipeline RAG: ingestão -> Embedding -> busca -> resposta
-- [ ] Vector store (ChromeDB/FAISS) com embedding reais
+- [x] Pipeline RAG: ingestão -> Embedding -> busca -> resposta
+- [x] Vector store (ChromeDB/FAISS) com embedding reais
 - [x] Mínimo 3 tools disponíveis e funcionais para os agentes
   - O projeto conta com 13 tools configuráveis por agente
 - [x] Interface CLI testável - fluxo demonstrável em terminal

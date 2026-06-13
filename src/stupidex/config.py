@@ -10,6 +10,9 @@ HOME_SKILLS_DIR = HOME_CONFIG_DIR / "skills"
 PROJECT_CONFIG_NAME = ".stupidex.json"
 PROJECT_AGENTS_DIR = ".stupidex/agents"
 PROJECT_SKILLS_DIR = ".stupidex/skills"
+PROJECT_RAG_DIR = ".stupidex/rag"
+RAG_VECTORS_FILE = "vectors.npy"
+RAG_INDEX_DB = "index.db"
 ENV_PREFIX = "STUPIDEX_"
 
 
@@ -39,6 +42,11 @@ class Config:
     directory_tree_depth: int = 2
     theme: str = "default"
     personality: str = "default"
+    rag_embedding_model: str = ""
+    rag_chunk_size: int = 2000
+    rag_chunk_overlap: int = 200
+    rag_top_k: int = 5
+    rag_max_file_size: int = 512000
 
 
 _ENV_MAP = {
@@ -52,6 +60,11 @@ _ENV_MAP = {
     "STUPIDEX_DIRECTORY_TREE_DEPTH": "directory_tree_depth",
     "STUPIDEX_THEME": "theme",
     "STUPIDEX_PERSONALITY": "personality",
+    "STUPIDEX_RAG_EMBEDDING_MODEL": "rag_embedding_model",
+    "STUPIDEX_RAG_CHUNK_SIZE": "rag_chunk_size",
+    "STUPIDEX_RAG_CHUNK_OVERLAP": "rag_chunk_overlap",
+    "STUPIDEX_RAG_TOP_K": "rag_top_k",
+    "STUPIDEX_RAG_MAX_FILE_SIZE": "rag_max_file_size",
 }
 
 

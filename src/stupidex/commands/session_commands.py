@@ -15,6 +15,9 @@ COMMANDS = {
     "/model": "Change the model for the current session",
     "/theme": "Switch the application theme",
     "/personality": "Switch the agent personality",
+    "/index": "Index the project for RAG semantic search",
+    "/rag status": "Show RAG index status",
+    "/rag clear": "Clear the RAG index",
 }
 
 
@@ -86,6 +89,40 @@ async def execute_command(app: App, cmd: str) -> None:
                     set_current_personality(result)
 
             app.push_screen(OptionPicker(items), on_personality_picked)
+        case "/index":
+            from stupidex.rag.indexer import index_project
+
+            app.notify("Indexing project for RAG...", severity="information")
+            try:
+                result = await index_project()
+                msg = (
+                    f"Indexed {result.files_indexed} files "
+                    f"({result.chunks_created} chunks) in {result.duration_seconds:.1f}s. "
+                    f"Skipped: {result.files_skipped}, Deleted: {result.files_deleted}"
+                )
+                if result.errors:
+                    msg += f" Errors: {len(result.errors)}"
+                app.notify(msg, severity="information" if not result.errors else "warning")
+            except Exception as e:
+                app.notify(f"Indexing failed: {e}", severity="error")
+        case "/rag status":
+            from stupidex.rag.indexer import get_status
+
+            status = get_status()
+            if status.total_chunks == 0:
+                app.notify("No RAG index exists. Run /index to create one.", severity="information")
+            else:
+                app.notify(
+                    f"RAG: {status.total_files} files, {status.total_chunks} chunks, "
+                    f"model: {status.embedding_model or 'auto'}, "
+                    f"indexed: {status.last_indexed or 'never'}",
+                    severity="information",
+                )
+        case "/rag clear":
+            from stupidex.rag.indexer import clear_index
+
+            clear_index()
+            app.notify("RAG index cleared.", severity="information")
 
 
 class SessionCommands(Provider):
