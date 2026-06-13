@@ -4,7 +4,7 @@ THEMES: dict[str, Theme] = {
     "default": BUILTIN_THEMES["textual-dark"],
     "solarized-light": BUILTIN_THEMES["solarized-light"],
     "bluey": Theme(
-        name="default",
+        name="bluey",
         primary="#1E90FF",
         secondary="#7B61FF",
         warning="#FFA62B",
