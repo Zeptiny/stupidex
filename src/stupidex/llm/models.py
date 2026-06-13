@@ -10,10 +10,10 @@ class Model:
     id: str
 
 
-def list_models() -> list[Model]:
+async def list_models() -> list[Model]:
     cfg = get_config()
-    with httpx.Client(base_url=cfg.base_url) as client:
-        response = client.get("/models")
+    async with httpx.AsyncClient(base_url=cfg.base_url) as client:
+        response = await client.get("/models")
         response.raise_for_status()
         data = response.json()
         return [Model(id=model["id"]) for model in data["data"]]

@@ -47,7 +47,7 @@ async def execute_command(app: App, cmd: str) -> None:
 
             app.push_screen(SessionPicker(sessions), on_picked)
         case "/model":
-            models = list_models()
+            models = await list_models()
 
             async def on_picked(result: str | None):
                 if result:
