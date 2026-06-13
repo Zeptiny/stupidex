@@ -231,3 +231,7 @@ class SubagentManager:
     def get_record(self, subagent_id: str) -> SubagentRecord | None:
         """Look up a single subagent record by ID."""
         return self._subagents.get(subagent_id)
+
+    def all_records(self) -> list[SubagentRecord]:
+        """Return all subagent records."""
+        return list(self._subagents.values())
