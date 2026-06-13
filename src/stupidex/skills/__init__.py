@@ -64,6 +64,10 @@ def load_skills() -> dict[str, Skill]:
 
     merged = {**home_skills, **project_skills}
     SKILL_REGISTRY = merged
+
+    from stupidex.tools import reset_tool_registry
+    reset_tool_registry()
+
     return merged
 
 
@@ -71,8 +75,3 @@ def get_skill_registry() -> dict[str, Skill]:
     if not SKILL_REGISTRY:
         return load_skills()
     return SKILL_REGISTRY
-
-
-def get_skill(name: str) -> Skill | None:
-    registry = get_skill_registry()
-    return registry.get(name)

@@ -5,7 +5,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Collapsible, Static
 
-from stupidex.agents.manager import SubagentRecord, SubagentState
+from stupidex.agents.manager import SUBAGENT_INDICATORS, SubagentRecord, SubagentState
 
 _TOKEN_THROTTLE_INTERVAL = 0.5
 
@@ -417,20 +417,11 @@ class Sidebar(Vertical):
         return f"[{color}]{text}[/{color}]"
 
     def _get_indicator(self, state: SubagentState) -> str:
-        return {
-            SubagentState.PENDING: "◌",
-            SubagentState.RUNNING: "●",
-            SubagentState.COMPLETED: "✓",
-            SubagentState.FAILED: "✗",
-            SubagentState.INTERRUPTED: "⊘",
-        }.get(state, "?")
+        return SUBAGENT_INDICATORS.get(state, "?")
 
     def _get_elapsed(self, record: SubagentRecord) -> str | None:
-        if record.end_time:
-            elapsed = record.end_time - record.start_time
-        elif record.start_time:
-            elapsed = time.time() - record.start_time
-        else:
+        elapsed = record.elapsed_seconds
+        if elapsed is None:
             return None
         if elapsed < 60:
             return f"{elapsed:.0f}s"

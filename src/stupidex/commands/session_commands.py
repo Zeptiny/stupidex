@@ -6,10 +6,7 @@ from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
 from stupidex.config import get_current_personality, get_current_theme, set_current_personality, set_current_theme
 from stupidex.llm.models import list_models
 from stupidex.personality import load_personalities
-from stupidex.screens.model_picker import ModelPicker
-from stupidex.screens.personality_picker import PersonalityPicker
-from stupidex.screens.session_picker import SessionPicker
-from stupidex.screens.theme_picker import ThemePicker
+from stupidex.screens.picker import OptionPicker, PickerItem
 
 COMMANDS = {
     "/new": "Start a new session",
@@ -28,15 +25,17 @@ async def execute_command(app: App, cmd: str) -> None:
             await app.rerender_all()
         case "/switch":
             sessions = list(app.sessions.sessions.values())
+            items = [PickerItem(label=s.name, id=s.id) for s in sessions]
 
             async def on_picked(result: str | None):
                 if result:
                     app.sessions.switch(result)
                     await app.rerender_all()
 
-            app.push_screen(SessionPicker(sessions), on_picked)
+            app.push_screen(OptionPicker(items), on_picked)
         case "/delete":
             sessions = list(app.sessions.sessions.values())
+            items = [PickerItem(label=s.name, id=s.id) for s in sessions]
 
             async def on_picked(result: str | None):
                 if result:
@@ -45,34 +44,48 @@ async def execute_command(app: App, cmd: str) -> None:
                         app.sessions.create()
                     await app.rerender_all()
 
-            app.push_screen(SessionPicker(sessions), on_picked)
+            app.push_screen(OptionPicker(items), on_picked)
         case "/model":
-            models = list_models()
+            models = await list_models()
+            if not models:
+                app.notify("Failed to fetch models", severity="error")
+                return
+            items = [PickerItem(label=m.id, id=m.id) for m in models]
 
             async def on_picked(result: str | None):
                 if result:
                     app.sessions.change_model(result)
                     await app.rerender_footer()
 
-            app.push_screen(ModelPicker(models), on_picked)
+            app.push_screen(OptionPicker(items), on_picked)
         case "/theme":
+            from stupidex.themes import get_theme_registry
+            registry = get_theme_registry()
+            current = get_current_theme()
+            items = [
+                PickerItem(label=f"● {name}" if name == current else f"  {name}", id=name)
+                for name in registry.list_themes()
+            ]
 
             async def on_theme_picked(result: str | None):
                 if result:
                     app.switch_theme(result)
                     set_current_theme(result)
 
-            current = get_current_theme()
-            app.push_screen(ThemePicker(current), on_theme_picked)
+            app.push_screen(OptionPicker(items), on_theme_picked)
         case "/personality":
             personalities = load_personalities()
             current = get_current_personality()
+            items = [
+                PickerItem(label=f"● {p}" if p == current else f"  {p}", id=p)
+                for p in personalities
+            ]
 
             async def on_personality_picked(result: str | None):
                 if result:
                     set_current_personality(result)
 
-            app.push_screen(PersonalityPicker(list(personalities.keys()), current), on_personality_picked)
+            app.push_screen(OptionPicker(items), on_personality_picked)
 
 
 class SessionCommands(Provider):

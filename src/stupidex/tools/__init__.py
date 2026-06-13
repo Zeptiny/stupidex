@@ -29,9 +29,14 @@ from stupidex.tools.subagent import (
     wait_for_subagent,
 )
 
+_TOOL_REGISTRY: dict[str, dict] | None = None
+
 
 def get_tool_registry() -> dict[str, dict]:
-    return {
+    global _TOOL_REGISTRY
+    if _TOOL_REGISTRY is not None:
+        return _TOOL_REGISTRY
+    _TOOL_REGISTRY = {
         "read": {"tool": read_tool, "executor": execute_read_tool},
         "edit": {"tool": edit_tool, "executor": execute_edit_tool},
         "read_directory": {"tool": read_directory, "executor": execute_read_directory_tool},
@@ -46,3 +51,10 @@ def get_tool_registry() -> dict[str, dict]:
         "skill": {"tool": build_skill_tool(), "executor": execute_skill},
         "list_skills": {"tool": build_list_skills_tool(), "executor": execute_list_skills},
     }
+    return _TOOL_REGISTRY
+
+
+def reset_tool_registry() -> None:
+    """Call after agents/skills change to rebuild on next access."""
+    global _TOOL_REGISTRY
+    _TOOL_REGISTRY = None

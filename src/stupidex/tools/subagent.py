@@ -1,8 +1,7 @@
-import time
 from xml.sax.saxutils import escape
 
 from stupidex.agents import get_agent_registry
-from stupidex.agents.manager import get_subagent_manager
+from stupidex.agents.manager import format_subagent_attrs, get_subagent_manager
 from stupidex.config import get_model_for_tier
 from stupidex.domain.agent import TIER_DESCRIPTIONS, AgentTypes, ModelTier
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
@@ -79,7 +78,7 @@ async def execute_delegate_to_subagent(name: str, task: str, type: str, tier: st
 
     return ExecutorResult(
         display=f"Subagent '{name}' spawned (id: {record.id}, tier: {resolved_tier.value})",
-        content=f'<subagent id="{escape(record.id)}" name="{escape(name)}" type="{escape(type)}" tier="{escape(resolved_tier.value)}" state="pending">\n<task>\n{escape(task)}\n</task>\n</subagent>',
+        content=f'<subagent {format_subagent_attrs(record.id, name, type, "pending")} tier="{escape(resolved_tier.value)}">\n<task>\n{escape(task)}\n</task>\n</subagent>',
     )
 
 
@@ -112,14 +111,10 @@ async def execute_wait_for_subagent(subagent_ids: list[str]) -> ExecutorResult:
     parts = []
     for sid, record in records.items():
         status = record.state.value
-        elapsed = None
-        if record.end_time:
-            elapsed = round(record.end_time - record.start_time, 1)
-        elif record.start_time:
-            elapsed = round(time.time() - record.start_time, 1)
+        elapsed = record.elapsed_seconds
 
-        e = escape  # shorthand
-        attrs = f'id="{e(sid)}" name="{e(record.name)}" type="{e(record.type)}" state="{e(status)}" elapsed="{elapsed}s"'
+        e = escape
+        attrs = format_subagent_attrs(sid, record.name, record.type, status, elapsed)
         task_block = f"<task>\n{e(record.task)}\n</task>" if record.task else ""
         if record.result:
             parts.append(
@@ -162,7 +157,7 @@ async def execute_list_subagents() -> ExecutorResult:
     parts = []
     for s in states:
         e = escape
-        attrs = f'id="{e(s["id"])}" name="{e(s["name"])}" type="{e(s["type"])}" state="{e(s["state"])}" elapsed="{s["elapsed"]}s"'
+        attrs = format_subagent_attrs(s["id"], s["name"], s["type"], s["state"], s["elapsed"])
         task_block = f"<task>\n{e(s['task'])}\n</task>" if s.get("task") else ""
         parts.append(f'<subagent {attrs}>\n{task_block}\n</subagent>')
 

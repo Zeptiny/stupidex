@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Callable, Coroutine
@@ -8,13 +9,30 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from xml.sax.saxutils import escape
 
 from stupidex.domain.agent import Agent
 
 if TYPE_CHECKING:
     from stupidex.domain.message import Message
 
+log = logging.getLogger(__name__)
+
 _current_manager: ContextVar[SubagentManager] = ContextVar('current_manager')
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("Unhandled exception in background task: %s", exc, exc_info=exc)
+
+
+def _fire_and_forget(coro: Coroutine) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    task.add_done_callback(_log_task_exception)
+    return task
 
 
 def get_subagent_manager() -> SubagentManager:
@@ -31,6 +49,26 @@ class SubagentState(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+
+
+SUBAGENT_INDICATORS: dict[SubagentState, str] = {
+    SubagentState.PENDING: "◌",
+    SubagentState.RUNNING: "●",
+    SubagentState.COMPLETED: "✓",
+    SubagentState.FAILED: "✗",
+    SubagentState.INTERRUPTED: "⊘",
+}
+
+
+def format_subagent_attrs(
+    id: str, name: str, type: str, state: str, elapsed: float | None = None
+) -> str:
+    """Build XML attribute string for subagent elements."""
+    e = escape
+    attrs = f'id="{e(id)}" name="{e(name)}" type="{e(type)}" state="{e(state)}"'
+    if elapsed is not None:
+        attrs += f' elapsed="{elapsed}s"'
+    return attrs
 
 
 @dataclass
@@ -58,6 +96,14 @@ class SubagentRecord:
     @property
     def type(self) -> str:
         return self.agent.type.value
+
+    @property
+    def elapsed_seconds(self) -> float | None:
+        if self.end_time:
+            return round(self.end_time - self.start_time, 1)
+        elif self.start_time:
+            return round(time.time() - self.start_time, 1)
+        return None
 
 
 class SubagentManager:
@@ -123,7 +169,7 @@ class SubagentManager:
         async def _run() -> None:
             record.state = SubagentState.RUNNING
             if record.on_state_change:
-                asyncio.create_task(record.on_state_change(record.state))
+                _fire_and_forget(record.on_state_change(record.state))
             try:
                 user_msg = Message(role=MessageRole.USER, content=task)
                 subagent_messages = [user_msg]
@@ -161,11 +207,11 @@ class SubagentManager:
             finally:
                 record.end_time = time.time()
                 if record.on_state_change:
-                    asyncio.create_task(record.on_state_change(record.state))
+                    _fire_and_forget(record.on_state_change(record.state))
 
         record.async_task = None  # set below
         if self.on_spawn:
-            asyncio.create_task(self.on_spawn(record))
+            _fire_and_forget(self.on_spawn(record))
         record.async_task = asyncio.create_task(_run())
         return record
 
@@ -186,22 +232,20 @@ class SubagentManager:
         """Return state info for all tracked subagents."""
         states = []
         for record in self._subagents.values():
-            elapsed = None
-            if record.end_time:
-                elapsed = round(record.end_time - record.start_time, 1)
-            elif record.start_time:
-                elapsed = round(time.time() - record.start_time, 1)
-
             states.append({
                 "id": record.id,
                 "name": record.name,
                 "type": record.type,
                 "task": record.task,
                 "state": record.state.value,
-                "elapsed": elapsed,
+                "elapsed": record.elapsed_seconds,
             })
         return states
 
     def get_record(self, subagent_id: str) -> SubagentRecord | None:
         """Look up a single subagent record by ID."""
         return self._subagents.get(subagent_id)
+
+    def all_records(self) -> list[SubagentRecord]:
+        """Return all subagent records."""
+        return list(self._subagents.values())

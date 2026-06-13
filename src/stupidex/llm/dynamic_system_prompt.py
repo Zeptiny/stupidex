@@ -1,17 +1,30 @@
+import asyncio
 import os
+import time
 from datetime import datetime
 from xml.sax.saxutils import escape
 
-from stupidex.agents.manager import get_subagent_manager
+from stupidex.agents.manager import format_subagent_attrs, get_subagent_manager
 from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.utils import directory_tree
 
+_TREE_CACHE: tuple[float, str] | None = None
+_TREE_TTL = 5.0
 
-def build_dynamic_system_prompt() -> Message:
+
+async def build_dynamic_system_prompt() -> Message:
+    global _TREE_CACHE
     cfg = get_config()
     cwd = os.getcwd()
-    tree = directory_tree(cwd, max_depth=cfg.directory_tree_depth)
+
+    now = time.monotonic()
+    if _TREE_CACHE and _TREE_CACHE[0] > now:
+        tree = _TREE_CACHE[1]
+    else:
+        loop = asyncio.get_running_loop()
+        tree = await loop.run_in_executor(None, directory_tree, cwd, cfg.directory_tree_depth)
+        _TREE_CACHE = (now + _TREE_TTL, tree)
 
     content = f"""
 <current_time>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</current_time>
@@ -27,7 +40,7 @@ def build_dynamic_system_prompt() -> Message:
         parts = []
         for s in states:
             e = escape
-            attrs = f'id="{e(s["id"])}" name="{e(s["name"])}" type="{e(s["type"])}" state="{e(s["state"])}" elapsed="{s["elapsed"]}s"'
+            attrs = format_subagent_attrs(s["id"], s["name"], s["type"], s["state"], s["elapsed"])
             task_block = f"<task>\n{e(s['task'])}\n</task>" if s.get(
                 "task") else ""
             parts.append(

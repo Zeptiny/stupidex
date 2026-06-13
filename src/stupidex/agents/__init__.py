@@ -82,6 +82,10 @@ def load_agents() -> dict[str, Agent]:
 
     merged = {**home_agents, **project_agents}
     AGENT_REGISTRY = merged
+
+    from stupidex.tools import reset_tool_registry
+    reset_tool_registry()
+
     return merged
 
 

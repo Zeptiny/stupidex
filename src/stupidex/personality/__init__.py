@@ -9,7 +9,53 @@ log = logging.getLogger(__name__)
 HOME_PERSONALITIES_DIR = HOME_CONFIG_DIR / "personalities"
 DEFAULT_PERSONALITIES_DIR = Path(__file__).parent.parent / "agents" / "defaults" / "personalities"
 
-PERSONALITY_REGISTRY: dict[str, str] = {}
+
+class PersonalityRegistry:
+    def __init__(self) -> None:
+        self._personalities: dict[str, str] = {}
+
+    def load(self) -> dict[str, str]:
+        _seed_personalities_dir()
+        self._personalities = {}
+
+        if not HOME_PERSONALITIES_DIR.is_dir():
+            return self._personalities
+
+        for md_file in sorted(HOME_PERSONALITIES_DIR.glob("*.md")):
+            name = md_file.stem
+            try:
+                content = md_file.read_text().strip()
+                if content:
+                    self._personalities[name] = content
+            except OSError as e:
+                log.warning("Skipping personality %s: %s", md_file, e)
+
+        return self._personalities
+
+    def get(self, name: str) -> str:
+        if name not in self._personalities:
+            raise ValueError(
+                f"Unknown personality: '{name}'. "
+                f"Available: {', '.join(sorted(self._personalities))}"
+            )
+        return self._personalities[name]
+
+    def list_names(self) -> list[str]:
+        return list(self._personalities.keys())
+
+    @property
+    def data(self) -> dict[str, str]:
+        return self._personalities
+
+
+_REGISTRY: PersonalityRegistry | None = None
+
+
+def get_personality_registry() -> PersonalityRegistry:
+    global _REGISTRY
+    if _REGISTRY is None:
+        _REGISTRY = PersonalityRegistry()
+    return _REGISTRY
 
 
 def _seed_personalities_dir() -> None:
@@ -25,34 +71,17 @@ def _seed_personalities_dir() -> None:
 
 
 def load_personalities() -> dict[str, str]:
-    global PERSONALITY_REGISTRY
-
-    personalities: dict[str, str] = {}
-
-    _seed_personalities_dir()
-
-    if not HOME_PERSONALITIES_DIR.is_dir():
-        return personalities
-
-    for md_file in sorted(HOME_PERSONALITIES_DIR.glob("*.md")):
-        name = md_file.stem
-        try:
-            content = md_file.read_text().strip()
-            if content:
-                personalities[name] = content
-        except OSError as e:
-            log.warning("Skipping personality %s: %s", md_file, e)
-
-    PERSONALITY_REGISTRY = personalities
-    return personalities
+    registry = get_personality_registry()
+    return registry.load()
 
 
 def append_personality(agent_system_prompt: str) -> str:
     """Append the selected personality to the end of the agent's system prompt."""
     current = get_config().personality
-    personality_text = PERSONALITY_REGISTRY.get(current)
-
-    if not personality_text:
+    registry = get_personality_registry()
+    try:
+        personality_text = registry.get(current)
+    except ValueError:
         return agent_system_prompt
 
     return f"{agent_system_prompt}\n\n## Personality\n\n{personality_text}\n"
