@@ -162,7 +162,7 @@ async def execute_todo_update(
         changes.append(f"Subagent: {task.subagent_id}")
 
     return ExecutorResult(
-        display=f"Updated task {task.id[:8]}",
+        display=f"Updated task {task.id}",
         content="Task updated successfully.\n\n" + "\n".join(changes),
     )
 
@@ -219,5 +219,5 @@ async def execute_todo_delete(
 
     return ExecutorResult(
         display=f"Deleted task: {task.title}",
-        content=f"Task '{task.id[:8]}' ({task.title}) deleted successfully.",
+        content=f"Task '{task.id}' ({task.title}) deleted successfully.",
     )

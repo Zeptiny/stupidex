@@ -137,11 +137,15 @@ class TodoStore:
         return self._tasks.pop(task_id, None)
 
 
-_current_store: ContextVar[TodoStore] = ContextVar("current_store")
+_current_store: ContextVar[TodoStore | None] = ContextVar("current_store", default=None)
 
 
 def get_todo_store() -> TodoStore:
-    return _current_store.get()
+    store = _current_store.get()
+    if store is None:
+        store = TodoStore()
+        _current_store.set(store)
+    return store
 
 
 def set_todo_store(store: TodoStore) -> None:

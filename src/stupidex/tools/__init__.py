@@ -12,16 +12,6 @@ from stupidex.tools.file_manipulation import (
     write_tool,
 )
 from stupidex.tools.search import execute_grep_tool, grep_tool
-from stupidex.tools.todo import (
-    execute_todo_create,
-    execute_todo_delete,
-    execute_todo_list,
-    execute_todo_update,
-    todo_create_tool,
-    todo_delete_tool,
-    todo_list_tool,
-    todo_update_tool,
-)
 from stupidex.tools.skill import (
     build_list_skills_tool,
     build_skill_tool,
@@ -37,6 +27,16 @@ from stupidex.tools.subagent import (
     interrupt_subagents,
     list_subagents,
     wait_for_subagent,
+)
+from stupidex.tools.todo import (
+    execute_todo_create,
+    execute_todo_delete,
+    execute_todo_list,
+    execute_todo_update,
+    todo_create_tool,
+    todo_delete_tool,
+    todo_list_tool,
+    todo_update_tool,
 )
 
 _TOOL_REGISTRY: dict[str, dict] | None = None
