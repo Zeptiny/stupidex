@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 from stupidex.agents.manager import format_subagent_attrs, get_subagent_manager
 from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType
+from stupidex.domain.todo import get_todo_store
 from stupidex.utils import directory_tree
 
 _TREE_CACHE: tuple[float, str] | None = None
@@ -46,6 +47,21 @@ async def build_dynamic_system_prompt() -> Message:
             parts.append(
                 f'  <subagent {attrs}>\n  {task_block}\n  </subagent>')
         content += "\n<subagents>\n" + "\n".join(parts) + "\n</subagents>\n"
+
+    store = get_todo_store()
+    tasks = store.list()
+    if tasks:
+        lines = []
+        for t in tasks:
+            line = f"  <todo id=\"{escape(t.id[:8])}\" status=\"{t.status.value}\">"
+            line += f"\n    <title>{escape(t.title)}</title>"
+            if t.description:
+                line += f"\n    <description>{escape(t.description)}</description>"
+            if t.subagent_id:
+                line += f"\n    <subagent_id>{escape(t.subagent_id)}</subagent_id>"
+            line += "\n  </todo>"
+            lines.append(line)
+        content += "\n<todos>\n" + "\n".join(lines) + "\n</todos>\n"
 
     return Message(
         role=MessageRole.SYSTEM,

@@ -3,75 +3,101 @@ from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParame
 
 _STATUSES = ", ".join(s.value for s in TodoStatus)
 
-todo_tool = Tool(
-    name="todo",
-    description="Manage a shared todo list for tracking tasks across subagents. Create, update, list, and delete tasks with statuses like open, in_progress, blocked, done, abandoned, needs_review, and under_review.",
+todo_create_tool = Tool(
+    name="todo_create",
+    description="Create a new task in the shared todo list.",
     parameters=ToolParameter(
         properties={
-            "action": ToolParameterProperties(
-                type="string",
-                description="The action to perform: 'create', 'update', 'list', or 'delete'.",
-            ),
-            "task_id": ToolParameterProperties(
-                type="string",
-                description="The ID of the task (required for 'update' and 'delete').",
-            ),
             "title": ToolParameterProperties(
                 type="string",
-                description="Task title (required for 'create', optional for 'update').",
+                description="Task title.",
             ),
             "description": ToolParameterProperties(
                 type="string",
-                description="Task description (optional, for 'create' or 'update').",
-            ),
-            "status": ToolParameterProperties(
-                type="string",
-                description=f"New status (required for 'update'). Must be one of: {_STATUSES}.",
+                description="Task description (optional).",
             ),
             "subagent_id": ToolParameterProperties(
                 type="string",
-                description="ID of the subagent this task belongs to (optional, for 'create' or 'update').",
+                description="ID of the subagent this task belongs to (optional).",
             ),
         },
-        required=["action"],
+        required=["title"],
     ),
-    action_label="Managing todos...",
+    action_label="Creating todo...",
+)
+
+todo_update_tool = Tool(
+    name="todo_update",
+    description="Update an existing task in the shared todo list.",
+    parameters=ToolParameter(
+        properties={
+            "task_id": ToolParameterProperties(
+                type="string",
+                description="The ID of the task to update.",
+            ),
+            "title": ToolParameterProperties(
+                type="string",
+                description="New title (optional).",
+            ),
+            "description": ToolParameterProperties(
+                type="string",
+                description="New description (optional).",
+            ),
+            "status": ToolParameterProperties(
+                type="string",
+                description=f"New status. Must be one of: {_STATUSES}.",
+            ),
+            "subagent_id": ToolParameterProperties(
+                type="string",
+                description="New subagent ID (optional).",
+            ),
+        },
+        required=["task_id"],
+    ),
+    action_label="Updating todo...",
+)
+
+todo_list_tool = Tool(
+    name="todo_list",
+    description="List tasks in the shared todo list, optionally filtered by status or subagent.",
+    parameters=ToolParameter(
+        properties={
+            "status": ToolParameterProperties(
+                type="string",
+                description=f"Filter by status. Must be one of: {_STATUSES}.",
+            ),
+            "subagent_id": ToolParameterProperties(
+                type="string",
+                description="Filter by subagent ID.",
+            ),
+        },
+        required=[],
+    ),
+    action_label="Listing todos...",
+)
+
+todo_delete_tool = Tool(
+    name="todo_delete",
+    description="Delete a task from the shared todo list.",
+    parameters=ToolParameter(
+        properties={
+            "task_id": ToolParameterProperties(
+                type="string",
+                description="The ID of the task to delete.",
+            ),
+        },
+        required=["task_id"],
+    ),
+    action_label="Deleting todo...",
 )
 
 
-async def execute_todo(
-    action: str,
-    task_id: str | None = None,
-    title: str | None = None,
+async def execute_todo_create(
+    title: str,
     description: str | None = None,
-    status: str | None = None,
     subagent_id: str | None = None,
 ) -> ExecutorResult:
     store = get_todo_store()
-
-    match action:
-        case "create":
-            return _create(store, title, description, subagent_id)
-        case "update":
-            return _update(store, task_id, title, description, status, subagent_id)
-        case "list":
-            return _list(store, status, subagent_id)
-        case "delete":
-            return _delete(store, task_id)
-        case _:
-            return ExecutorResult(
-                display="Invalid action",
-                content=f"Unknown action '{action}'. Must be one of: create, update, list, delete.",
-            )
-
-
-def _create(store, title, description, subagent_id) -> ExecutorResult:
-    if not title:
-        return ExecutorResult(
-            display="Missing title",
-            content="Error: 'title' is required for the 'create' action.",
-        )
-
     task = store.create(title=title, description=description or "", subagent_id=subagent_id or "")
     return ExecutorResult(
         display=f"Created task: {task.title}",
@@ -79,12 +105,14 @@ def _create(store, title, description, subagent_id) -> ExecutorResult:
     )
 
 
-def _update(store, task_id, title, description, status, subagent_id) -> ExecutorResult:
-    if not task_id:
-        return ExecutorResult(
-            display="Missing task_id",
-            content="Error: 'task_id' is required for the 'update' action.",
-        )
+async def execute_todo_update(
+    task_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    status: str | None = None,
+    subagent_id: str | None = None,
+) -> ExecutorResult:
+    store = get_todo_store()
 
     parsed_status = None
     if status:
@@ -119,15 +147,20 @@ def _update(store, task_id, title, description, status, subagent_id) -> Executor
     )
 
 
-def _list(store, filter_status, filter_subagent_id) -> ExecutorResult:
+async def execute_todo_list(
+    status: str | None = None,
+    subagent_id: str | None = None,
+) -> ExecutorResult:
+    store = get_todo_store()
+
     parsed_status = None
-    if filter_status:
+    if status:
         try:
-            parsed_status = TodoStatus.from_str(filter_status)
+            parsed_status = TodoStatus.from_str(status)
         except ValueError as e:
             return ExecutorResult(display="Invalid status", content=f"Error: {e}")
 
-    tasks = store.list(status=parsed_status, subagent_id=filter_subagent_id)
+    tasks = store.list(status=parsed_status, subagent_id=subagent_id)
 
     if not tasks:
         return ExecutorResult(
@@ -151,13 +184,10 @@ def _list(store, filter_status, filter_subagent_id) -> ExecutorResult:
     )
 
 
-def _delete(store, task_id) -> ExecutorResult:
-    if not task_id:
-        return ExecutorResult(
-            display="Missing task_id",
-            content="Error: 'task_id' is required for the 'delete' action.",
-        )
-
+async def execute_todo_delete(
+    task_id: str,
+) -> ExecutorResult:
+    store = get_todo_store()
     task = store.delete(task_id)
     if not task:
         return ExecutorResult(
