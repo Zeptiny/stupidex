@@ -5,6 +5,7 @@ from datetime import datetime
 from stupidex.agents.manager import SubagentManager
 from stupidex.config import get_config
 from stupidex.domain.message import Message
+from stupidex.domain.todo import TodoStore
 
 
 @dataclass
@@ -14,6 +15,7 @@ class Session:
     messages: list[Message] = field(default_factory=list)
     model: str | None = None
     subagent_manager: SubagentManager = field(default_factory=SubagentManager)
+    todo_store: TodoStore = field(default_factory=TodoStore)
 
 
 class SessionManager:

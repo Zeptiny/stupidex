@@ -28,6 +28,16 @@ from stupidex.tools.subagent import (
     list_subagents,
     wait_for_subagent,
 )
+from stupidex.tools.todo import (
+    execute_todo_create,
+    execute_todo_delete,
+    execute_todo_list,
+    execute_todo_update,
+    todo_create_tool,
+    todo_delete_tool,
+    todo_list_tool,
+    todo_update_tool,
+)
 
 _TOOL_REGISTRY: dict[str, dict] | None = None
 
@@ -43,6 +53,10 @@ def get_tool_registry() -> dict[str, dict]:
         "glob": {"tool": glob_tool, "executor": execute_glob_tool},
         "write": {"tool": write_tool, "executor": execute_write_tool},
         "grep": {"tool": grep_tool, "executor": execute_grep_tool},
+        "todo_create": {"tool": todo_create_tool, "executor": execute_todo_create},
+        "todo_update": {"tool": todo_update_tool, "executor": execute_todo_update},
+        "todo_list": {"tool": todo_list_tool, "executor": execute_todo_list},
+        "todo_delete": {"tool": todo_delete_tool, "executor": execute_todo_delete},
         "execute_command": {"tool": execute_command_tool, "executor": execute_command},
         "delegate_to_subagent": {"tool": build_delegate_tool(), "executor": execute_delegate_to_subagent},
         "wait_for_subagent": {"tool": wait_for_subagent, "executor": execute_wait_for_subagent},

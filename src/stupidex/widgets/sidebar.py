@@ -6,6 +6,7 @@ from textual.message import Message
 from textual.widgets import Collapsible, Static
 
 from stupidex.agents.manager import SUBAGENT_INDICATORS, SubagentRecord, SubagentState
+from stupidex.domain.todo import TERMINAL_STATUSES, TodoStatus, TodoTask
 
 _TOKEN_THROTTLE_INTERVAL = 0.5
 
@@ -65,7 +66,8 @@ class Sidebar(Vertical):
     }
 
     Sidebar #sidebar-tokens-label,
-    Sidebar #sidebar-subagents-label {
+    Sidebar #sidebar-subagents-label,
+    Sidebar #sidebar-todos-label {
         color: $text-muted;
         text-style: bold;
         padding: 0 1;
@@ -106,6 +108,19 @@ class Sidebar(Vertical):
     Sidebar #subagent-entries {
         height: auto;
         padding: 0 0;
+    }
+
+    Sidebar #todo-entries {
+        height: auto;
+        padding: 0 0;
+    }
+
+    Sidebar .todo-entry {
+        width: 100%;
+        min-height: 1;
+        height: auto;
+        padding: 0 1;
+        color: $text-muted;
     }
 
     Sidebar .subagent-entry {
@@ -173,6 +188,8 @@ class Sidebar(Vertical):
             yield NavEntry("▸ Main", "main", id="nav-main")
         yield Static("Subagents", id="sidebar-subagents-label")
         yield Vertical(id="subagent-entries")
+        yield Static("Todos", id="sidebar-todos-label")
+        yield Vertical(id="todo-entries")
         yield Static(self._get_working_dir(), id="working-directory")
 
     def _get_working_dir(self) -> str:
@@ -429,3 +446,78 @@ class Sidebar(Vertical):
             return f"{elapsed / 60:.0f}m"
         else:
             return f"{elapsed / 3600:.1f}h"
+
+    async def update_todos(self, tasks: list[TodoTask]) -> None:
+        try:
+            container = self.query_one("#todo-entries", Vertical)
+        except Exception:
+            return
+
+        if not tasks:
+            if container.children:
+                await container.remove_children()
+            return
+
+        active = [t for t in tasks if t.status not in TERMINAL_STATUSES]
+        done = [t for t in tasks if t.status in TERMINAL_STATUSES]
+
+        existing_collapse: Collapsible | None = None
+        for child in container.children:
+            if isinstance(child, Collapsible):
+                existing_collapse = child
+
+        was_finished_collapsed = existing_collapse.collapsed if existing_collapse else True
+
+        active_entries: list[Static] = []
+        for task in active:
+            entry = Static(self._format_todo(task), classes="todo-entry")
+            active_entries.append(entry)
+
+        done_entries: list[Static] = []
+        for task in reversed(done):
+            entry = Static(self._format_todo(task), classes="todo-entry")
+            done_entries.append(entry)
+
+        await container.remove_children()
+
+        if active_entries:
+            await container.mount(*active_entries)
+
+        if done_entries:
+            collapse = Collapsible(
+                classes="finished-collapse",
+                title=f"Done ({len(done)})",
+                collapsed=was_finished_collapsed,
+            )
+            await container.mount(collapse)
+            contents = collapse.query_one("Contents")
+            await contents.mount(*done_entries)
+
+    @staticmethod
+    def _format_todo(task: TodoTask) -> str:
+        indicator = {
+            TodoStatus.OPEN: "○",
+            TodoStatus.IN_PROGRESS: "◐",
+            TodoStatus.BLOCKED: "⊘",
+            TodoStatus.NEEDS_REVIEW: "◑",
+            TodoStatus.UNDER_REVIEW: "◑",
+            TodoStatus.DONE: "●",
+            TodoStatus.ABANDONED: "✗",
+        }.get(task.status, "?")
+
+        color = {
+            TodoStatus.OPEN: "blue",
+            TodoStatus.IN_PROGRESS: "yellow",
+            TodoStatus.BLOCKED: "red",
+            TodoStatus.NEEDS_REVIEW: "cyan",
+            TodoStatus.UNDER_REVIEW: "cyan",
+            TodoStatus.DONE: "dim",
+            TodoStatus.ABANDONED: "dim red",
+        }.get(task.status, "dim")
+
+        title = task.title
+        if len(title) > 22:
+            title = title[:20] + ".."
+
+        text = f" {indicator} {title}"
+        return f"[{color}]{text}[/{color}]"
