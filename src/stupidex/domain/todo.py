@@ -73,7 +73,7 @@ class TodoStore:
     ) -> TodoTask:
         now = time.time()
         task = TodoTask(
-            id=uuid.uuid4().hex,
+            id=uuid.uuid4().hex[:8],
             title=title,
             description=description,
             status=TodoStatus.OPEN,

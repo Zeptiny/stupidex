@@ -53,7 +53,7 @@ async def build_dynamic_system_prompt() -> Message:
     if tasks:
         lines = []
         for t in tasks:
-            line = f"  <todo id=\"{escape(t.id[:8])}\" status=\"{t.status.value}\">"
+            line = f"  <todo id=\"{escape(t.id)}\" status=\"{t.status.value}\">"
             line += f"\n    <title>{escape(t.title)}</title>"
             if t.description:
                 line += f"\n    <description>{escape(t.description)}</description>"

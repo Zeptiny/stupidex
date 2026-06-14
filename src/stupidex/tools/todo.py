@@ -1,7 +1,21 @@
-from stupidex.domain.todo import TodoStatus, get_todo_store, notify_todo_changed
+from stupidex.domain.todo import (
+    TERMINAL_STATUSES,
+    VALID_TRANSITIONS,
+    TodoStatus,
+    get_todo_store,
+    notify_todo_changed,
+)
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 
 _STATUSES = ", ".join(s.value for s in TodoStatus)
+
+_TRANSITION_LINES = []
+for _src, _dsts in VALID_TRANSITIONS.items():
+    _TRANSITION_LINES.append(f"  {_src.value} → {{{', '.join(d.value for d in _dsts)}}}")
+for _terminal in TERMINAL_STATUSES:
+    _TRANSITION_LINES.append(f"  {_terminal.value} → (terminal, no transitions)")
+_TRANSITION_LINES.append("Done/abandoned are terminal — once set, the task cannot be updated.")
+_TRANSITION_MATRIX = "\n".join(_TRANSITION_LINES)
 
 todo_create_tool = Tool(
     name="todo_create",
@@ -28,7 +42,10 @@ todo_create_tool = Tool(
 
 todo_update_tool = Tool(
     name="todo_update",
-    description="Update an existing task in the shared todo list.",
+    description=(
+        "Update an existing task in the shared todo list.\n\n"
+        f"Status transitions:\n{_TRANSITION_MATRIX}"
+    ),
     parameters=ToolParameter(
         properties={
             "task_id": ToolParameterProperties(
@@ -173,7 +190,7 @@ async def execute_todo_list(
 
     lines = [f"Found {len(tasks)} task(s):\n"]
     for t in tasks:
-        parts = [f"[{t.id[:8]}] {t.title}"]
+        parts = [f"[{t.id}] {t.title}"]
         parts.append(f"  Status: {t.status.value}")
         if t.subagent_id:
             parts.append(f"  Subagent: {t.subagent_id}")
