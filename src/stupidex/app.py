@@ -10,6 +10,7 @@ from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.message import Message, MessageRole, StreamHistoryState, record_streamed_message
 from stupidex.domain.session import SessionManager
+from stupidex.domain.todo import set_todo_store
 from stupidex.llm.client import stream_response
 from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
@@ -84,6 +85,7 @@ class Stupidex(App):
 
     async def on_mount(self) -> None:
         self.sessions.create()
+        set_todo_store(self.sessions.active.todo_store)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
         self.query_one("#input", TextArea).display = True
