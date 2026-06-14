@@ -116,6 +116,38 @@ class AssistantMessageWidget(MessageWidget):
         return Markdown(self.msg.content)
 
 
+class ErrorMessageWidget(Static):
+    """Widget for displaying error messages. Content is never sent to the LLM."""
+
+    DEFAULT_CSS = """
+    ErrorMessageWidget {
+        background: #3a1010;
+        border: wide #dc143c;
+        margin: 0 1;
+        padding: 0 1;
+        height: auto;
+    }
+
+    ErrorMessageWidget .error-title {
+        text-style: bold;
+        color: #ff4444;
+    }
+
+    ErrorMessageWidget .error-detail {
+        color: #cc8888;
+    }
+    """
+
+    def __init__(self, msg: Message, **kwargs):
+        self.msg = msg
+        super().__init__(**kwargs)
+
+    def compose(self) -> ComposeResult:
+        title = self.msg.metadata.get("error_title", "Error")
+        yield Static(title, classes="error-title")
+        yield Static(self.msg.content, classes="error-detail")
+
+
 class ToolResultMessageWidget(Static):
     """A collapsible widget that shows the display summary when collapsed and full content when expanded."""
 
@@ -142,6 +174,8 @@ def create_message_widget(msg: Message) -> Static | None:
             return None
         case MessageType.TOOL_RESULT:
             return ToolResultMessageWidget(msg)
+        case MessageType.ERROR:
+            return ErrorMessageWidget(msg)
         case _:
             if msg.role == MessageRole.USER:
                 return UserMessageWidget(msg)
@@ -158,6 +192,11 @@ class StreamWidgetState:
 
 async def mount_streamed_message(container, msg: Message, state: StreamWidgetState) -> None:
     """Mount or update widgets for a streamed message."""
+    if msg.type == MessageType.ERROR:
+        w = ErrorMessageWidget(msg)
+        await container.mount(w)
+        w.scroll_visible()
+        return
     if msg.type == MessageType.THINKING:
         if state.thinking is None:
             w = ThinkingMessageWidget(msg)
