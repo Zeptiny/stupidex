@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from enum import Enum
 
 from textual.app import App, ComposeResult
@@ -8,9 +9,9 @@ from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, Te
 from stupidex.agents import get_agent_registry
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
-from stupidex.domain.message import Message, MessageRole, StreamHistoryState, record_streamed_message
+from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
 from stupidex.domain.session import SessionManager
-from stupidex.llm.client import stream_response
+from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
 from stupidex.widgets.command_picker import CommandPicker
@@ -21,6 +22,8 @@ from stupidex.widgets.message_widget import (
 )
 from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, SidebarSubagentSelected
 from stupidex.widgets.subagent_ui import SubagentUIManager
+
+log = logging.getLogger(__name__)
 
 
 class InterruptState(Enum):
@@ -278,6 +281,33 @@ class Stupidex(App):
             except Exception:
                 pass
             raise
+        except Exception as exc:
+            log.exception("Stream response failed")
+            for tw in ws.temp:
+                try:
+                    await tw.remove()
+                except Exception:
+                    pass
+            ws.temp.clear()
+            try:
+                title, detail = classify_error(exc)
+                error_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=detail,
+                    type=MessageType.ERROR,
+                    metadata={"error_title": title},
+                )
+            except Exception:
+                error_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=str(exc)[:200] or type(exc).__name__,
+                    type=MessageType.ERROR,
+                    metadata={"error_title": "Unexpected Error"},
+                )
+            try:
+                await mount_streamed_message(container, error_msg, ws)
+            except Exception:
+                log.exception("Failed to mount error widget")
         finally:
             await self.streaming_finished()
 
