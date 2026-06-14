@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
@@ -145,3 +146,16 @@ def get_todo_store() -> TodoStore:
 
 def set_todo_store(store: TodoStore) -> None:
     _current_store.set(store)
+
+
+_todo_refresh_callback: Callable[[], Coroutine[Any, Any, None]] | None = None
+
+
+def set_todo_refresh_callback(cb: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    global _todo_refresh_callback
+    _todo_refresh_callback = cb
+
+
+async def notify_todo_changed() -> None:
+    if _todo_refresh_callback:
+        await _todo_refresh_callback()

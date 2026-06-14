@@ -1,4 +1,4 @@
-from stupidex.domain.todo import TodoStatus, get_todo_store
+from stupidex.domain.todo import TodoStatus, get_todo_store, notify_todo_changed
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 
 _STATUSES = ", ".join(s.value for s in TodoStatus)
@@ -99,6 +99,7 @@ async def execute_todo_create(
 ) -> ExecutorResult:
     store = get_todo_store()
     task = store.create(title=title, description=description or "", subagent_id=subagent_id or "")
+    await notify_todo_changed()
     return ExecutorResult(
         display=f"Created task: {task.title}",
         content=f"Task created successfully.\n\nID: {task.id}\nTitle: {task.title}\nStatus: {task.status.value}",
@@ -130,6 +131,8 @@ async def execute_todo_update(
     )
     if error:
         return ExecutorResult(display="Update failed", content=f"Error: {error}")
+
+    await notify_todo_changed()
 
     changes = []
     if title is not None:
@@ -194,6 +197,8 @@ async def execute_todo_delete(
             display="Task not found",
             content=f"Error: No task found with ID '{task_id}'.",
         )
+
+    await notify_todo_changed()
 
     return ExecutorResult(
         display=f"Deleted task: {task.title}",
