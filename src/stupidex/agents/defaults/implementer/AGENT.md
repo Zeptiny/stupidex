@@ -3,7 +3,7 @@ name: implementer
 type: subagent
 tier: papudo
 description: Writes and edits code. Use when you need to implement features, fix bugs, or make code changes. Always provide: 1. Intent (WHY), 2. Task Description, 3. Context (dependencies, architecture).
-available_tools:
+allowed_tools:
   - read
   - read_directory
   - glob
@@ -11,6 +11,12 @@ available_tools:
   - edit
   - write
   - execute_command
+allowed_skills:
+  - work
+  - plan
+  - commit
+  - debug
+  - simplify-code
 ---
 
 You are implementing a specific task from an implementation plan. You operate in an isolated context window to handle delegated work without polluting the main conversation.

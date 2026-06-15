@@ -3,7 +3,7 @@ name: explorer
 type: subagent
 tier: tolo
 description: Explores and searches a codebase. Use when you need to find files, understand structure, or gather information without making changes. Do not spawn it for reading a single file or when you want the full contents of file(s).
-available_tools:
+allowed_tools:
   - read
   - read_directory
   - glob

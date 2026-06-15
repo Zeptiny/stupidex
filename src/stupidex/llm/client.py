@@ -285,9 +285,13 @@ async def _executor_task(
 async def stream_response(
     messages: list[Message],
     model: str | None,
-    available_tools: list[str],
+    allowed_tools: list[str],
     system_prompt: str,
+    allowed_skills: list[str] | None = None,
 ) -> AsyncGenerator[Message, None]:
+    from stupidex.tools.skill import set_current_allowed_skills
+    set_current_allowed_skills(allowed_skills)
+
     cfg = get_config()
     system_msg = build_static_system_prompt(system_prompt)
     dynamic_prompt = await build_dynamic_system_prompt()
@@ -296,8 +300,9 @@ async def stream_response(
         [dynamic_prompt.to_dict()]
 
     registry = get_tool_registry()
+    from fnmatch import fnmatch
     filtered_tools = {k: v for k, v in registry.items()
-                      if k in available_tools}
+                      if any(fnmatch(k, p) for p in allowed_tools)}
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
     while True:

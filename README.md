@@ -2,7 +2,7 @@
 
 ## TODO do Trabalho Final
 - [x] Ao menos 2 agentes com papéis distintos e justificados
-  - Temos 4 agentes pré definidos que podem ser chamados pelo agente principal
+  - Temos 25 agentes pré definidos (4 core + 10 reviewers + 5 doc-review + 3 researchers + 2 specialized + 1 PR resolver)
 - [x] LLM integrado - tomada de decisão, geração ou roteamento
   - O projeto necessita de LLM para ser útil, com o principal tomando deciões e roteamento (Subagentes) e geração com principal ou subagentes (Código, exploração, etc.)
 - [x] Modelo local (Ollama) - não apenas API paga
@@ -11,7 +11,7 @@
 - [x] Pipeline RAG: ingestão -> Embedding -> busca -> resposta
 - [x] Vector store (ChromeDB/FAISS) com embedding reais
 - [x] Mínimo 3 tools disponíveis e funcionais para os agentes
-  - O projeto conta com 13 tools configuráveis por agente
+  - O projeto conta com 19 tools configuráveis por agente
 - [x] Interface CLI testável - fluxo demonstrável em terminal
   - A interface é feita com Textual e o usuário tem acesso a todo o fluxo de todos os agentes
 - [x] Repositório GiHub público com código completo
@@ -68,22 +68,68 @@ name: my-agent
 type: subagent
 tier: papudo
 description: What this agent does
-available_tools:
+allowed_tools:
   - read
   - edit
   - execute_command
+allowed_skills:
+  - '*'
 ---
 
 System prompt content here...
 ```
 
+**Required fields:** `name`, `type`, `tier`, `description`, `allowed_tools`.
+**Optional fields:** `allowed_skills` (defaults to `[]` — no skill access).
+
+**`allowed_skills` patterns:**
+- `*` — matches all skills
+- `work*` — matches skills starting with `work`
+- `code-review` — matches exact name
+- Multiple patterns are unioned: `["work", "debug"]` matches both
+
 **Built-in agents:**
+
+Core:
 | Agent | Type | Tier | Description |
 |-------|------|------|-------------|
 | `general` | internal | papudo | Main agent, handles direct conversation |
 | `explorer` | subagent | tolo | Read-only codebase exploration |
 | `implementer` | subagent | papudo | Writes and edits code |
 | `reviewer` | subagent | papaca | Code review for bugs and improvements |
+
+Specialized reviewers (used by `code-review` skill):
+| Agent | Type | Tier | Description |
+|-------|------|------|-------------|
+| `correctness-reviewer` | subagent | papaca | Reviews code for logic errors, edge cases, state management bugs |
+| `security-reviewer` | subagent | papaca | Reviews for exploitable vulnerabilities, input validation, auth issues |
+| `performance-reviewer` | subagent | papaca | Reviews for bottlenecks, N+1 queries, memory usage, scalability |
+| `maintainability-reviewer` | subagent | papudo | Reviews for premature abstraction, dead code, coupling, naming |
+| `testing-reviewer` | subagent | papudo | Reviews for test coverage gaps, weak assertions, brittle tests |
+| `adversarial-reviewer` | subagent | papaca | Constructs failure scenarios to break the implementation |
+| `reliability-reviewer` | subagent | papaca | Reviews error handling, retries, circuit breakers, timeouts |
+| `api-contract-reviewer` | subagent | papudo | Reviews API routes, request/response types, serialization |
+| `data-integrity-guardian` | subagent | papaca | Reviews migrations, data models, persistent data for safety |
+| `code-simplicity-reviewer` | subagent | papudo | Final pass for YAGNI violations and simplification opportunities |
+
+Research and analysis agents:
+| Agent | Type | Tier | Description |
+|-------|------|------|-------------|
+| `learnings-researcher` | subagent | tainha | Searches docs/solutions/ for applicable past learnings |
+| `web-researcher` | subagent | tainha | Codebase research via RAG search and semantic analysis |
+| `architecture-strategist` | subagent | papaca | Analyzes code changes for pattern compliance and design integrity |
+| `agent-native-reviewer` | subagent | papaca | Reviews for agent-native parity (every user action = agent tool) |
+| `spec-flow-analyzer` | subagent | papudo | Analyzes specs for user flow completeness and gap identification |
+
+Document review agents (used by `doc-review` skill):
+| Agent | Type | Tier | Description |
+|-------|------|------|-------------|
+| `adversarial-document-reviewer` | subagent | papaca | Challenges premises, surfaces unstated assumptions in docs |
+| `coherence-reviewer` | subagent | papudo | Reviews docs for internal consistency and contradictions |
+| `feasibility-reviewer` | subagent | papudo | Evaluates whether proposed approaches will survive reality |
+| `product-lens-reviewer` | subagent | papaca | Reviews docs as a senior product leader |
+| `scope-guardian-reviewer` | subagent | papudo | Reviews for scope alignment and unjustified complexity |
+| `pr-comment-resolver` | subagent | papudo | Evaluates and resolves PR review threads |
 
 ### Agent Tiers
 
@@ -117,15 +163,81 @@ Skill instructions here...
 ```
 
 **Built-in skills:**
+
+Core workflow:
 | Skill | Description | When to use |
 |-------|-------------|-------------|
-| `brainstorm` | Explore requirements through dialogue | "let's brainstorm", vague feature requests |
-| `plan` | Create structured implementation plans | "plan this", "how should we build" |
-| `work` | Execute plans efficiently | "implement this", "build it" |
-| `debug` | Find root causes and fix bugs | "debug this", "why is this failing" |
-| `commit` | Create git commits | "commit this", "save my changes" |
-| `simplify-code` | Refactor for clarity | "simplify this", "clean up" |
-| `code-review` | Review code for issues | "review this", before merging |
+| `strategy` | Create/maintain STRATEGY.md (product direction) | "write our strategy", "what are we working on" |
+| `ideate` | Generate and critically evaluate grounded ideas | "give me ideas", "what should I improve", "surprise me" |
+| `brainstorm` | Explore requirements through dialogue, write requirements doc | "let's brainstorm", "what should we build", vague requests |
+| `doc-review` | Review requirements/plan docs with parallel persona agents | "review this doc", "improve this requirements doc" |
+| `plan` | Create structured implementation plans | "plan this", "how should we build", "break this down" |
+| `work` | Execute plans efficiently with incremental commits | "implement this", "build it", "execute the plan" |
+| `debug` | Find root causes and fix bugs systematically | "debug this", "why is this failing", "fix this bug" |
+| `code-review` | Structured review with tiered persona agents | "review this", before creating a PR |
+| `resolve-pr-feedback` | Evaluate and fix PR review feedback | "resolve PR feedback", "address review comments" |
+| `commit` | Create git commits with clear messages | "commit this", "save my changes" |
+| `commit-push-pr` | Commit, push, and open a PR | "ship this", "create a PR", "commit and PR" |
+| `compound` | Document solved problems to compound knowledge | "document this", "what did we learn", after fixing a bug |
+| `compound-refresh` | Refresh stale docs in docs/solutions/ | "refresh my learnings", "audit docs/solutions/" |
+| `simplify-code` | Refactor for clarity, reuse, and efficiency | "simplify this", "clean up", "refactor for clarity" |
+| `lfg` | Full autonomous pipeline (plan → work → review → commit → PR → CI watch) | "ship this end-to-end", "do everything", hands-off execution |
+
+## Workflow
+
+Skills chain into a compound engineering pipeline. Each step builds on the previous:
+
+```
+strategy → ideate → brainstorm → [doc-review] → plan → work → [debug] → code-review → [resolve-pr-feedback] → commit-push-pr → compound
+```
+
+### Typical flows
+
+**Feature development:**
+```
+brainstorm → plan → work → code-review → commit-push-pr → compound
+```
+
+**Bug fix:**
+```
+debug → (fix) → code-review → compound
+```
+
+**Code review:**
+```
+code-review → resolve-pr-feedback → compound
+```
+
+**Full autonomous pipeline (`lfg`):**
+```
+plan → work → code-review → fix → test → commit-push-pr
+```
+
+### Knowledge Management
+
+The compounding system documents solved problems so future work avoids re-discovering known solutions:
+
+- **`docs/solutions/`** — Structured learnings with YAML frontmatter, organized by category:
+  - `developer-experience/` — Dev setup, CI, tooling issues
+  - `integrations/` — Cross-platform bugs, target compatibility
+  - `workflow/` — Skill/agent design patterns, process improvements
+  - `skill-design/` — Plugin architecture patterns
+- **`CONCEPTS.md`** — Shared domain vocabulary that grounds all agents in the project's language
+- **`learnings-researcher` agent** — Searches docs/solutions/ before implementation to surface prior knowledge
+- **`compound` skill** — Documents new solutions after they're solved
+- **`compound-refresh` skill** — Audits and maintains existing learnings over time
+
+### Agent Delegation Pattern
+
+The general agent delegates specialized work to subagents:
+
+1. **Research** — `explorer`, `learnings-researcher`, `web-researcher` gather context
+2. **Implementation** — `implementer` writes code guided by plans
+3. **Review** — `code-review` skill spawns parallel reviewer personas (correctness, security, performance, etc.)
+4. **Resolution** — `pr-comment-resolver` addresses feedback
+5. **Documentation** — `compound` skill captures the learning
+
+Each agent only has access to its `allowed_tools` and `allowed_skills`, enforcing separation of concerns.
 
 ## Tools
 
@@ -148,6 +260,10 @@ Available tools for agents:
 | `list_skills` | List available skills |
 | `rag_search` | Semantic code search |
 | `rag_index` | Index status, reindex, clear |
+| `todo_create` | Create a task |
+| `todo_update` | Update task status/details |
+| `todo_list` | List tasks filtered by status |
+| `todo_delete` | Delete a task |
 
 ## RAG (Retrieval-Augmented Generation)
 
@@ -158,10 +274,9 @@ The project includes a built-in RAG pipeline for code-aware semantic search. It 
 ```bash
 # Index the current project
 # In the command palette (Ctrl+P): /index
-
-# Search indexed code
-# In the command palette (Ctrl+P): /rag <your query>
 ```
+
+The agents will use the rag tool ad needed
 
 ### Embedding Providers
 
@@ -242,21 +357,6 @@ All RAG settings in `~/.stupidex/config.json`:
 | `rag_max_file_size` | `512000` | Skip files larger than this (bytes) |
 
 Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_PROVIDER`, `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
-
-### Architecture
-
-```text
-/index command
-    → Indexer scans project files
-    → Chunker splits by language-aware rules
-    → Embedder generates vectors (OpenAI API or fastembed local)
-    → Store persists to SQLite (index.db) + numpy (vectors.npy)
-
-/rag <query>
-    → Embedder vectorizes the query
-    → Store performs cosine similarity search
-    → Returns top-k chunks with file path, line range, and score
-```
 
 ## Linting
 
@@ -365,6 +465,8 @@ Project-level config: `.stupidex.json` (overrides home config).
 - Approval / permission system
 - AGENTS.md handling
   - Also /init command for it
+- Session saving to disk
+- Web fetch tool or MCP
 
 ## Subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
@@ -372,7 +474,6 @@ Project-level config: `.stupidex.json` (overrides home config).
 ## Needs improvement
 - Support for Anthropic API
 - Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
-- Session saving to disk
 - Bug: Automatically scrolling down after a message is finished
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool
@@ -380,9 +481,6 @@ Project-level config: `.stupidex.json` (overrides home config).
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Message queue for the user
-- Limit available skills per subagent
-- Compounding system
-  - TODO Improvements were deferred to compounding system
 
 # Considerations
 - Make the read tool usable with directories?

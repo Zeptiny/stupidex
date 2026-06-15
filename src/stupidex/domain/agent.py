@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -69,7 +69,8 @@ class Agent:
     tier: ModelTier
     description: str
     system_prompt: str
-    available_tools: list[str]
+    allowed_tools: list[str] = field(default_factory=list)
+    allowed_skills: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -78,7 +79,8 @@ class Agent:
             "tier": self.tier.value,
             "description": self.description,
             "system_prompt": self.system_prompt,
-            "available_tools": self.available_tools,
+            "allowed_tools": self.allowed_tools,
+            "allowed_skills": self.allowed_skills,
         }
 
     @classmethod
@@ -89,5 +91,6 @@ class Agent:
             tier=ModelTier.from_str(data.get("tier", "papudo")),
             description=data["description"],
             system_prompt=data["system_prompt"],
-            available_tools=data["available_tools"],
+            allowed_tools=data["allowed_tools"],
+            allowed_skills=data.get("allowed_skills", []),
         )
