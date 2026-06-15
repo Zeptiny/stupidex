@@ -257,8 +257,9 @@ class Stupidex(App):
             async for msg in stream_response(
                 messages=self.messages,
                 model=self.model,
-                available_tools=general.available_tools,
+                allowed_tools=general.allowed_tools,
                 system_prompt=system_prompt,
+                allowed_skills=general.allowed_skills,
             ):
                 record_streamed_message(self.messages, msg, history_state)
 

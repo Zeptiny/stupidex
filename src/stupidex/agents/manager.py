@@ -190,8 +190,9 @@ class SubagentManager:
                 async for msg in stream_response(
                     subagent_messages,
                     model=model,
-                    available_tools=agent.available_tools,
+                    allowed_tools=agent.allowed_tools,
                     system_prompt=agent.system_prompt,
+                    allowed_skills=agent.allowed_skills,
                 ):
                     appended = record_streamed_message(record.messages, msg, history_state)
                     if record.on_message:

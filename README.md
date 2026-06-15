@@ -68,10 +68,12 @@ name: my-agent
 type: subagent
 tier: papudo
 description: What this agent does
-available_tools:
+allowed_tools:
   - read
   - edit
   - execute_command
+allowed_skills:
+  - '*'
 ---
 
 System prompt content here...
@@ -380,7 +382,6 @@ Project-level config: `.stupidex.json` (overrides home config).
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Message queue for the user
-- Limit available skills per subagent
 - Compounding system
   - TODO Improvements were deferred to compounding system
 

@@ -3,7 +3,7 @@ name: general
 type: internal
 tier: papudo
 description: General internal agent, cannot be called as subagent
-available_tools:
+allowed_tools:
   - read
   - read_directory
   - glob
@@ -23,6 +23,8 @@ available_tools:
   - todo_list
   - todo_update
   - todo_delete
+allowed_skills:
+  - '*'
 ---
 
 You are Stupidex, a terminal-based coding agent operating inside the user's terminal.

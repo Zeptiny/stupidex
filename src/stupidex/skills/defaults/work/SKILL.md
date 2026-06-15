@@ -1,6 +1,8 @@
 ---
 name: work
 description: 'Execute work efficiently while maintaining quality and finishing features. Use when the user says "implement this", "build it", "start working", "execute the plan", or provides a task description or plan document to execute.'
+requires:
+  - commit
 ---
 
 # Work Execution Command

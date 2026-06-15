@@ -35,18 +35,27 @@ def _load_agents_from_dir(agents_dir: Path) -> dict[str, Agent]:
         agent_type = metadata.get('type', 'subagent')
         tier = metadata.get('tier', 'papudo')
         description = metadata.get('description', '')
-        available_tools = metadata.get('available_tools', [])
+        allowed_tools = metadata.get('allowed_tools', [])
+        allowed_skills = metadata.get('allowed_skills', [])
+        if isinstance(allowed_skills, str):
+            if allowed_skills.strip() in ('[]', ''):
+                allowed_skills = []
+            else:
+                allowed_skills = [s.strip() for s in allowed_skills.split(',') if s.strip()]
+        if not isinstance(allowed_skills, list):
+            log.warning("Skipping %s: allowed_skills must be a list", agent_file)
+            allowed_skills = []
 
         if not description:
             log.warning("Skipping %s: no description in frontmatter", agent_file)
             continue
 
-        if not available_tools:
-            log.warning("Skipping %s: no available_tools in frontmatter", agent_file)
+        if not allowed_tools:
+            log.warning("Skipping %s: no allowed_tools in frontmatter", agent_file)
             continue
 
-        if not isinstance(available_tools, list):
-            log.warning("Skipping %s: available_tools must be a list", agent_file)
+        if not isinstance(allowed_tools, list):
+            log.warning("Skipping %s: allowed_tools must be a list", agent_file)
             continue
 
         try:
@@ -56,7 +65,8 @@ def _load_agents_from_dir(agents_dir: Path) -> dict[str, Agent]:
                 tier=ModelTier.from_str(str(tier)),
                 description=description,
                 system_prompt=body.strip(),
-                available_tools=available_tools,
+                allowed_tools=allowed_tools,
+                allowed_skills=allowed_skills,
             )
         except (KeyError, ValueError, AttributeError) as e:
             log.warning("Skipping %s: %s", agent_file, e)
