@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from fnmatch import fnmatch
 from xml.sax.saxutils import escape
 
@@ -5,16 +6,15 @@ from stupidex.domain.skill import Skill
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.skills import get_skill_registry
 
-_current_allowed_skills: list[str] | None = None
+_current_allowed_skills: ContextVar[list[str] | None] = ContextVar("_current_allowed_skills", default=None)
 
 
 def set_current_allowed_skills(allowed: list[str] | None) -> None:
-    global _current_allowed_skills
-    _current_allowed_skills = allowed
+    _current_allowed_skills.set(allowed)
 
 
 def get_current_allowed_skills() -> list[str] | None:
-    return _current_allowed_skills
+    return _current_allowed_skills.get()
 
 
 def filter_skills(allowed: list[str], registry: dict[str, Skill]) -> dict[str, Skill]:
@@ -85,10 +85,7 @@ def _format_resource_listing(skill: Skill) -> str:
 
 def build_skill_tool(allowed_skills: list[str] | None = None) -> Tool:
     registry = get_skill_registry()
-    if allowed_skills is not None:
-        filtered = filter_skills(allowed_skills, registry)
-    else:
-        filtered = registry
+    filtered = filter_skills(allowed_skills, registry) if allowed_skills is not None else registry
     skill_lines = "\n".join(
         f"- {name}: {skill.description}"
         for name, skill in filtered.items()
@@ -126,10 +123,7 @@ async def execute_skill(name: str) -> ExecutorResult:
     if "/" in name:
         return await _execute_resource_read(name, registry, allowed_skills)
 
-    if allowed_skills is not None:
-        filtered = filter_skills(allowed_skills, registry)
-    else:
-        filtered = registry
+    filtered = filter_skills(allowed_skills, registry) if allowed_skills is not None else registry
 
     if name not in filtered:
         if name in registry:
@@ -180,10 +174,7 @@ async def _execute_resource_read(
     """Handle skill_name/resource_path reads."""
     skill_name, resource_path = name.split("/", 1)
 
-    if allowed_skills is not None:
-        filtered = filter_skills(allowed_skills, registry)
-    else:
-        filtered = registry
+    filtered = filter_skills(allowed_skills, registry) if allowed_skills is not None else registry
 
     if skill_name not in filtered:
         if skill_name in registry:
@@ -203,15 +194,14 @@ async def _execute_resource_read(
     resolved = (skill_dir / resource_path).resolve()
 
     # Path traversal check
-    if not str(resolved).startswith(str(skill_dir.resolve())):
+    if not resolved.is_relative_to(skill_dir.resolve()):
         return ExecutorResult(
             display="Path traversal rejected",
             content="Error: resource path is outside the skill directory.",
         )
 
     # Must be within a known resource directory
-    allowed_dirs = {str((skill_dir / d).resolve()) for d in ("scripts", "references", "assets")}
-    if not any(str(resolved).startswith(d) for d in allowed_dirs):
+    if not any(resolved.is_relative_to((skill_dir / d).resolve()) for d in ("scripts", "references", "assets")):
         return ExecutorResult(
             display="Resource not in allowed directory",
             content="Error: resource must be in scripts/, references/, or assets/ directory.",
@@ -260,10 +250,7 @@ async def execute_list_skills() -> ExecutorResult:
     registry = get_skill_registry()
     allowed_skills = get_current_allowed_skills()
 
-    if allowed_skills is not None:
-        filtered = filter_skills(allowed_skills, registry)
-    else:
-        filtered = registry
+    filtered = filter_skills(allowed_skills, registry) if allowed_skills is not None else registry
 
     if not filtered:
         return ExecutorResult(display="No skills available", content="<skills />")

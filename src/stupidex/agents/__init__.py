@@ -42,8 +42,8 @@ def _load_agents_from_dir(agents_dir: Path) -> dict[str, Agent]:
                 allowed_skills = []
             else:
                 allowed_skills = [s.strip() for s in allowed_skills.split(',') if s.strip()]
-        if not isinstance(allowed_skills, list):
-            log.warning("Skipping %s: allowed_skills must be a list", agent_file)
+        if not isinstance(allowed_skills, list) or not all(isinstance(s, str) for s in allowed_skills):
+            log.warning("Skipping %s: allowed_skills must be a list of strings", agent_file)
             allowed_skills = []
 
         if not description:
@@ -54,8 +54,8 @@ def _load_agents_from_dir(agents_dir: Path) -> dict[str, Agent]:
             log.warning("Skipping %s: no allowed_tools in frontmatter", agent_file)
             continue
 
-        if not isinstance(allowed_tools, list):
-            log.warning("Skipping %s: allowed_tools must be a list", agent_file)
+        if not isinstance(allowed_tools, list) or not all(isinstance(t, str) for t in allowed_tools):
+            log.warning("Skipping %s: allowed_tools must be a list of strings", agent_file)
             continue
 
         try:

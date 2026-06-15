@@ -68,7 +68,12 @@ def _load_skills_from_dir(skills_dir: Path) -> dict[str, Skill]:
             continue
 
         requires_raw = metadata.get("requires", [])
-        requires = requires_raw if isinstance(requires_raw, list) else []
+        if isinstance(requires_raw, list):
+            requires = requires_raw
+        else:
+            if requires_raw:
+                log.warning("%s: 'requires' must be a list, got %s — ignoring", skill_file, type(requires_raw).__name__)
+            requires = []
 
         scripts = _scan_resource_dir(path, "scripts")
         references = _scan_resource_dir(path, "references")

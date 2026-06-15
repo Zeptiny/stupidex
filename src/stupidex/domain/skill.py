@@ -30,12 +30,12 @@ class Skill:
     assets: list[SkillResource] = field(default_factory=list)
 
     def validate(self) -> str | None:
-        if not self.name or len(self.name) > _MAX_NAME_LEN:
-            return f"Name must be 1-{_MAX_NAME_LEN} characters"
+        if not isinstance(self.name, str) or not self.name or len(self.name) > _MAX_NAME_LEN:
+            return f"Name must be a string of 1-{_MAX_NAME_LEN} characters"
         if not _NAME_PATTERN.match(self.name):
             return "Name must be lowercase letters, numbers, hyphens; no leading/trailing hyphens"
-        if not self.description or len(self.description) > _MAX_DESC_LEN:
-            return f"Description must be 1-{_MAX_DESC_LEN} characters"
+        if not isinstance(self.description, str) or not self.description or len(self.description) > _MAX_DESC_LEN:
+            return f"Description must be a string of 1-{_MAX_DESC_LEN} characters"
         return None
 
     def to_dict(self) -> dict:

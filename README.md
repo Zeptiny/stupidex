@@ -79,6 +79,15 @@ allowed_skills:
 System prompt content here...
 ```
 
+**Required fields:** `name`, `type`, `tier`, `description`, `allowed_tools`.
+**Optional fields:** `allowed_skills` (defaults to `[]` — no skill access).
+
+**`allowed_skills` patterns:**
+- `*` — matches all skills
+- `work*` — matches skills starting with `work`
+- `code-review` — matches exact name
+- Multiple patterns are unioned: `["work", "debug"]` matches both
+
 **Built-in agents:**
 | Agent | Type | Tier | Description |
 |-------|------|------|-------------|
