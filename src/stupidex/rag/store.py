@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import sqlite3
@@ -6,6 +5,8 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+import numpy as np
 
 from stupidex.config import PROJECT_RAG_DIR, RAG_INDEX_DB, RAG_VECTORS_FILE, get_config
 from stupidex.rag.chunker import Chunk
@@ -33,13 +34,6 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 """
-
-_HAS_NUMPY = True
-try:
-    import numpy as np
-except ImportError:
-    _HAS_NUMPY = False
-    logger.warning("numpy not available — falling back to pure-Python cosine similarity")
 
 
 @dataclass
@@ -152,62 +146,44 @@ class RAGStore:
 
     def _save_vectors(self, embeddings: list[list[float]]) -> None:
         self._ensure_dir()
-        if _HAS_NUMPY:
-            arr = np.array(embeddings, dtype=np.float32)
-            tmp_fd, tmp_path = tempfile.mkstemp(
-                dir=str(self.rag_dir), suffix=".tmp"
-            )
-            os.close(tmp_fd)
-            try:
-                np.save(tmp_path, arr, allow_pickle=False)
-                # np.save appends .npy, so actual file is tmp_path.npy
-                actual = tmp_path + ".npy"
-                os.replace(actual, str(self.vectors_file))
-            except BaseException:
-                for p in (tmp_path, tmp_path + ".npy"):
-                    try:
-                        os.unlink(p)
-                    except OSError:
-                        pass
-                raise
-            finally:
+        if not embeddings:
+            p = self.rag_dir / "vectors.npy"
+            if p.exists():
+                p.unlink()
+            return
+        arr = np.array(embeddings, dtype=np.float32)
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(self.rag_dir), suffix=".tmp"
+        )
+        os.close(tmp_fd)
+        try:
+            np.save(tmp_path, arr, allow_pickle=False)
+            actual = tmp_path + ".npy"
+            os.replace(actual, str(self.vectors_file))
+        except BaseException:
+            for p in (tmp_path, tmp_path + ".npy"):
                 try:
-                    os.unlink(tmp_path)
+                    os.unlink(p)
                 except OSError:
                     pass
-        else:
-            tmp_fd, tmp_path = tempfile.mkstemp(
-                dir=str(self.rag_dir), suffix=".json"
-            )
+            raise
+        finally:
             try:
-                with os.fdopen(tmp_fd, "w") as f:
-                    json.dump(embeddings, f)
-                os.replace(tmp_path, str(self.rag_dir / "vectors.json"))
-            except BaseException:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def _load_vectors(self) -> list[list[float]] | None:
         npy_path = self.vectors_file
-        json_path = self.rag_dir / "vectors.json"
 
-        if _HAS_NUMPY and npy_path.exists():
+        if npy_path.exists():
             try:
                 arr = np.load(str(npy_path))
+                if arr.ndim != 2 or arr.dtype != np.float32:
+                    raise ValueError("Invalid vectors array shape or dtype")
                 return arr.tolist()
             except Exception as e:
                 logger.error("Corrupted vectors.npy, clearing index: %s", e)
-                self.clear()
-                return None
-        elif json_path.exists():
-            try:
-                with open(json_path) as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error("Corrupted vectors.json, clearing index: %s", e)
                 self.clear()
                 return None
 
@@ -261,6 +237,13 @@ class RAGStore:
             vectors = vectors[:min_len]
             chunks = chunks[:min_len]
 
+        if vectors and len(query_embedding) != len(vectors[0]):
+            raise ValueError(
+                f"Query embedding dimension ({len(query_embedding)}) does not match "
+                f"stored vector dimension ({len(vectors[0])}). "
+                "Re-index with the correct embedding model."
+            )
+
         scores = self._cosine_similarity(query_embedding, vectors)
 
         indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
@@ -289,31 +272,18 @@ class RAGStore:
     def _cosine_similarity(
         query: list[float], vectors: list[list[float]]
     ) -> list[float]:
-        if _HAS_NUMPY:
-            q = np.array(query, dtype=np.float32)
-            v = np.array(vectors, dtype=np.float32)
-            norms = np.linalg.norm(v, axis=1) * np.linalg.norm(q)
-            norms = np.where(norms == 0, 1, norms)
-            return (v @ q / norms).tolist()
-        else:
-            q_norm = sum(x * x for x in query) ** 0.5
-            if q_norm == 0:
-                return [0.0] * len(vectors)
-            results = []
-            for vec in vectors:
-                dot = sum(a * b for a, b in zip(vec, query, strict=False))
-                v_norm = sum(x * x for x in vec) ** 0.5
-                denom = v_norm * q_norm
-                results.append(dot / denom if denom > 0 else 0.0)
-            return results
+        q = np.array(query, dtype=np.float32)
+        v = np.array(vectors, dtype=np.float32)
+        norms = np.linalg.norm(v, axis=1) * np.linalg.norm(q)
+        norms = np.where(norms == 0, 1, norms)
+        return (v @ q / norms).tolist()
 
     def clear(self) -> None:
         if self.db_path.exists():
             self.db_path.unlink()
-        for name in ("vectors.npy", "vectors.json"):
-            p = self.rag_dir / name
-            if p.exists():
-                p.unlink()
+        p = self.rag_dir / "vectors.npy"
+        if p.exists():
+            p.unlink()
 
     def status(self) -> StoreStatus:
         if not self.db_path.exists():
@@ -348,11 +318,35 @@ class RAGStore:
             conn.close()
 
     def delete_by_file(self, file_path: str) -> None:
+        old_ids = self._get_ordered_chunk_ids()
+        vectors = self._load_vectors()
+
         conn = self._get_conn()
         try:
             conn.execute("DELETE FROM chunks WHERE file_path = ?", (file_path,))
             conn.execute("DELETE FROM files WHERE file_path = ?", (file_path,))
             conn.commit()
+        finally:
+            conn.close()
+
+        if vectors is not None and old_ids and len(vectors) == len(old_ids):
+            id_to_vec = dict(zip(old_ids, vectors))
+            new_ids = self._get_ordered_chunk_ids()
+            aligned = [id_to_vec[cid] for cid in new_ids if cid in id_to_vec]
+            if aligned:
+                self._save_vectors(aligned)
+            else:
+                p = self.rag_dir / "vectors.npy"
+                if p.exists():
+                    p.unlink()
+
+    def _get_ordered_chunk_ids(self) -> list[int]:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT chunk_id FROM chunks ORDER BY chunk_id"
+            ).fetchall()
+            return [r[0] for r in rows]
         finally:
             conn.close()
 

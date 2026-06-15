@@ -77,18 +77,18 @@ Os agentes do stupidex dependem actualmente de `grep`, `glob` e `read` para nave
 
 ```sql
 CREATE TABLE chunks (
-    chunk_id    INTEGER PRIMARY KEY,
+    chunk_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     file_path   TEXT NOT NULL,
     start_line  INTEGER NOT NULL,
     end_line    INTEGER NOT NULL,
     content     TEXT NOT NULL,
-    language    TEXT NOT NULL DEFAULT ''
+    language    TEXT NOT NULL
 );
 
 CREATE TABLE files (
     file_path   TEXT PRIMARY KEY,
-    md5_hash    TEXT NOT NULL,
-    indexed_at  REAL NOT NULL
+    hash        TEXT NOT NULL,
+    chunk_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE meta (

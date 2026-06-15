@@ -1,6 +1,7 @@
 """Tests for RAG robustness improvements (U8)."""
 
 import pytest
+from unittest.mock import AsyncMock, patch
 
 from stupidex.rag.chunker import Chunk
 from stupidex.rag.embedder import Embedder, EmbeddingError
@@ -47,20 +48,6 @@ def test_corrupted_vectors_npy_auto_rebuild(tmp_path):
     npy_file.write_bytes(b"corrupted data here")
 
     # Search should handle corruption gracefully
-    results = store.search([0.5, 0.5], top_k=5)
-    assert results == []
-
-
-def test_corrupted_vectors_json_auto_rebuild(tmp_path):
-    """Corrupted vectors.json should be cleared and search returns empty."""
-    store = RAGStore(str(tmp_path))
-    store.init_db()
-
-    # Create corrupted JSON vectors file
-    rag_dir = tmp_path / ".stupidex" / "rag"
-    json_file = rag_dir / "vectors.json"
-    json_file.write_text("not valid json {{{")
-
     results = store.search([0.5, 0.5], top_k=5)
     assert results == []
 
@@ -114,22 +101,43 @@ def test_corrupted_index_db_get_conn_rebuild(tmp_path):
 @pytest.mark.asyncio
 async def test_embedder_failure_after_retries():
     """Embedder should fail gracefully after max retries."""
-    embedder = FakeEmbedder(fail_after=0)
+    from unittest.mock import AsyncMock, patch
 
-    with pytest.raises(EmbeddingError) as exc_info:
-        await embedder.embed(["test text"])
+    embedder = Embedder(model="test-model")
 
-    assert "Simulated API failure" in str(exc_info.value)
+    error = EmbeddingError("Simulated API failure")
+    with patch("litellm.aembedding", new_callable=AsyncMock, side_effect=error):
+        with pytest.raises(EmbeddingError) as exc_info:
+            await embedder.embed(["test text"])
+
+        assert "Simulated API failure" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
 async def test_embedder_success_with_retries():
     """Embedder should succeed if retry succeeds."""
-    embedder = FakeEmbedder(dim=4, fail_after=1)  # Fail first, succeed second
+    from unittest.mock import AsyncMock, MagicMock, patch
 
-    result = await embedder.embed(["test text"])
+    embedder = Embedder(model="test-model")
+
+    good_response = MagicMock()
+    good_response.data = [{"embedding": [0.1, 0.2, 0.3, 0.4]}]
+
+    call_count = 0
+
+    async def fail_then_succeed(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise EmbeddingError("Temporary failure")
+        return good_response
+
+    with patch("litellm.aembedding", side_effect=fail_then_succeed):
+        result = await embedder.embed(["test text"])
+
     assert len(result) == 1
     assert len(result[0]) == 4
+    assert call_count == 2
 
 
 # ---------------------------------------------------------------------------

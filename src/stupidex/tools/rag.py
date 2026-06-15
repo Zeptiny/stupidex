@@ -66,9 +66,14 @@ async def execute_rag_search(
 
     if top_k is None:
         top_k = cfg.rag_top_k
+    if top_k <= 0:
+        return ExecutorResult(
+            display="Invalid top_k",
+            content="Error: top_k must be a positive integer.",
+        )
 
     pre_check = store.status()
-    if pre_check.total_chunks == 0:
+    if pre_check.last_indexed is None and pre_check.total_chunks == 0:
         return ExecutorResult(
             display="No RAG index",
             content=(
@@ -141,7 +146,7 @@ async def execute_rag_index(
 
     if action == "status":
         status = get_status(project_path)
-        if status.total_chunks == 0:
+        if status.last_indexed is None and status.total_chunks == 0:
             return ExecutorResult(
                 display="No RAG index",
                 content="No RAG index exists for this project. Use action='index' to create one.",

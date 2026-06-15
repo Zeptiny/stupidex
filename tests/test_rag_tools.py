@@ -210,6 +210,9 @@ async def test_rag_index_run_empty_project(tmp_path, monkeypatch):
     assert isinstance(result, ExecutorResult)
     assert "0 files" in result.display
 
+    status_result = await execute_rag_index(action="status")
+    assert "No RAG index" not in status_result.display
+
 
 # ---------------------------------------------------------------------------
 # tool registration

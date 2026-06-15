@@ -78,6 +78,15 @@ async def index_project(
     stats = IndexResult(files_scanned=len(files))
 
     if not files:
+        store = RAGStore(project_path)
+        store.init_db()
+        await loop.run_in_executor(None, _flush_store, store, [], [])
+        if embedder is None:
+            embedder = Embedder(
+                model=cfg.rag_embedding_model or None,
+                provider_api_type=cfg.provider_api_type,
+            )
+        store.save_embedding_model(embedder._resolve_model())
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
         return stats
 
@@ -99,9 +108,14 @@ async def index_project(
     indexed_files: set[str] = set()
     all_chunks: list[Chunk] = []
     all_embeddings: list[list[float]] = []
+    file_hashes: dict[str, str] = {}
 
     for i, filepath in enumerate(files):
-        rel = str(filepath.relative_to(project_path))
+        try:
+            rel = str(filepath.relative_to(project_path))
+        except ValueError:
+            logger.warning("Skipping path outside project: %s", filepath)
+            continue
 
         if progress_callback:
             try:
@@ -117,6 +131,8 @@ async def index_project(
 
             if content is None:
                 logger.debug("Skipping %s (binary, empty, or too large)", rel)
+                if not force and existing_hashes.get(rel):
+                    await loop.run_in_executor(None, store.delete_by_file, rel)
                 continue
 
             # skip unchanged
@@ -128,6 +144,8 @@ async def index_project(
             # chunk
             chunks = chunk_file(rel, content, cfg.rag_chunk_size, cfg.rag_chunk_overlap)
             if not chunks:
+                if not force and existing_hashes.get(rel):
+                    await loop.run_in_executor(None, store.delete_by_file, rel)
                 indexed_files.add(rel)
                 continue
 
@@ -140,30 +158,36 @@ async def index_project(
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
             indexed_files.add(rel)
+            if file_hash:
+                file_hashes[rel] = file_hash
 
         except Exception as e:
             msg = f"{rel}: {e}"
             logger.warning("Indexing error: %s", msg)
             stats.errors.append(msg)
 
-    # flush everything to store at once
-    if all_chunks:
-        await loop.run_in_executor(None, _flush_store, store, all_chunks, all_embeddings)
+    # flush everything to store at once (always, so last_indexed is set)
+    await loop.run_in_executor(None, _flush_store, store, all_chunks, all_embeddings)
 
-        # update per-file hashes
-        for filepath in files:
-            rel = str(filepath.relative_to(project_path))
-            if rel in indexed_files:
-                try:
-                    _, h = await loop.run_in_executor(
-                        None, _read_and_hash, filepath
-                    )
-                    if h:
-                        await loop.run_in_executor(
-                            None, store.update_file_hash, rel, h
-                        )
-                except Exception:
-                    pass
+    # update per-file hashes using captured hashes from initial read
+    for rel, h in file_hashes.items():
+        if rel in indexed_files:
+            try:
+                await loop.run_in_executor(
+                    None, store.update_file_hash, rel, h
+                )
+            except Exception:
+                pass
+
+    # restore hashes for skipped (unchanged) files that were cleared by upsert
+    for rel in indexed_files:
+        if rel not in file_hashes and rel in existing_hashes:
+            try:
+                await loop.run_in_executor(
+                    None, store.update_file_hash, rel, existing_hashes[rel]
+                )
+            except Exception:
+                pass
 
     # remove files deleted since last index
     if not force and existing_hashes:

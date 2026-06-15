@@ -22,7 +22,10 @@ class Embedder:
             return self.model
         if self.provider_api_type in ("openai",):
             return DEFAULT_OPENAI_MODEL
-        return DEFAULT_OPENAI_MODEL
+        raise EmbeddingError(
+            f"No embedding model configured for provider '{self.provider_api_type}'. "
+            "Set 'rag_embedding_model' in config.json or STUPIDEX_RAG_EMBEDDING_MODEL env var."
+        )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

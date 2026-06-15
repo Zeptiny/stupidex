@@ -239,6 +239,43 @@ async def test_index_captures_errors(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_index_handles_out_of_bounds_path(tmp_path):
+    """index_project should handle absolute paths outside project_path."""
+    import tempfile
+
+    outside = Path(tempfile.mkdtemp())
+    (outside / "ext.py").write_text("x = 1")
+    (tmp_path / "main.py").write_text("y = 2")
+
+    embedder = FakeEmbedder()
+    r = await index_project(
+        project_path=str(tmp_path),
+        paths=[str(outside / "ext.py")],
+        embedder=embedder,
+    )
+
+    assert r.files_indexed == 0
+
+
+@pytest.mark.asyncio
+async def test_index_removes_chunks_for_emptied_file(tmp_path):
+    """When a previously indexed file becomes empty, its chunks should be removed."""
+    (tmp_path / "app.py").write_text("def hello(): pass")
+
+    embedder = FakeEmbedder()
+    await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    store = RAGStore(str(tmp_path))
+    assert store.status().total_chunks >= 1
+
+    (tmp_path / "app.py").write_text("")
+
+    r = await index_project(project_path=str(tmp_path), embedder=embedder)
+    assert r.files_indexed == 0
+    assert store.status().total_chunks == 0
+
+
+@pytest.mark.asyncio
 async def test_index_progress_callback(tmp_path):
     (tmp_path / "a.py").write_text("x = 1")
     (tmp_path / "b.py").write_text("y = 2")

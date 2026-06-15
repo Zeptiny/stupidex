@@ -80,13 +80,13 @@ def test_chunker_overlap():
     chunks = chunk_file("test.py", code, chunk_size=100, chunk_overlap=20)
 
     if len(chunks) > 1:
-        # Check that content overlaps
         for i in range(len(chunks) - 1):
-            end_of_current = chunks[i].content[-50:]
-            start_of_next = chunks[i+1].content[:50]
-            # There should be some overlap in the actual content
-            assert len(end_of_current) > 0
-            assert len(start_of_next) > 0
+            overlap_region = chunks[i].content[-20:]
+            next_start = chunks[i + 1].content[:20]
+            assert overlap_region == next_start, (
+                f"Chunk {i} end does not match chunk {i + 1} start: "
+                f"{overlap_region!r} != {next_start!r}"
+            )
 
 
 def test_chunker_preserves_content():

@@ -124,6 +124,10 @@ def test_store_delete_by_file(tmp_path):
     assert status.total_chunks == 1
     assert status.total_files == 1
 
+    results = store.search([0.6, 0.6], top_k=10)
+    assert all(r.file_path == "b.py" for r in results)
+    assert len(results) == 1
+
 
 def test_store_get_file_hashes_empty(tmp_path):
     """get_file_hashes should return empty dict for new store."""

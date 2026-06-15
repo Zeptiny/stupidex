@@ -109,7 +109,7 @@ async def execute_command(app: App, cmd: str) -> None:
             from stupidex.rag.indexer import get_status
 
             status = get_status()
-            if status.total_chunks == 0:
+            if status.last_indexed is None and status.total_chunks == 0:
                 app.notify("No RAG index exists. Run /index to create one.", severity="information")
             else:
                 app.notify(
