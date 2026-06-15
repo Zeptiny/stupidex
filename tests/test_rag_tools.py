@@ -39,14 +39,15 @@ class FakeEmbedder(Embedder):
 async def test_rag_search_empty_query():
     result = await execute_rag_search(query="")
     assert isinstance(result, ExecutorResult)
-    assert "Error" in result.content
+    assert "<rag_error" in result.content
+    assert "query" in result.content
 
 
 @pytest.mark.asyncio
 async def test_rag_search_whitespace_query():
     result = await execute_rag_search(query="   ")
     assert isinstance(result, ExecutorResult)
-    assert "Error" in result.content
+    assert "<rag_error" in result.content
 
 
 @pytest.mark.asyncio
@@ -79,8 +80,9 @@ async def test_rag_search_with_results(tmp_path, monkeypatch):
         result = await execute_rag_search(query="authentication")
 
     assert isinstance(result, ExecutorResult)
-    assert "Result 1" in result.content
+    assert "<rag_results" in result.content
     assert "auth.py" in result.content
+    assert "result" in result.content
 
 
 @pytest.mark.asyncio
@@ -124,7 +126,7 @@ async def test_rag_search_embedding_error(monkeypatch, tmp_path):
         result = await execute_rag_search(query="test")
 
     assert isinstance(result, ExecutorResult)
-    assert "Error" in result.content
+    assert "<rag_error" in result.content
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +138,7 @@ async def test_rag_search_embedding_error(monkeypatch, tmp_path):
 async def test_rag_index_invalid_action():
     result = await execute_rag_index(action="invalid")
     assert isinstance(result, ExecutorResult)
-    assert "Error" in result.content
+    assert "<rag_error" in result.content
 
 
 @pytest.mark.asyncio
@@ -144,7 +146,8 @@ async def test_rag_index_status_no_index(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = await execute_rag_index(action="status")
     assert isinstance(result, ExecutorResult)
-    assert "No RAG index" in result.content
+    assert "<rag_status" in result.content
+    assert 'chunks="0"' in result.content
 
 
 @pytest.mark.asyncio
@@ -160,7 +163,8 @@ async def test_rag_index_status_with_data(tmp_path, monkeypatch):
 
     result = await execute_rag_index(action="status")
     assert isinstance(result, ExecutorResult)
-    assert "1" in result.content  # 1 file
+    assert "<rag_status" in result.content
+    assert 'files="1"' in result.content
     assert "test-model" in result.content
 
 
@@ -176,7 +180,8 @@ async def test_rag_index_clear(tmp_path, monkeypatch):
 
     result = await execute_rag_index(action="clear")
     assert isinstance(result, ExecutorResult)
-    assert "cleared" in result.content.lower()
+    assert "<rag_clear" in result.content
+    assert 'success="true"' in result.content
 
     assert store.status().total_chunks == 0
 
@@ -194,7 +199,8 @@ async def test_rag_index_run(tmp_path, monkeypatch):
 
     assert isinstance(result, ExecutorResult)
     assert "Indexed" in result.display
-    assert "1" in result.content  # 1 file indexed
+    assert "<rag_index" in result.content
+    assert 'indexed="1"' in result.content
 
 
 @pytest.mark.asyncio
@@ -209,9 +215,12 @@ async def test_rag_index_run_empty_project(tmp_path, monkeypatch):
 
     assert isinstance(result, ExecutorResult)
     assert "0 files" in result.display
+    assert "<rag_index" in result.content
+    assert 'indexed="0"' in result.content
 
     status_result = await execute_rag_index(action="status")
-    assert "No RAG index" not in status_result.display
+    assert "<rag_status" in status_result.content
+    assert 'indexed="never"' not in status_result.content
 
 
 # ---------------------------------------------------------------------------
