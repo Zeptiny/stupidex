@@ -19,8 +19,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     file_path TEXT NOT NULL,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    language TEXT NOT NULL
+    content TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS files (
@@ -111,12 +110,12 @@ class RAGStore:
 
             if chunks:
                 chunk_data = [
-                    (c.file_path, c.start_line, c.end_line, c.content, c.language)
+                    (c.file_path, c.start_line, c.end_line, c.content)
                     for c in chunks
                 ]
                 conn.executemany(
-                    "INSERT INTO chunks (file_path, start_line, end_line, content, language) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO chunks (file_path, start_line, end_line, content) "
+                    "VALUES (?, ?, ?, ?)",
                     chunk_data,
                 )
 
@@ -190,7 +189,7 @@ class RAGStore:
         conn = self._get_conn()
         try:
             cursor = conn.execute(
-                "SELECT chunk_id, file_path, start_line, end_line, content, language "
+                "SELECT chunk_id, file_path, start_line, end_line, content "
                 "FROM chunks ORDER BY chunk_id"
             )
             return [
@@ -200,7 +199,6 @@ class RAGStore:
                     "start_line": row[2],
                     "end_line": row[3],
                     "content": row[4],
-                    "language": row[5],
                 }
                 for row in cursor.fetchall()
             ]

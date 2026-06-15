@@ -10,7 +10,6 @@ def test_chunker_single_line():
     assert chunks[0].content == "x = 1\n"
     assert chunks[0].start_line == 1
     assert chunks[0].end_line == 1
-    assert chunks[0].language == "python"
 
 
 def test_chunker_empty_file():
@@ -29,27 +28,6 @@ def test_chunker_binary_file():
     """Binary file (with null bytes) produces no chunks."""
     chunks = chunk_file("test.py", "def foo():\n\x00\x01\x02")
     assert chunks == []
-
-
-def test_chunker_python_file():
-    """Python file is detected correctly."""
-    chunks = chunk_file("app.py", "x = 1\ny = 2\n")
-    assert len(chunks) == 1
-    assert chunks[0].language == "python"
-
-
-def test_chunker_typescript_file():
-    """TypeScript file is detected correctly."""
-    chunks = chunk_file("app.ts", "const x: number = 1;\n")
-    assert len(chunks) == 1
-    assert chunks[0].language == "typescript"
-
-
-def test_chunker_unknown_extension():
-    """Unknown extension uses extension as language."""
-    chunks = chunk_file("data.xyz", "some content\n")
-    assert len(chunks) == 1
-    assert chunks[0].language == "xyz"
 
 
 def test_chunker_large_file_splits():
@@ -110,7 +88,6 @@ def another_function():
 """
     chunks = chunk_file("test.py", code.strip())
     assert len(chunks) >= 1
-    assert all(c.language == "python" for c in chunks)
 
 
 def test_chunker_markdown_file():
@@ -118,7 +95,6 @@ def test_chunker_markdown_file():
     content = "# Title\n\nSome text\n\n## Section\n\nMore text\n"
     chunks = chunk_file("doc.md", content)
     assert len(chunks) == 1
-    assert chunks[0].language == "markdown"
 
 
 def test_chunker_json_file():
@@ -126,7 +102,6 @@ def test_chunker_json_file():
     content = '{"key": "value", "nested": {"a": 1}}\n'
     chunks = chunk_file("config.json", content)
     assert len(chunks) == 1
-    assert chunks[0].language == "json"
 
 
 def test_chunker_very_large_chunks():

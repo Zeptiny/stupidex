@@ -36,13 +36,13 @@ def test_store_upsert_replaces_existing(tmp_path):
     store = RAGStore(str(tmp_path))
     store.init_db()
 
-    chunks1 = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python")]
+    chunks1 = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
     store.upsert(chunks1, [[0.5, 0.5]])
     assert store.status().total_chunks == 1
 
     chunks2 = [
-        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python"),
-        Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1, language="python"),
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1),
     ]
     store.upsert(chunks2, [[0.5, 0.5], [0.6, 0.6]])
     assert store.status().total_chunks == 2
@@ -53,7 +53,7 @@ def test_store_upsert_mismatch_raises(tmp_path):
     store = RAGStore(str(tmp_path))
     store.init_db()
 
-    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python")]
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
     with pytest.raises(ValueError, match="mismatch"):
         store.upsert(chunks, [[0.5, 0.5], [0.6, 0.6]])
 
@@ -64,9 +64,9 @@ def test_store_search_with_filter(tmp_path):
     store.init_db()
 
     chunks = [
-        Chunk(file_path="src/a.py", content="x=1", start_line=1, end_line=1, language="python"),
-        Chunk(file_path="tests/b.py", content="y=2", start_line=1, end_line=1, language="python"),
-        Chunk(file_path="src/c.ts", content="z=3", start_line=1, end_line=1, language="typescript"),
+        Chunk(file_path="src/a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="tests/b.py", content="y=2", start_line=1, end_line=1),
+        Chunk(file_path="src/c.ts", content="z=3", start_line=1, end_line=1),
     ]
     embeddings = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
     store.upsert(chunks, embeddings)
@@ -91,9 +91,9 @@ def test_store_status_after_upsert(tmp_path):
     store.init_db()
 
     chunks = [
-        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python"),
-        Chunk(file_path="a.py", content="x=2", start_line=2, end_line=2, language="python"),
-        Chunk(file_path="b.py", content="y=1", start_line=1, end_line=1, language="python"),
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="a.py", content="x=2", start_line=2, end_line=2),
+        Chunk(file_path="b.py", content="y=1", start_line=1, end_line=1),
     ]
     store.upsert(chunks, [[0.5, 0.5], [0.5, 0.5], [0.6, 0.6]])
 
@@ -109,9 +109,9 @@ def test_store_delete_by_file(tmp_path):
     store.init_db()
 
     chunks = [
-        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python"),
-        Chunk(file_path="a.py", content="x=2", start_line=2, end_line=2, language="python"),
-        Chunk(file_path="b.py", content="y=1", start_line=1, end_line=1, language="python"),
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="a.py", content="x=2", start_line=2, end_line=2),
+        Chunk(file_path="b.py", content="y=1", start_line=1, end_line=1),
     ]
     store.upsert(chunks, [[0.5, 0.5], [0.5, 0.5], [0.6, 0.6]])
 
@@ -153,7 +153,7 @@ def test_store_clear_removes_everything(tmp_path):
     store = RAGStore(str(tmp_path))
     store.init_db()
 
-    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python")]
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
     store.upsert(chunks, [[0.5, 0.5]])
 
     store.clear()

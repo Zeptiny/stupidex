@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from pathlib import Path
 
 
 @dataclass
@@ -8,38 +7,6 @@ class Chunk:
     content: str
     start_line: int
     end_line: int
-    language: str
-
-
-def _detect_language(file_path: str) -> str:
-    ext = Path(file_path).suffix.lower()
-    return {
-        ".py": "python",
-        ".js": "javascript",
-        ".ts": "typescript",
-        ".tsx": "tsx",
-        ".jsx": "jsx",
-        ".rs": "rust",
-        ".go": "go",
-        ".java": "java",
-        ".c": "c",
-        ".cpp": "cpp",
-        ".h": "c",
-        ".hpp": "cpp",
-        ".md": "markdown",
-        ".json": "json",
-        ".yaml": "yaml",
-        ".yml": "yaml",
-        ".toml": "toml",
-        ".css": "css",
-        ".html": "html",
-        ".sh": "shell",
-        ".sql": "sql",
-        ".rb": "ruby",
-        ".php": "php",
-        ".swift": "swift",
-        ".kt": "kotlin",
-    }.get(ext, ext.lstrip(".") or "unknown")
 
 
 def _is_binary(content: str) -> bool:
@@ -77,7 +44,6 @@ def chunk_file(
     if _is_binary(content) or not content.strip():
         return []
 
-    language = _detect_language(file_path)
     lines = content.splitlines(keepends=True)
     total_chars = len(content)
 
@@ -88,7 +54,6 @@ def chunk_file(
                 content=content,
                 start_line=1,
                 end_line=len(lines),
-                language=language,
             )
         ]
 
@@ -126,7 +91,6 @@ def chunk_file(
                 content=chunk_text,
                 start_line=start_line,
                 end_line=end_line,
-                language=language,
             )
         )
 

@@ -46,7 +46,7 @@ def test_corrupted_vectors_npy_auto_rebuild(tmp_path):
     """Corrupted vectors.npy should be cleared and search returns empty."""
     store = RAGStore(str(tmp_path))
     store.init_db()
-    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python")]
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
     store.upsert(chunks, [[0.5, 0.5]])
 
     # Corrupt the vectors file

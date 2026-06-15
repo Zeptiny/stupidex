@@ -11,7 +11,6 @@ def test_chunker_produces_multiple_chunks():
     assert len(chunks) > 1
     assert len(chunks) <= 5
     for c in chunks:
-        assert c.language == "python"
         assert c.start_line >= 1
         assert c.end_line >= c.start_line
 

@@ -66,8 +66,8 @@ async def test_rag_search_with_results(tmp_path, monkeypatch):
     store.init_db()
 
     chunks = [
-        Chunk(file_path="auth.py", content="def login(): pass", start_line=1, end_line=2, language="python"),
-        Chunk(file_path="db.py", content="def connect(): pass", start_line=1, end_line=2, language="python"),
+        Chunk(file_path="auth.py", content="def login(): pass", start_line=1, end_line=2),
+        Chunk(file_path="db.py", content="def connect(): pass", start_line=1, end_line=2),
     ]
     embeddings = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
     store.upsert(chunks, embeddings)
@@ -93,8 +93,8 @@ async def test_rag_search_with_file_pattern(tmp_path, monkeypatch):
     store.init_db()
 
     chunks = [
-        Chunk(file_path="auth.py", content="login", start_line=1, end_line=1, language="python"),
-        Chunk(file_path="main.ts", content="auth", start_line=1, end_line=1, language="typescript"),
+        Chunk(file_path="auth.py", content="login", start_line=1, end_line=1),
+        Chunk(file_path="main.ts", content="auth", start_line=1, end_line=1),
     ]
     embeddings = [[1.0, 0.0], [0.0, 1.0]]
     store.upsert(chunks, embeddings)
@@ -115,7 +115,7 @@ async def test_rag_search_embedding_error(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     store = RAGStore(str(tmp_path))
     store.init_db()
-    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python")]
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
     store.upsert(chunks, [[0.5, 0.5]])
 
     with patch("stupidex.tools.rag.Embedder") as mock_embedder:
@@ -157,7 +157,7 @@ async def test_rag_index_status_with_data(tmp_path, monkeypatch):
     (tmp_path / "hello.py").write_text("print('hi')")
     store = RAGStore(str(tmp_path))
     store.init_db()
-    chunks = [Chunk(file_path="hello.py", content="print('hi')", start_line=1, end_line=1, language="python")]
+    chunks = [Chunk(file_path="hello.py", content="print('hi')", start_line=1, end_line=1)]
     store.upsert(chunks, [[0.5, 0.5]])
 
     result = await execute_rag_index(action="status")
@@ -172,7 +172,7 @@ async def test_rag_index_clear(tmp_path, monkeypatch):
 
     store = RAGStore(str(tmp_path))
     store.init_db()
-    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1, language="python")]
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
     store.upsert(chunks, [[0.5]])
     assert store.status().total_chunks == 1
 
