@@ -7,7 +7,7 @@ from stupidex.config import HOME_CONFIG_DIR, get_config
 log = logging.getLogger(__name__)
 
 HOME_PERSONALITIES_DIR = HOME_CONFIG_DIR / "personalities"
-DEFAULT_PERSONALITIES_DIR = Path(__file__).parent.parent / "agents" / "defaults" / "personalities"
+DEFAULT_PERSONALITIES_DIR = Path(__file__).parent / "defaults"
 
 
 class PersonalityRegistry:
