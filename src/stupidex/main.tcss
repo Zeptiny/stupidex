@@ -30,11 +30,6 @@ TabbedContent Tabs {
     display: none;
 }
 
-TextArea#input {
-    height: 5;
-    min-height: 3;
-}
-
 #footer {
     dock: bottom;
     height: 1;

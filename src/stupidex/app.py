@@ -92,8 +92,10 @@ class Stupidex(App):
         set_todo_refresh_callback(self.refresh_todos)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
-        self.query_one("#input", TextArea).display = True
-        self.query_one("#input", TextArea).focus()
+        text_area = self.query_one("#input", TextArea)
+        text_area.display = True
+        self._update_input_height(text_area)
+        text_area.focus()
         try:
             sidebar = self.query_one("#sidebar", Sidebar)
             sidebar.set_active("main")
@@ -191,9 +193,17 @@ class Stupidex(App):
         self.streaming_started()
         self._active_worker = self.run_worker(self._stream_response(), exit_on_error=False)
 
+    _INPUT_MAX_CONTENT_ROWS = 3
+
+    def _update_input_height(self, text_area: TextArea) -> None:
+        line_count = text_area.document.line_count
+        content_rows = max(1, min(line_count, self._INPUT_MAX_CONTENT_ROWS))
+        text_area.set_styles(height=content_rows + 2)
+
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "input":
             return
+        self._update_input_height(event.text_area)
         text = event.text_area.text.strip()
         try:
             picker = self.query_one("#command-picker", CommandPicker)
