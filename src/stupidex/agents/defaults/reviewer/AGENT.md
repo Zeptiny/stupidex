@@ -2,7 +2,7 @@
 name: reviewer
 type: subagent
 tier: papaca
-description: Reviews code for bugs, style issues, and improvements. Use when you need a second opinion or code audit without making changes.
+description: Reviews code for bugs, style issues, and improvements. Use when you need a second opinion or code audit without making changes. - **Fast-path reviewer.** This agent provides a quick single-pass review for small or simple changes. For complex or sensitive changes (auth, payments, large diffs, cross-cutting concerns), the caller should invoke the `code-review` skill instead — to spawn parallel specialized reviewers (correctness, security, performance, maintainability, testing, adversarial, etc.) and merges findings into a structured report.
 allowed_tools:
   - read
   - read_directory
