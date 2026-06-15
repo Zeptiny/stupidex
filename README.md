@@ -146,7 +146,8 @@ Available tools for agents:
 | `interrupt_subagents` | Cancel running subagents |
 | `skill` | Load a skill |
 | `list_skills` | List available skills |
-| `rag` | RAG index, search, and status |
+| `rag_search` | Semantic code search |
+| `rag_index` | Index status, reindex, clear |
 
 ## RAG (Retrieval-Augmented Generation)
 
@@ -244,7 +245,7 @@ Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_PROVIDER`, `STUPIDEX_RAG
 
 ### Architecture
 
-```
+```text
 /index command
     → Indexer scans project files
     → Chunker splits by language-aware rules
@@ -393,6 +394,8 @@ Project-level config: `.stupidex.json` (overrides home config).
 - Message queue for the user
 - Limit available skills per subagent
 - Rag indexing hangs the app until completion
+  - Harcoded openai handling in rag
+    - Will be changed when multiple providers is added
 
 # Considerations
 - Make the read tool usable with directories?

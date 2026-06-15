@@ -241,6 +241,7 @@ def test_resolve_model_explicit_overrides_default():
 @pytest.mark.asyncio
 async def test_fastembed_missing_package_raises():
     e = Embedder(embedding_provider="fastembed", model="BAAI/bge-small-en-v1.5")
+    Embedder._fastembed_cache.clear()
     with (
         patch.dict("sys.modules", {"fastembed": None}),
         pytest.raises(EmbeddingError, match="fastembed is required"),

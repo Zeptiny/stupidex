@@ -191,9 +191,12 @@ async def index_project(
 
     # remove files deleted since last index
     if not force and existing_hashes:
-        current_rels = {
-            str(f.relative_to(project_path)) for f in files
-        }
+        current_rels: set[str] = set()
+        for f in files:
+            try:
+                current_rels.add(str(f.relative_to(project_path)))
+            except ValueError:
+                pass
         for stored_path in existing_hashes:
             if stored_path not in current_rels:
                 await loop.run_in_executor(

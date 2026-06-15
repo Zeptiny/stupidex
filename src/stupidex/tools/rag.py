@@ -100,9 +100,15 @@ async def execute_rag_search(
         )
 
     loop = asyncio.get_running_loop()
-    results = await loop.run_in_executor(
-        None, store.search, query_embedding, top_k, file_pattern
-    )
+    try:
+        results = await loop.run_in_executor(
+            None, store.search, query_embedding, top_k, file_pattern
+        )
+    except ValueError as e:
+        return ExecutorResult(
+            display="Search error",
+            content=f'<rag_error query="{escape(query)}">{escape(str(e))}</rag_error>',
+        )
 
     if not results:
         return ExecutorResult(

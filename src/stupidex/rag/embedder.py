@@ -35,7 +35,7 @@ class Embedder:
         if self.model:
             return self.model
         provider = self._resolve_provider()
-        if provider in ("openai",):
+        if provider == "openai":
             return DEFAULT_OPENAI_MODEL
         if provider == "fastembed":
             return DEFAULT_FASTEMBED_MODEL
@@ -73,7 +73,9 @@ class Embedder:
             ) from err
 
         if model not in self._fastembed_cache:
-            self._fastembed_cache[model] = TextEmbedding(model_name=model)
+            self._fastembed_cache[model] = await asyncio.to_thread(
+                TextEmbedding, model_name=model
+            )
         embedder = self._fastembed_cache[model]
 
         def _run() -> list[list[float]]:
