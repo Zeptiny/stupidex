@@ -134,6 +134,26 @@ Collapsible.tool-result-collapse > CollapsibleTitle {
     background: $accent-darken-1;
 }
 
+OptionPicker {
+    align: center middle;
+}
+
+#picker-container {
+    width: 60;
+    max-height: 80%;
+    background: $surface;
+    border: tall $primary;
+    padding: 1;
+}
+
+#picker-search {
+    margin-bottom: 1;
+}
+
+#picker-list {
+    height: 1fr;
+}
+
 .temp-tool-message {
     padding: 0 1;
     color: $text-muted;
