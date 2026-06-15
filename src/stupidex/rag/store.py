@@ -316,7 +316,7 @@ class RAGStore:
             conn.close()
 
         if vectors is not None and old_ids and len(vectors) == len(old_ids):
-            id_to_vec = dict(zip(old_ids, vectors))
+            id_to_vec = dict(zip(old_ids, vectors, strict=False))
             new_ids = self._get_ordered_chunk_ids()
             aligned = [id_to_vec[cid] for cid in new_ids if cid in id_to_vec]
             if aligned:
