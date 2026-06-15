@@ -117,6 +117,10 @@ Collapsible.tool-result-collapse > CollapsibleTitle {
     width: 1fr;
 }
 
+#input {
+    width: 1fr;
+}
+
 #command-picker {
     height: auto;
     max-height: 10;

@@ -4,7 +4,8 @@ from enum import Enum
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
-from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
+from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane
+from textual.widgets._text_area import TextArea
 
 from stupidex.agents import get_agent_registry
 from stupidex.commands.session_commands import SessionCommands, execute_command
@@ -31,6 +32,15 @@ class InterruptState(Enum):
     IDLE = "idle"
     CONFIRM_AGENT = "confirm_agent"
     CONFIRM_SUBAGENTS = "confirm_subagents"
+
+
+class InputTextArea(TextArea):
+    _app_ref: "Stupidex | None" = None
+
+    def _on_resize(self) -> None:
+        super()._on_resize()
+        if self._app_ref is not None:
+            self._app_ref._update_input_height(self)
 
 
 class Stupidex(App):
@@ -79,7 +89,7 @@ class Stupidex(App):
         with TabbedContent(id="tabs", initial="main"), TabPane("Main", id="main"):
             yield ScrollableContainer(id="output")
         yield CommandPicker(SessionCommands.COMMANDS)
-        yield TextArea(id="input")
+        yield InputTextArea(id="input")
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
             yield Static("N/A Model", id="model")
@@ -92,7 +102,8 @@ class Stupidex(App):
         set_todo_refresh_callback(self.refresh_todos)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
-        text_area = self.query_one("#input", TextArea)
+        text_area = self.query_one("#input", InputTextArea)
+        text_area._app_ref = self
         text_area.display = True
         self._update_input_height(text_area)
         text_area.focus()
@@ -196,7 +207,7 @@ class Stupidex(App):
     _INPUT_MAX_CONTENT_ROWS = 3
 
     def _update_input_height(self, text_area: TextArea) -> None:
-        line_count = text_area.document.line_count
+        line_count = text_area.wrapped_document.height if text_area.soft_wrap else text_area.document.line_count
         content_rows = max(1, min(line_count, self._INPUT_MAX_CONTENT_ROWS))
         text_area.set_styles(height=content_rows + 2)
 
