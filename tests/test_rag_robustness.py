@@ -253,6 +253,7 @@ async def test_fastembed_routing_called():
     import numpy as np
 
     e = Embedder(embedding_provider="fastembed", model="BAAI/bge-small-en-v1.5")
+    Embedder._fastembed_cache.clear()
     mock_vectors = [np.array([0.1, 0.2, 0.3])]
 
     class FakeEmbed:

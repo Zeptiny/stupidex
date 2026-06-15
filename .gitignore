@@ -1,4 +1,4 @@
 __pycache__/
 .venv/
 *.egg-info/
-.stupidex/rag/index.db
+.stupidex/rag/

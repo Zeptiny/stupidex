@@ -392,6 +392,7 @@ Project-level config: `.stupidex.json` (overrides home config).
 - Bug: "Offset 1 out of range"- Possibly when reading files without content
 - Message queue for the user
 - Limit available skills per subagent
+- Rag indexing hangs the app until completion
 
 # Considerations
 - Make the read tool usable with directories?

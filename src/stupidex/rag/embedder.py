@@ -14,6 +14,8 @@ class EmbeddingError(Exception):
 
 
 class Embedder:
+    _fastembed_cache: dict[str, object] = {}
+
     def __init__(
         self,
         model: str | None = None,
@@ -70,8 +72,11 @@ class Embedder:
                 "Install it with: pip install fastembed"
             ) from err
 
+        if model not in self._fastembed_cache:
+            self._fastembed_cache[model] = TextEmbedding(model_name=model)
+        embedder = self._fastembed_cache[model]
+
         def _run() -> list[list[float]]:
-            embedder = TextEmbedding(model_name=model)
             return [v.tolist() for v in embedder.embed(texts)]
 
         return await asyncio.to_thread(_run)
