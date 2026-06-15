@@ -62,7 +62,7 @@ UserMessageWidget {
 
 AssistantMessageWidget {
     margin: 0 1;
-    padding: 0 1 1 1;
+    padding: 1;
 }
 
 /* Collapse widgets: override Textual defaults to match Rich.Panel style */
