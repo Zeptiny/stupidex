@@ -107,13 +107,21 @@ def _validate_config(cfg: Config) -> Config:
         if not val or not isinstance(val, str):
             values[field_name] = asdict(defaults)[field_name]
 
-    if values["rag_chunk_size"] <= 0:
+    if not isinstance(values["rag_chunk_size"], int):
         values["rag_chunk_size"] = defaults.rag_chunk_size
-    if values["rag_chunk_overlap"] < 0 or values["rag_chunk_overlap"] >= values["rag_chunk_size"]:
+    elif values["rag_chunk_size"] <= 0:
+        values["rag_chunk_size"] = defaults.rag_chunk_size
+    if not isinstance(values["rag_chunk_overlap"], int):
+        values["rag_chunk_overlap"] = defaults.rag_chunk_overlap
+    elif values["rag_chunk_overlap"] < 0 or values["rag_chunk_overlap"] >= values["rag_chunk_size"]:
         values["rag_chunk_overlap"] = min(defaults.rag_chunk_overlap, values["rag_chunk_size"] - 1)
-    if values["rag_top_k"] <= 0:
+    if not isinstance(values["rag_top_k"], int):
         values["rag_top_k"] = defaults.rag_top_k
-    if values["rag_max_file_size"] <= 0:
+    elif values["rag_top_k"] <= 0:
+        values["rag_top_k"] = defaults.rag_top_k
+    if not isinstance(values["rag_max_file_size"], int):
+        values["rag_max_file_size"] = defaults.rag_max_file_size
+    elif values["rag_max_file_size"] <= 0:
         values["rag_max_file_size"] = defaults.rag_max_file_size
 
     return Config(**values)

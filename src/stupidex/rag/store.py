@@ -147,9 +147,8 @@ class RAGStore:
     def _save_vectors(self, embeddings: list[list[float]]) -> None:
         self._ensure_dir()
         if not embeddings:
-            p = self.rag_dir / "vectors.npy"
-            if p.exists():
-                p.unlink()
+            if self.vectors_file.exists():
+                self.vectors_file.unlink()
             return
         arr = np.array(embeddings, dtype=np.float32)
         tmp_fd, tmp_path = tempfile.mkstemp(
@@ -281,9 +280,8 @@ class RAGStore:
     def clear(self) -> None:
         if self.db_path.exists():
             self.db_path.unlink()
-        p = self.rag_dir / "vectors.npy"
-        if p.exists():
-            p.unlink()
+        if self.vectors_file.exists():
+            self.vectors_file.unlink()
 
     def status(self) -> StoreStatus:
         if not self.db_path.exists():
@@ -336,7 +334,7 @@ class RAGStore:
             if aligned:
                 self._save_vectors(aligned)
             else:
-                p = self.rag_dir / "vectors.npy"
+                p = self.vectors_file
                 if p.exists():
                     p.unlink()
 
