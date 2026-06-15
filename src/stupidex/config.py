@@ -42,6 +42,7 @@ class Config:
     directory_tree_depth: int = 2
     theme: str = "default"
     personality: str = "default"
+    rag_embedding_provider: str = "fastembed"
     rag_embedding_model: str = ""
     rag_chunk_size: int = 2000
     rag_chunk_overlap: int = 200
@@ -60,6 +61,7 @@ _ENV_MAP = {
     "STUPIDEX_DIRECTORY_TREE_DEPTH": "directory_tree_depth",
     "STUPIDEX_THEME": "theme",
     "STUPIDEX_PERSONALITY": "personality",
+    "STUPIDEX_RAG_EMBEDDING_PROVIDER": "rag_embedding_provider",
     "STUPIDEX_RAG_EMBEDDING_MODEL": "rag_embedding_model",
     "STUPIDEX_RAG_CHUNK_SIZE": "rag_chunk_size",
     "STUPIDEX_RAG_CHUNK_OVERLAP": "rag_chunk_overlap",
@@ -107,22 +109,20 @@ def _validate_config(cfg: Config) -> Config:
         if not val or not isinstance(val, str):
             values[field_name] = asdict(defaults)[field_name]
 
-    if not isinstance(values["rag_chunk_size"], int):
-        values["rag_chunk_size"] = defaults.rag_chunk_size
-    elif values["rag_chunk_size"] <= 0:
+    if not isinstance(values["rag_chunk_size"], int) or values["rag_chunk_size"] <= 0:
         values["rag_chunk_size"] = defaults.rag_chunk_size
     if not isinstance(values["rag_chunk_overlap"], int):
         values["rag_chunk_overlap"] = defaults.rag_chunk_overlap
     elif values["rag_chunk_overlap"] < 0 or values["rag_chunk_overlap"] >= values["rag_chunk_size"]:
         values["rag_chunk_overlap"] = min(defaults.rag_chunk_overlap, values["rag_chunk_size"] - 1)
-    if not isinstance(values["rag_top_k"], int):
+    if not isinstance(values["rag_top_k"], int) or values["rag_top_k"] <= 0:
         values["rag_top_k"] = defaults.rag_top_k
-    elif values["rag_top_k"] <= 0:
-        values["rag_top_k"] = defaults.rag_top_k
-    if not isinstance(values["rag_max_file_size"], int):
+    if not isinstance(values["rag_max_file_size"], int) or values["rag_max_file_size"] <= 0:
         values["rag_max_file_size"] = defaults.rag_max_file_size
-    elif values["rag_max_file_size"] <= 0:
-        values["rag_max_file_size"] = defaults.rag_max_file_size
+
+    valid_providers = {"", "openai", "fastembed"}
+    if values["rag_embedding_provider"] not in valid_providers:
+        values["rag_embedding_provider"] = ""
 
     return Config(**values)
 

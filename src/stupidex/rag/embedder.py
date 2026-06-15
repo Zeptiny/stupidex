@@ -4,6 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
+DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
 BATCH_SIZE = 100
 MAX_RETRIES = 3
 
@@ -13,17 +14,31 @@ class EmbeddingError(Exception):
 
 
 class Embedder:
-    def __init__(self, model: str | None = None, provider_api_type: str = "openai"):
+    def __init__(
+        self,
+        model: str | None = None,
+        provider_api_type: str = "openai",
+        embedding_provider: str = "",
+    ):
         self.model = model or ""
         self.provider_api_type = provider_api_type
+        self.embedding_provider = embedding_provider
+
+    def _resolve_provider(self) -> str:
+        if self.embedding_provider:
+            return self.embedding_provider
+        return self.provider_api_type
 
     def _resolve_model(self) -> str:
         if self.model:
             return self.model
-        if self.provider_api_type in ("openai",):
+        provider = self._resolve_provider()
+        if provider in ("openai",):
             return DEFAULT_OPENAI_MODEL
+        if provider == "fastembed":
+            return DEFAULT_FASTEMBED_MODEL
         raise EmbeddingError(
-            f"No embedding model configured for provider '{self.provider_api_type}'. "
+            f"No embedding model configured for provider '{provider}'. "
             "Set 'rag_embedding_model' in config.json or STUPIDEX_RAG_EMBEDDING_MODEL env var."
         )
 
@@ -32,17 +47,36 @@ class Embedder:
             return []
 
         model = self._resolve_model()
-        logger.debug("Embedding %d texts with model %s", len(texts), model)
+        provider = self._resolve_provider()
+        logger.debug("Embedding %d texts with %s/%s", len(texts), provider, model)
         all_embeddings: list[list[float]] = []
 
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i : i + BATCH_SIZE]
-            batch_embeddings = await self._embed_batch(model, batch)
+            if provider == "fastembed":
+                batch_embeddings = await self._embed_fastembed(model, batch)
+            else:
+                batch_embeddings = await self._embed_litellm(model, batch)
             all_embeddings.extend(batch_embeddings)
 
         return all_embeddings
 
-    async def _embed_batch(self, model: str, texts: list[str]) -> list[list[float]]:
+    async def _embed_fastembed(self, model: str, texts: list[str]) -> list[list[float]]:
+        try:
+            from fastembed import TextEmbedding
+        except ImportError as err:
+            raise EmbeddingError(
+                "fastembed is required for local embeddings. "
+                "Install it with: pip install fastembed"
+            ) from err
+
+        def _run() -> list[list[float]]:
+            embedder = TextEmbedding(model_name=model)
+            return [v.tolist() for v in embedder.embed(texts)]
+
+        return await asyncio.to_thread(_run)
+
+    async def _embed_litellm(self, model: str, texts: list[str]) -> list[list[float]]:
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES):

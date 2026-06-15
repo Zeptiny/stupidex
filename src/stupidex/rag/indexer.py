@@ -85,6 +85,7 @@ async def index_project(
             embedder = Embedder(
                 model=cfg.rag_embedding_model or None,
                 provider_api_type=cfg.provider_api_type,
+                embedding_provider=cfg.rag_embedding_provider,
             )
         store.save_embedding_model(embedder._resolve_model())
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
@@ -97,6 +98,7 @@ async def index_project(
         embedder = Embedder(
             model=cfg.rag_embedding_model or None,
             provider_api_type=cfg.provider_api_type,
+            embedding_provider=cfg.rag_embedding_provider,
         )
 
     existing_hashes: dict[str, str] = {}

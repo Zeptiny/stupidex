@@ -146,6 +146,116 @@ Available tools for agents:
 | `interrupt_subagents` | Cancel running subagents |
 | `skill` | Load a skill |
 | `list_skills` | List available skills |
+| `rag` | RAG index, search, and status |
+
+## RAG (Retrieval-Augmented Generation)
+
+The project includes a built-in RAG pipeline for code-aware semantic search. It indexes your project, chunks files by language-aware rules, embeds them, and stores vectors locally using numpy + SQLite.
+
+### Quick Start
+
+```bash
+# Index the current project
+# In the command palette (Ctrl+P): /index
+
+# Search indexed code
+# In the command palette (Ctrl+P): /rag <your query>
+```
+
+### Embedding Providers
+
+Two embedding backends are supported:
+
+| Provider | How it works | Requires |
+|----------|-------------|----------|
+| `fastembed` (default) | Runs quantized models locally via ONNX Runtime | Included by default |
+| `openai` | Calls OpenAI-compatible API (local or remote) | `litellm`, API key |
+
+#### Using fastembed (default, local)
+
+fastembed is included by default — no extra install needed. The default model (`BAAI/bge-small-en-v1.5`, ~77 MB) is auto-downloaded on first use. No API key needed — fully offline.
+
+To use a different model, configure in `~/.stupidex/config.json`:
+
+```json
+{
+  "rag_embedding_model": "BAAI/bge-base-en-v1.5"
+}
+```
+
+Or via environment variables:
+
+```bash
+STUPIDEX_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" stupidex
+```
+
+**Available fastembed models:**
+
+| Model | Dims | Size | Best for |
+|-------|------|------|----------|
+| `BAAI/bge-small-en-v1.5` (default) | 384 | ~77 MB | Fast, good quality |
+| `BAAI/bge-base-en-v1.5` | 768 | ~430 MB | Better quality |
+| `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~80 MB | General purpose |
+| `nomic-ai/nomic-embed-text-v1.5-Q` | 768 | ~550 MB | Multilingual |
+
+#### Using OpenAI-compatible APIs
+
+Works with any OpenAI-compatible endpoint — OpenAI, Ollama, vLLM, etc.
+
+```bash
+OPENAI_API_KEY="your-key" stupidex
+```
+
+Or in `~/.stupidex/config.json`:
+
+```json
+{
+  "rag_embedding_provider": "openai",
+  "base_url": "http://localhost:11434/v1",
+  "rag_embedding_model": "nomic-embed-text"
+}
+```
+
+### RAG Configuration
+
+All RAG settings in `~/.stupidex/config.json`:
+
+```json
+{
+  "rag_embedding_provider": "fastembed",
+  "rag_embedding_model": "BAAI/bge-small-en-v1.5",
+  "rag_chunk_size": 2000,
+  "rag_chunk_overlap": 200,
+  "rag_top_k": 5,
+  "rag_max_file_size": 512000
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `rag_embedding_provider` | `"fastembed"` | `"fastembed"` (local) or `"openai"` (API) |
+| `rag_embedding_model` | `""` | Model name (provider-specific default if empty) |
+| `rag_chunk_size` | `2000` | Max characters per chunk |
+| `rag_chunk_overlap` | `200` | Overlap between consecutive chunks |
+| `rag_top_k` | `5` | Number of results to return |
+| `rag_max_file_size` | `512000` | Skip files larger than this (bytes) |
+
+Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_PROVIDER`, `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
+
+### Architecture
+
+```
+/index command
+    → Indexer scans project files
+    → Chunker splits by language-aware rules
+    → Embedder generates vectors (OpenAI API or fastembed local)
+    → Store persists to SQLite (index.db) + numpy (vectors.npy)
+
+/rag <query>
+    → Embedder vectorizes the query
+    → Store performs cosine similarity search
+    → Returns top-k chunks with file path, line range, and score
+```
 
 ## Linting
 
@@ -208,6 +318,12 @@ src/
       exec.py                  # execute_command
       subagent.py              # subagent management tools
       skill.py                 # skill and list_skills tools
+      rag.py                   # RAG index/search tool
+    rag/                       # RAG pipeline
+      chunker.py               # Language-aware file chunking
+      embedder.py              # Embedding provider abstraction
+      indexer.py               # Project indexing orchestrator
+      store.py                 # SQLite + numpy vector store
     widgets/
       message_widget.py        # Textual widgets for messages
       sidebar.py               # Right sidebar
@@ -226,7 +342,9 @@ src/
     "tainha": "mimo-v2.5",
     "papudo": "mimo-v2.5",
     "papaca": "mimo-v2.5"
-  }
+  },
+  "rag_embedding_provider": "fastembed",
+  "rag_embedding_model": "BAAI/bge-small-en-v1.5"
 }
 ```
 

@@ -1,10 +1,16 @@
 """Tests for RAG robustness improvements (U8)."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from stupidex.rag.chunker import Chunk
-from stupidex.rag.embedder import Embedder, EmbeddingError
+from stupidex.rag.embedder import (
+    DEFAULT_FASTEMBED_MODEL,
+    DEFAULT_OPENAI_MODEL,
+    Embedder,
+    EmbeddingError,
+)
 from stupidex.rag.indexer import index_project
 from stupidex.rag.store import RAGStore
 
@@ -101,8 +107,6 @@ def test_corrupted_index_db_get_conn_rebuild(tmp_path):
 @pytest.mark.asyncio
 async def test_embedder_failure_after_retries():
     """Embedder should fail gracefully after max retries."""
-    from unittest.mock import AsyncMock, patch
-
     embedder = Embedder(model="test-model")
 
     error = EmbeddingError("Simulated API failure")
@@ -116,7 +120,7 @@ async def test_embedder_failure_after_retries():
 @pytest.mark.asyncio
 async def test_embedder_success_with_retries():
     """Embedder should succeed if retry succeeds."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import MagicMock
 
     embedder = Embedder(model="test-model")
 
@@ -202,3 +206,64 @@ async def test_indexer_handles_missing_vectors(tmp_path):
     # Second index with force=True should still work
     result = await index_project(project_path=str(tmp_path), embedder=embedder, force=True)
     assert result.files_indexed == 1
+
+
+# ---------------------------------------------------------------------------
+# Embedding provider routing
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_provider_defaults_to_api_type():
+    e = Embedder(model="m", provider_api_type="openai")
+    assert e._resolve_provider() == "openai"
+
+
+def test_resolve_provider_embedding_provider_overrides():
+    e = Embedder(model="m", provider_api_type="openai", embedding_provider="fastembed")
+    assert e._resolve_provider() == "fastembed"
+
+
+def test_resolve_model_fastembed_default():
+    e = Embedder(provider_api_type="openai", embedding_provider="fastembed")
+    assert e._resolve_model() == DEFAULT_FASTEMBED_MODEL
+
+
+def test_resolve_model_openai_default():
+    e = Embedder(provider_api_type="openai")
+    assert e._resolve_model() == DEFAULT_OPENAI_MODEL
+
+
+def test_resolve_model_explicit_overrides_default():
+    e = Embedder(model="custom-model", embedding_provider="fastembed")
+    assert e._resolve_model() == "custom-model"
+
+
+@pytest.mark.asyncio
+async def test_fastembed_missing_package_raises():
+    e = Embedder(embedding_provider="fastembed", model="BAAI/bge-small-en-v1.5")
+    with (
+        patch.dict("sys.modules", {"fastembed": None}),
+        pytest.raises(EmbeddingError, match="fastembed is required"),
+    ):
+        await e.embed(["hello"])
+
+
+@pytest.mark.asyncio
+async def test_fastembed_routing_called():
+    import numpy as np
+
+    e = Embedder(embedding_provider="fastembed", model="BAAI/bge-small-en-v1.5")
+    mock_vectors = [np.array([0.1, 0.2, 0.3])]
+
+    class FakeEmbed:
+        def __init__(self, **kw):
+            pass
+
+        def embed(self, texts):
+            return mock_vectors
+
+    with patch.dict("sys.modules", {"fastembed": type("M", (), {"TextEmbedding": FakeEmbed})}):
+        result = await e.embed(["hello"])
+
+    assert len(result) == 1
+    assert result[0] == [0.1, 0.2, 0.3]

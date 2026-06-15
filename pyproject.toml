@@ -12,6 +12,7 @@ dependencies = [
     "httpx",
     "aiofiles",
     "numpy",
+    "fastembed",
 ]
 
 [project.scripts]
