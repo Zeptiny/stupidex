@@ -43,14 +43,12 @@ class SearchResult:
     start_line: int
     end_line: int
     score: float
-    language: str
 
 
 @dataclass
 class StoreStatus:
     total_chunks: int
     total_files: int
-    embedding_model: str
     last_indexed: str | None
 
 
@@ -261,7 +259,6 @@ class RAGStore:
                     start_line=chunk["start_line"],
                     end_line=chunk["end_line"],
                     score=float(score),
-                    language=chunk["language"],
                 )
             )
 
@@ -288,7 +285,6 @@ class RAGStore:
             return StoreStatus(
                 total_chunks=0,
                 total_files=0,
-                embedding_model="",
                 last_indexed=None,
             )
 
@@ -301,15 +297,9 @@ class RAGStore:
             ).fetchone()
             last_indexed = row[0] if row else None
 
-            model_row = conn.execute(
-                "SELECT value FROM meta WHERE key='embedding_model'"
-            ).fetchone()
-            embedding_model = model_row[0] if model_row else ""
-
             return StoreStatus(
                 total_chunks=chunk_count,
                 total_files=file_count,
-                embedding_model=embedding_model,
                 last_indexed=last_indexed,
             )
         finally:
@@ -366,17 +356,6 @@ class RAGStore:
                 "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) "
                 "VALUES (?, ?, COALESCE((SELECT chunk_count FROM files WHERE file_path = ?), 0))",
                 (file_path, file_hash, file_path),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    def save_embedding_model(self, model: str) -> None:
-        conn = self._get_conn()
-        try:
-            conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES ('embedding_model', ?)",
-                (model,),
             )
             conn.commit()
         finally:

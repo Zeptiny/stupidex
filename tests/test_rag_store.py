@@ -82,7 +82,6 @@ def test_store_status_empty(tmp_path):
     status = store.status()
     assert status.total_chunks == 0
     assert status.total_files == 0
-    assert status.embedding_model == ""
     assert status.last_indexed is None
 
 
@@ -97,12 +96,10 @@ def test_store_status_after_upsert(tmp_path):
         Chunk(file_path="b.py", content="y=1", start_line=1, end_line=1, language="python"),
     ]
     store.upsert(chunks, [[0.5, 0.5], [0.5, 0.5], [0.6, 0.6]])
-    store.save_embedding_model("test-model")
 
     status = store.status()
     assert status.total_chunks == 3
     assert status.total_files == 2
-    assert status.embedding_model == "test-model"
     assert status.last_indexed is not None
 
 
@@ -149,16 +146,6 @@ def test_store_update_file_hash(tmp_path):
     store.update_file_hash("src/main.py", "def456")
     hashes = store.get_file_hashes()
     assert hashes["src/main.py"] == "def456"
-
-
-def test_store_save_embedding_model(tmp_path):
-    """save_embedding_model should persist model name."""
-    store = RAGStore(str(tmp_path))
-    store.init_db()
-
-    store.save_embedding_model("text-embedding-3-small")
-    status = store.status()
-    assert status.embedding_model == "text-embedding-3-small"
 
 
 def test_store_clear_removes_everything(tmp_path):

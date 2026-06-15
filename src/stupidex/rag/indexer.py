@@ -42,7 +42,6 @@ class IndexStatus:
     total_files: int = 0
     total_chunks: int = 0
     last_indexed: str | None = None
-    embedding_model: str = ""
 
 
 async def index_project(
@@ -87,7 +86,6 @@ async def index_project(
                 provider_api_type=cfg.provider_api_type,
                 embedding_provider=cfg.rag_embedding_provider,
             )
-        store.save_embedding_model(embedder._resolve_model())
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
         return stats
 
@@ -203,8 +201,6 @@ async def index_project(
                 )
                 stats.files_deleted += 1
 
-    store.save_embedding_model(embedder._resolve_model())
-
     stats.duration_seconds = asyncio.get_event_loop().time() - t0
     logger.info(
         "Index complete: %d indexed, %d skipped, %d deleted, %d chunks in %.1fs",
@@ -227,7 +223,6 @@ def get_status(project_path: str | None = None) -> IndexStatus:
         total_files=s.total_files,
         total_chunks=s.total_chunks,
         last_indexed=s.last_indexed,
-        embedding_model=s.embedding_model,
     )
 
 

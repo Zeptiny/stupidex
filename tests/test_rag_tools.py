@@ -159,7 +159,6 @@ async def test_rag_index_status_with_data(tmp_path, monkeypatch):
     store.init_db()
     chunks = [Chunk(file_path="hello.py", content="print('hi')", start_line=1, end_line=1, language="python")]
     store.upsert(chunks, [[0.5, 0.5]])
-    store.save_embedding_model("test-model")
 
     result = await execute_rag_index(action="status")
     assert isinstance(result, ExecutorResult)

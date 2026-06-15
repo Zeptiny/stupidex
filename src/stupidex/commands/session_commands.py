@@ -114,7 +114,6 @@ async def execute_command(app: App, cmd: str) -> None:
             else:
                 app.notify(
                     f"RAG: {status.total_files} files, {status.total_chunks} chunks, "
-                    f"model: {status.embedding_model or 'auto'}, "
                     f"indexed: {status.last_indexed or 'never'}",
                     severity="information",
                 )
