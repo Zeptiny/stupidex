@@ -165,7 +165,6 @@ async def test_rag_index_status_with_data(tmp_path, monkeypatch):
     assert isinstance(result, ExecutorResult)
     assert "<rag_status" in result.content
     assert 'files="1"' in result.content
-    assert "test-model" in result.content
 
 
 @pytest.mark.asyncio

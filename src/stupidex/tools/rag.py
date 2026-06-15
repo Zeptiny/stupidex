@@ -115,7 +115,7 @@ async def execute_rag_search(
     for r in results:
         parts.append(
             f'<result file="{e(r.file_path)}" lines="{r.start_line}-{r.end_line}" '
-            f'language="{e(r.language)}" score="{r.score:.3f}">\n'
+            f'score="{r.score:.3f}">\n'
             f'{e(r.content)}\n'
             f'</result>'
         )
@@ -152,7 +152,7 @@ async def execute_rag_index(
         if status.last_indexed is None and status.total_chunks == 0:
             return ExecutorResult(
                 display="No RAG index",
-                content='<rag_status files="0" chunks="0" indexed="never" model="none" />',
+                content='<rag_status files="0" chunks="0" indexed="never" />',
             )
         return ExecutorResult(
             display="RAG index status",
@@ -160,7 +160,6 @@ async def execute_rag_index(
                 f'<rag_status '
                 f'files="{status.total_files}" '
                 f'chunks="{status.total_chunks}" '
-                f'model="{escape(status.embedding_model or "auto-detect")}" '
                 f'indexed="{escape(status.last_indexed or "never")}" />'
             ),
         )
