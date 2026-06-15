@@ -361,17 +361,6 @@ Project-level config: `.stupidex.json` (overrides home config).
 - Concurrency control for file locking
 - MCP
 - LSP
-- Todo management tool
-  - Should act more as a task tool
-    - Subagents can be assigned a task at their creation, receiving that information
-    - Task have states
-      - open, in progress, blocked, abandoned, done, needs_review, under_review
-    - Send system reminder if the agent tries to exit when not all tasks are done
-      - This can also be sent to normal subagents when trying to exit without message
-        - Should we even have normal subagents in this case?
-    - Reviewers are dispatched
-      - Spec reviewer + code quality reviewer
-    - THIS WILL REQUIRE A PLANNING MODE, POSSIBLY USING A DEDICATED TOOL FOR THAT
 - Provider selector
 - Approval / permission system
 - AGENTS.md handling
@@ -390,12 +379,10 @@ Project-level config: `.stupidex.json` (overrides home config).
 - Resolve supplied path in tool to avoid modifying/reading files out of the workspace
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
-- Bug: "Offset 1 out of range"- Possibly when reading files without content
 - Message queue for the user
 - Limit available skills per subagent
-- Rag indexing hangs the app until completion
-  - Harcoded openai handling in rag
-    - Will be changed when multiple providers is added
+- Compounding system
+  - TODO Improvements were deferred to compounding system
 
 # Considerations
 - Make the read tool usable with directories?

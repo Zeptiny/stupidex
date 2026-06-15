@@ -15,6 +15,7 @@ class MessageType(Enum):
     THINKING = "thinking"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    ERROR = "error"
 
 
 @dataclass

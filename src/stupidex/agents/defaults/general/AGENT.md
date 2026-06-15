@@ -19,6 +19,10 @@ available_tools:
   - list_skills
   - rag_search
   - rag_index
+  - todo_create
+  - todo_list
+  - todo_update
+  - todo_delete
 ---
 
 You are Stupidex, a terminal-based coding agent operating inside the user's terminal.

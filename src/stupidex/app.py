@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from enum import Enum
 
 from textual.app import App, ComposeResult
@@ -8,9 +9,10 @@ from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, Te
 from stupidex.agents import get_agent_registry
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
-from stupidex.domain.message import Message, MessageRole, StreamHistoryState, record_streamed_message
+from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
 from stupidex.domain.session import SessionManager
-from stupidex.llm.client import stream_response
+from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
+from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
 from stupidex.widgets.command_picker import CommandPicker
@@ -21,6 +23,8 @@ from stupidex.widgets.message_widget import (
 )
 from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, SidebarSubagentSelected
 from stupidex.widgets.subagent_ui import SubagentUIManager
+
+log = logging.getLogger(__name__)
 
 
 class InterruptState(Enum):
@@ -84,6 +88,8 @@ class Stupidex(App):
 
     async def on_mount(self) -> None:
         self.sessions.create()
+        set_todo_store(self.sessions.active.todo_store)
+        set_todo_refresh_callback(self.refresh_todos)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
         self.query_one("#input", TextArea).display = True
@@ -94,6 +100,7 @@ class Stupidex(App):
         except Exception:
             pass
         await self.rerender_footer()
+        await self.refresh_todos()
 
     def _is_streaming(self) -> bool:
         return self._active_worker is not None and not self._active_worker.is_finished
@@ -278,6 +285,33 @@ class Stupidex(App):
             except Exception:
                 pass
             raise
+        except Exception as exc:
+            log.exception("Stream response failed")
+            for tw in ws.temp:
+                try:
+                    await tw.remove()
+                except Exception:
+                    pass
+            ws.temp.clear()
+            try:
+                title, detail = classify_error(exc)
+                error_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=detail,
+                    type=MessageType.ERROR,
+                    metadata={"error_title": title},
+                )
+            except Exception:
+                error_msg = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=str(exc)[:200] or type(exc).__name__,
+                    type=MessageType.ERROR,
+                    metadata={"error_title": "Unexpected Error"},
+                )
+            try:
+                await mount_streamed_message(container, error_msg, ws)
+            except Exception:
+                log.exception("Failed to mount error widget")
         finally:
             await self.streaming_finished()
 
@@ -328,6 +362,7 @@ class Stupidex(App):
         await self.mount_all_messages()
         await self._subagent_ui.sync_tabs(self.sessions.active.subagent_manager)
         await self.rerender_footer()
+        await self.refresh_todos()
 
     async def rerender_footer(self) -> None:
         if not self.sessions.active:
@@ -355,3 +390,11 @@ class Stupidex(App):
             self.query_one("#model", Static).update("No Model")
 
         await self._subagent_ui.update_sidebar()
+
+    async def refresh_todos(self) -> None:
+        try:
+            store = get_todo_store()
+            sidebar = self.query_one("#sidebar", Sidebar)
+            await sidebar.update_todos(store.list())
+        except Exception:
+            pass
