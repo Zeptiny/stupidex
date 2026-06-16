@@ -412,6 +412,40 @@ class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(collapsible.title), 120)
         self.assertTrue(collapsible.title.endswith("..."))
 
+    def test_edit_tool_result_renders_compact_colored_diff(self):
+        rendered = message_widget.get_tool_result_renderable(
+            Message(
+                MessageRole.TOOL,
+                '<edit_result path="demo.py" success="true" replacements="1" '
+                'replace_all="false" added="2" removed="1">\n'
+                '<diff format="unified"><![CDATA[\n'
+                "--- old/demo.py\n"
+                "+++ new/demo.py\n"
+                "@@ -1,3 +1,4 @@\n"
+                " def alpha():\n"
+                "-    return 1\n"
+                "+    return 2\n"
+                "+class Gamma:\n"
+                "     pass\n"
+                "]]></diff>\n"
+                "</edit_result>",
+                MessageType.TOOL_RESULT,
+                display="Edited demo.py (+2 -1)",
+            )
+        )
+
+        self.assertIn("   1  def alpha():\n", rendered.plain)
+        self.assertIn("   2 -    return 1\n", rendered.plain)
+        self.assertIn("   2 +    return 2\n", rendered.plain)
+        self.assertIn("   3 +class Gamma:\n", rendered.plain)
+        self.assertNotIn("@@", rendered.plain)
+        self.assertNotIn("--- old/demo.py", rendered.plain)
+
+        styles = {span.style for span in rendered.spans}
+        self.assertIn(message_widget._DIFF_ADDED_STYLE, styles)
+        self.assertIn(message_widget._DIFF_REMOVED_STYLE, styles)
+        self.assertTrue(any(getattr(span.style, "color", None) is not None for span in rendered.spans))
+
     async def test_output_pane_hides_horizontal_overflow(self):
         from stupidex.app import Stupidex
 
