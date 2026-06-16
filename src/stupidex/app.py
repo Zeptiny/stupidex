@@ -5,7 +5,7 @@ from enum import Enum
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane
-from textual.widgets._text_area import TextArea
+from textual.widgets import TextArea
 
 from stupidex.agents import get_agent_registry
 from stupidex.commands.session_commands import SessionCommands, execute_command

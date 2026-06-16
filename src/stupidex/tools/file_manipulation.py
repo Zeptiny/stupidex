@@ -98,7 +98,7 @@ def _count_diff_changes(diff_text: str) -> tuple[int, int]:
     added = 0
     removed = 0
     for line in diff_text.splitlines():
-        if line.startswith("+++") or line.startswith("---"):
+        if line.startswith("+++ ") or line.startswith("--- "):
             continue
         if line.startswith("+"):
             added += 1
@@ -177,7 +177,23 @@ async def execute_edit_tool(
                 ),
             )
 
-        replacements = content.count(old_string) if replace_all else 1
+        match_count = content.count(old_string)
+        if not replace_all and match_count > 1:
+            return ExecutorResult(
+                display=f"Multiple matches in {file_path}",
+                content=_format_edit_result_content(
+                    file_path,
+                    success=False,
+                    replacements=0,
+                    replace_all=replace_all,
+                    added=0,
+                    removed=0,
+                    error="multiple_matches",
+                    message=f"String '{old_string}' found {match_count} times in '{file_path}'. Use replace_all=true or provide a more specific string.",
+                ),
+            )
+
+        replacements = match_count if replace_all else 1
         if replace_all:
             new_content = content.replace(old_string, new_string)
         else:

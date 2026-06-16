@@ -71,5 +71,5 @@ class OptionPicker(Screen[str]):
     def key_up(self) -> None:
         search = self.query_one("#picker-search", Input)
         option_list = self.query_one("#picker-list", OptionList)
-        if self.focused is option_list and option_list.highlighted == 0:
+        if self.focused is option_list and (option_list.highlighted is None or option_list.highlighted == 0):
             search.focus()
