@@ -202,7 +202,7 @@ class SubagentManager:
                             await record.on_message(msg)
                         except Exception:
                             pass
-                    if msg.type == MessageType.TEXT:
+                    if msg.type == MessageType.TEXT and msg.content:
                         record.result = msg.content
 
                 record.state = SubagentState.COMPLETED

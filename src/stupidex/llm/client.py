@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 _YIELD_THROTTLE = 0.1
 _TOOL_TIMEOUT = 60
 _ERROR_DETAIL_MAX_LEN = 200
+_TOOLS_WITHOUT_TIMEOUT = {"wait_for_subagent"}
 
 
 def classify_error(exc: Exception) -> tuple[str, str]:
@@ -117,7 +118,10 @@ async def _execute_tool(
             else:
                 executor = filtered_tools[name]["executor"]
                 try:
-                    result = await asyncio.wait_for(executor(**args), timeout=_TOOL_TIMEOUT)
+                    if name in _TOOLS_WITHOUT_TIMEOUT:
+                        result = await executor(**args)
+                    else:
+                        result = await asyncio.wait_for(executor(**args), timeout=_TOOL_TIMEOUT)
                 except TimeoutError:
                     result = ExecutorResult(
                         display=f"Timeout in {name}",
