@@ -223,6 +223,7 @@ class ThinkingMessageWidget(Static):
         self.msg = msg
         self._last_render_time: float = 0
         self._flush_scheduled: bool = False
+        self._start_time: float = time.monotonic()
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
@@ -266,6 +267,25 @@ class ThinkingMessageWidget(Static):
         """Force immediate update, bypassing throttle."""
         self._flush_scheduled = False
         self._do_update()
+
+    def finish(self) -> None:
+        """Flush final content and update the title with elapsed time."""
+        self._flush_scheduled = False
+        self._do_update()
+        elapsed = time.monotonic() - self._start_time
+        if elapsed < 1:
+            label = f"{elapsed * 1000:.0f}ms"
+        elif elapsed < 60:
+            label = f"{elapsed:.1f}s"
+        else:
+            minutes = int(elapsed // 60)
+            seconds = elapsed % 60
+            label = f"{minutes}m {seconds:.0f}s"
+        try:
+            collapsible = self.query_one(Collapsible)
+            collapsible.title = f"Thought: {label}"
+        except Exception:
+            pass
 
     def on_collapsible_toggle(self, event) -> None:
         if not event.collapsed:
@@ -372,7 +392,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
         temp.scroll_visible()
         state.temp.append(temp)
         if state.thinking:
-            state.thinking.flush()
+            state.thinking.finish()
         state.content = None
     elif msg.type == MessageType.TOOL_RESULT:
         w = ToolResultMessageWidget(msg, classes="after-thinking" if state.thinking else None)
@@ -385,7 +405,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
             await container.mount(w)
         w.scroll_visible()
         if state.thinking:
-            state.thinking.flush()
+            state.thinking.finish()
         state.thinking = None
         state.content = None
     elif msg.role == MessageRole.USER:
@@ -398,7 +418,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
         if state.content is None:
             if msg.content:
                 if state.thinking:
-                    state.thinking.flush()
+                    state.thinking.finish()
                 w = AssistantMessageWidget(msg)
                 await container.mount(w)
                 state.content = w

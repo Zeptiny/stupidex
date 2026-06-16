@@ -592,6 +592,9 @@ class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
             def flush(self):
                 events.append("flush")
 
+            def finish(self):
+                events.append("finish")
+
         class FakeAssistantWidget:
             def __init__(self, msg):
                 self.msg = msg
@@ -614,7 +617,7 @@ class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
                 state,
             )
 
-        self.assertEqual(events, ["flush", "mount"])
+        self.assertEqual(events, ["finish", "mount"])
         self.assertIs(state.content, container.widget)
 
 
