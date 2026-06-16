@@ -386,6 +386,42 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
 
 
 class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
+    def test_tool_result_without_display_uses_safe_collapsed_title(self):
+        raw_content = "x" * 300
+        widget = message_widget.ToolResultMessageWidget(
+            Message(MessageRole.TOOL, raw_content, MessageType.TOOL_RESULT)
+        )
+
+        collapsible = next(widget.compose())
+
+        self.assertEqual(collapsible.title, "Tool result")
+
+    def test_tool_result_display_title_is_one_line_and_bounded(self):
+        widget = message_widget.ToolResultMessageWidget(
+            Message(
+                MessageRole.TOOL,
+                "content",
+                MessageType.TOOL_RESULT,
+                display=f"Read README.md\n{'x' * 300}",
+            )
+        )
+
+        collapsible = next(widget.compose())
+
+        self.assertNotIn("\n", collapsible.title)
+        self.assertLessEqual(len(collapsible.title), 120)
+        self.assertTrue(collapsible.title.endswith("..."))
+
+    async def test_output_pane_hides_horizontal_overflow(self):
+        from stupidex.app import Stupidex
+
+        app = Stupidex()
+        async with app.run_test():
+            output = app.query_one("#output")
+
+            self.assertEqual(output.styles.overflow_x, "hidden")
+            self.assertEqual(output.styles.overflow_y, "auto")
+
     async def test_thinking_flushes_before_first_assistant_text_widget_mount(self):
         events = []
 

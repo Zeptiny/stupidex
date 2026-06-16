@@ -11,6 +11,12 @@ Screen {
 #output {
     height: 1fr;
     padding: 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+TabPane > ScrollableContainer {
+    overflow-x: hidden;
     overflow-y: auto;
 }
 

@@ -11,6 +11,8 @@ from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.tools import get_tool_registry
 
 _THROTTLE_INTERVAL = 0.2
+_TOOL_RESULT_FALLBACK_TITLE = "Tool result"
+_TOOL_RESULT_TITLE_MAX_LENGTH = 120
 
 
 def get_tool_action_label(tool_name: str) -> str:
@@ -19,6 +21,18 @@ def get_tool_action_label(tool_name: str) -> str:
     if entry and entry["tool"].action_label:
         return entry["tool"].action_label
     return f"Using {tool_name}..."
+
+
+def get_tool_result_title(msg: Message) -> str:
+    if msg.display is None:
+        return _TOOL_RESULT_FALLBACK_TITLE
+
+    title = " ".join(msg.display.split())
+    if not title:
+        return _TOOL_RESULT_FALLBACK_TITLE
+    if len(title) <= _TOOL_RESULT_TITLE_MAX_LENGTH:
+        return title
+    return title[: _TOOL_RESULT_TITLE_MAX_LENGTH - 3].rstrip() + "..."
 
 
 class MessageWidget(Static):
@@ -156,10 +170,9 @@ class ToolResultMessageWidget(Static):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        display = self.msg.display if self.msg.display is not None else self.msg.content
         yield Collapsible(
             Static(Text(self.msg.content), classes="tool-result-content"),
-            title=display,
+            title=get_tool_result_title(self.msg),
             collapsed=True,
             classes="tool-result-collapse",
         )
@@ -217,11 +230,12 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
     elif msg.type == MessageType.TOOL_RESULT:
         w = ToolResultMessageWidget(msg)
         if state.temp:
-            await container.mount(w, before=state.temp[0])
+            temp = state.temp.pop(0)
+            async with container.batch():
+                await container.mount(w, before=temp)
+                await temp.remove()
         else:
             await container.mount(w)
-        if state.temp:
-            await state.temp.pop(0).remove()
         w.scroll_visible()
         if state.thinking:
             state.thinking.flush()
