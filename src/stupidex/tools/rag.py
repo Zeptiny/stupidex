@@ -31,7 +31,7 @@ rag_search_tool = Tool(
         },
         required=["query"],
     ),
-    action_label="Searching semantically...",
+    action_label="Ragging...",
 )
 
 rag_index_tool = Tool(
@@ -46,7 +46,7 @@ rag_index_tool = Tool(
         },
         required=["action"],
     ),
-    action_label="Managing RAG index...",
+    action_label="Managing Ragging...",
 )
 
 
@@ -77,7 +77,7 @@ async def execute_rag_search(
     if pre_check.last_indexed is None and pre_check.total_chunks == 0:
         return ExecutorResult(
             display="No RAG index",
-            content='<rag_error>No RAG index found. Use rag_index with action="index" or run /index.</rag_error>',
+            content='<rag_error>No RAG index found. Use rag_index with action="index".</rag_error>',
         )
 
     try:
@@ -101,9 +101,7 @@ async def execute_rag_search(
 
     loop = asyncio.get_running_loop()
     try:
-        results = await loop.run_in_executor(
-            None, store.search, query_embedding, top_k, file_pattern
-        )
+        results = await loop.run_in_executor(None, store.search, query_embedding, top_k, file_pattern)
     except ValueError as e:
         return ExecutorResult(
             display="Search error",
@@ -122,15 +120,11 @@ async def execute_rag_search(
         parts.append(
             f'<result file="{e(r.file_path)}" lines="{r.start_line}-{r.end_line}" '
             f'score="{r.score:.3f}">\n'
-            f'{e(r.content)}\n'
-            f'</result>'
+            f"{e(r.content)}\n"
+            f"</result>"
         )
 
-    content = (
-        f'<rag_results query="{e(query)}" count="{len(results)}">\n'
-        + "\n".join(parts)
-        + "\n</rag_results>"
-    )
+    content = f'<rag_results query="{e(query)}" count="{len(results)}">\n' + "\n".join(parts) + "\n</rag_results>"
 
     return ExecutorResult(
         display=f"Found {len(results)} semantic matches",
@@ -146,8 +140,8 @@ async def execute_rag_index(
             display="Invalid action",
             content=(
                 f'<rag_error action="{escape(action)}">'
-                f'Unknown action. Must be one of: status, index, clear.'
-                f'</rag_error>'
+                f"Unknown action. Must be one of: status, index, clear."
+                f"</rag_error>"
             ),
         )
 
@@ -163,7 +157,7 @@ async def execute_rag_index(
         return ExecutorResult(
             display="RAG index status",
             content=(
-                f'<rag_status '
+                f"<rag_status "
                 f'files="{status.total_files}" '
                 f'chunks="{status.total_chunks}" '
                 f'indexed="{escape(status.last_indexed or "never")}" />'
@@ -201,11 +195,7 @@ async def execute_rag_index(
     except EmbeddingError as e:
         return ExecutorResult(
             display="Indexing failed",
-            content=(
-                f'<rag_error action="index">'
-                f'Embedding failed during indexing: {escape(str(e))}'
-                f'</rag_error>'
-            ),
+            content=(f'<rag_error action="index">Embedding failed during indexing: {escape(str(e))}</rag_error>'),
         )
     except Exception as e:
         logger.warning("Indexing failed: %s", e)
@@ -218,19 +208,19 @@ async def execute_rag_index(
     errors_xml = ""
     if result.errors:
         error_items = "\n".join(f"    <error>{e(err)}</error>" for err in result.errors[:10])
-        errors_xml = f"\n  <errors count=\"{len(result.errors)}\">\n{error_items}\n  </errors>"
+        errors_xml = f'\n  <errors count="{len(result.errors)}">\n{error_items}\n  </errors>'
 
     content = (
-        f'<rag_index '
+        f"<rag_index "
         f'scanned="{result.files_scanned}" '
         f'indexed="{result.files_indexed}" '
         f'skipped="{result.files_skipped}" '
         f'deleted="{result.files_deleted}" '
         f'chunks="{result.chunks_created}" '
         f'duration="{result.duration_seconds:.1f}s"'
-        f'>'
-        f'{errors_xml}\n'
-        f'</rag_index>'
+        f">"
+        f"{errors_xml}\n"
+        f"</rag_index>"
     )
 
     return ExecutorResult(
