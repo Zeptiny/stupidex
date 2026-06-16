@@ -30,13 +30,19 @@ class MCPManager:
         self._sessions: dict[str, ClientSession] = {}
         self._tools: dict[str, dict] = {}
         self._uri_map: dict[str, str] = {}  # uri -> server_name
+        self._server_status: dict[str, dict] = {}  # name -> {status, tool_count, error}
 
     async def start_all(self, servers: dict[str, dict]) -> None:
         await self._exit_stack.__aenter__()
+        for server_name in servers:
+            self._server_status[server_name] = {"status": "starting", "tool_count": 0, "error": None}
         for server_name, config in servers.items():
             try:
                 await self._start_server(server_name, config)
-            except Exception:
+                tool_count = sum(1 for k in self._tools if k.startswith(f"mcp_{server_name}_"))
+                self._server_status[server_name] = {"status": "connected", "tool_count": tool_count, "error": None}
+            except Exception as e:
+                self._server_status[server_name] = {"status": "failed", "tool_count": 0, "error": str(e)[:80]}
                 logger.warning("Failed to start MCP server '%s'", server_name, exc_info=True)
 
     async def _start_server(self, server_name: str, config: dict) -> None:
@@ -81,6 +87,9 @@ class MCPManager:
 
     def get_tools(self) -> dict[str, dict]:
         return dict(self._tools)
+
+    def get_server_statuses(self) -> dict[str, dict]:
+        return dict(self._server_status)
 
     def get_resource_server(self, uri: str) -> str | None:
         return self._uri_map.get(uri)

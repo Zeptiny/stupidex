@@ -67,7 +67,8 @@ class Sidebar(Vertical):
 
     Sidebar #sidebar-tokens-label,
     Sidebar #sidebar-subagents-label,
-    Sidebar #sidebar-todos-label {
+    Sidebar #sidebar-todos-label,
+    Sidebar #sidebar-mcp-label {
         color: $text-muted;
         text-style: bold;
         padding: 0 1;
@@ -188,6 +189,8 @@ class Sidebar(Vertical):
             yield NavEntry("▸ Main", "main", id="nav-main")
         yield Static("Subagents", id="sidebar-subagents-label")
         yield Vertical(id="subagent-entries")
+        yield Static("MCP Servers", id="sidebar-mcp-label")
+        yield Vertical(id="mcp-entries")
         yield Static("Todos", id="sidebar-todos-label")
         yield Vertical(id="todo-entries")
         yield Static(self._get_working_dir(), id="working-directory")
@@ -446,6 +449,55 @@ class Sidebar(Vertical):
             return f"{elapsed / 60:.0f}m"
         else:
             return f"{elapsed / 3600:.1f}h"
+
+    async def update_mcp_servers(self, statuses: dict[str, dict]) -> None:
+        try:
+            container = self.query_one("#mcp-entries", Vertical)
+        except Exception:
+            return
+
+        if not statuses:
+            if container.children:
+                await container.remove_children()
+            return
+
+        entries: list[Static] = []
+        for name, info in statuses.items():
+            entries.append(Static(self._format_mcp_server(name, info)))
+
+        await container.remove_children()
+        if entries:
+            await container.mount(*entries)
+
+    @staticmethod
+    def _format_mcp_server(name: str, info: dict) -> str:
+        status = info.get("status", "unknown")
+        tool_count = info.get("tool_count", 0)
+        error = info.get("error")
+
+        indicator = {
+            "connected": "●",
+            "starting": "◐",
+            "failed": "✗",
+        }.get(status, "?")
+
+        color = {
+            "connected": "green",
+            "starting": "yellow",
+            "failed": "red",
+        }.get(status, "dim")
+
+        label = name
+        if len(label) > 14:
+            label = label[:12] + ".."
+
+        text = f" {indicator} {label}"
+        if status == "connected" and tool_count:
+            text += f" ({tool_count})"
+        elif status == "failed" and error:
+            err = error if len(error) <= 12 else error[:10] + ".."
+            text += f" [{err}]"
+        return f"[{color}]{text}[/{color}]"
 
     async def update_todos(self, tasks: list[TodoTask]) -> None:
         try:
