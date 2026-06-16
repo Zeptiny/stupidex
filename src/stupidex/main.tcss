@@ -69,13 +69,21 @@ AssistantMessageWidget {
 Collapsible.thinking-collapse {
     background: transparent;
     height: auto;
-    margin: 0;
-    padding: 0;
+    margin: 1 0 0 0;
+    padding-top: 0;
+    padding-right: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    border-top: none;
 }
 
 Collapsible.thinking-collapse.-collapsed {
-    margin: 0;
-    margin-bottom: 1;
+    margin: 1 0 0 0;
+    padding-top: 0;
+    padding-right: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    border-top: none;
 }
 
 Collapsible.thinking-collapse > CollapsibleTitle {
@@ -85,7 +93,7 @@ Collapsible.thinking-collapse > CollapsibleTitle {
 
 Collapsible.thinking-collapse > Contents {
     height: auto;
-    padding: 1 2;
+    padding: 0 2;
 }
 
 .thinking-content {
@@ -96,9 +104,11 @@ Collapsible.tool-result-collapse {
     background: transparent;
     height: auto;
     margin: 0;
-    padding: 0;
-    border-top: none;
+    padding-top: 0;
+    padding-right: 0;
     padding-bottom: 0;
+    padding-left: 0;
+    border: none;
 }
 
 Collapsible.tool-result-collapse > Contents {
@@ -108,7 +118,11 @@ Collapsible.tool-result-collapse > Contents {
 }
 
 Collapsible.tool-result-collapse.-collapsed {
+    padding-top: 0;
+    padding-right: 0;
     padding-bottom: 0;
+    padding-left: 0;
+    border: none;
 }
 
 Collapsible.tool-result-collapse > CollapsibleTitle {

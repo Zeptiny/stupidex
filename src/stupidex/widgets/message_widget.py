@@ -215,13 +215,13 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
             state.thinking.flush()
         state.content = None
     elif msg.type == MessageType.TOOL_RESULT:
-        if state.temp:
-            await state.temp.pop(0).remove()
         w = ToolResultMessageWidget(msg)
         if state.temp:
             await container.mount(w, before=state.temp[0])
         else:
             await container.mount(w)
+        if state.temp:
+            await state.temp.pop(0).remove()
         w.scroll_visible()
         if state.thinking:
             state.thinking.flush()

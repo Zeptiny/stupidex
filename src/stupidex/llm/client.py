@@ -164,11 +164,13 @@ async def _stream_task(
                 return
             last_thinking_yield = time.monotonic()
             thinking_dirty = False
-            await msg_q.put(Message(
-                role=MessageRole.ASSISTANT,
-                content=thinking,
-                type=MessageType.THINKING,
-            ))
+            stripped = thinking.strip()
+            if stripped:
+                await msg_q.put(Message(
+                    role=MessageRole.ASSISTANT,
+                    content=stripped,
+                    type=MessageType.THINKING,
+                ))
 
         async for chunk in response:
             if not chunk.choices:
@@ -181,11 +183,13 @@ async def _stream_task(
                 if now - last_thinking_yield >= _YIELD_THROTTLE:
                     last_thinking_yield = now
                     thinking_dirty = False
-                    await msg_q.put(Message(
-                        role=MessageRole.ASSISTANT,
-                        content=thinking,
-                        type=MessageType.THINKING,
-                    ))
+                    stripped = thinking.strip()
+                    if stripped:
+                        await msg_q.put(Message(
+                            role=MessageRole.ASSISTANT,
+                            content=stripped,
+                            type=MessageType.THINKING,
+                        ))
                 else:
                     thinking_dirty = True
 
@@ -251,8 +255,8 @@ async def _stream_task(
                 await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
             await ready_q.put(tool_calls[prev_index])
 
-        if not tool_calls:
-            await msg_q.put(Message(role=MessageRole.ASSISTANT, content=content, usage=usage))
+        if not tool_calls and usage:
+            await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
     finally:
         await ready_q.put(None)
 

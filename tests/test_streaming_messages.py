@@ -19,13 +19,13 @@ from stupidex.llm.client import classify_error
 from stupidex.widgets import message_widget
 
 
-def chunk(*, reasoning: str = "", content: str = "", tool_calls=None):
+def chunk(*, reasoning: str = "", content: str = "", tool_calls=None, usage=None):
     delta = SimpleNamespace(
         reasoning_content=reasoning,
         content=content,
         tool_calls=tool_calls,
     )
-    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=usage)
 
 
 def tool_delta(index: int):
@@ -290,6 +290,99 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertLess(full_thinking_index, first_tool_result_index)
+
+    async def test_whitespace_reasoning_is_not_emitted(self):
+        async def response():
+            yield chunk(reasoning="   ")
+            yield chunk(reasoning="\n\n")
+            yield chunk(content="Hello")
+
+        msg_q = asyncio.Queue(maxsize=1)
+        ready_q = asyncio.Queue()
+        api_messages = []
+        assistant_appended = asyncio.Event()
+        tool_calls_started = asyncio.Event()
+
+        stream_t = asyncio.create_task(
+            llm_client._stream_task(
+                response(),
+                msg_q,
+                ready_q,
+                api_messages,
+                assistant_appended,
+                tool_calls_started,
+            )
+        )
+        executor_t = asyncio.create_task(
+            llm_client._executor_task(
+                msg_q,
+                ready_q,
+                api_messages,
+                {},
+                assistant_appended,
+            )
+        )
+
+        messages = []
+        while True:
+            msg = await msg_q.get()
+            if msg is None:
+                break
+            messages.append(msg)
+
+        await asyncio.gather(stream_t, executor_t)
+
+        self.assertEqual(
+            [(msg.type, msg.content) for msg in messages],
+            [(MessageType.TEXT, "Hello")],
+        )
+
+    async def test_final_text_message_does_not_duplicate_content(self):
+        async def response():
+            yield chunk(content="Hello")
+            yield chunk(content=" world", usage=Usage(1, 2, 3))
+
+        msg_q = asyncio.Queue(maxsize=1)
+        ready_q = asyncio.Queue()
+        api_messages = []
+        assistant_appended = asyncio.Event()
+        tool_calls_started = asyncio.Event()
+
+        stream_t = asyncio.create_task(
+            llm_client._stream_task(
+                response(),
+                msg_q,
+                ready_q,
+                api_messages,
+                assistant_appended,
+                tool_calls_started,
+            )
+        )
+        executor_t = asyncio.create_task(
+            llm_client._executor_task(
+                msg_q,
+                ready_q,
+                api_messages,
+                {},
+                assistant_appended,
+            )
+        )
+
+        messages = []
+        while True:
+            msg = await msg_q.get()
+            if msg is None:
+                break
+            messages.append(msg)
+
+        await asyncio.gather(stream_t, executor_t)
+
+        text_messages = [msg for msg in messages if msg.type == MessageType.TEXT]
+        self.assertEqual(len(text_messages), 3)
+        self.assertEqual(text_messages[0].content, "Hello")
+        self.assertEqual(text_messages[1].content, "Hello world")
+        self.assertEqual(text_messages[2].content, "")
+        self.assertEqual(text_messages[2].usage, Usage(1, 2, 3))
 
 
 class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):

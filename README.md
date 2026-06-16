@@ -481,6 +481,7 @@ Project-level config: `.stupidex.json` (overrides home config).
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Message queue for the user
+- Spacing between thinking widget and below tool result is greater than every other spacing - couldnt fix, don't know why
 
 # Considerations
 - Make the read tool usable with directories?
