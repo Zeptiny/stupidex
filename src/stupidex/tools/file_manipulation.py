@@ -90,6 +90,71 @@ edit_tool = Tool(
 )
 
 
+def _normalize_diff_lines(diff: list[str]) -> list[str]:
+    return [line.rstrip("\r\n") for line in diff]
+
+
+def _count_diff_changes(diff_text: str) -> tuple[int, int]:
+    added = 0
+    removed = 0
+    for line in diff_text.splitlines():
+        if line.startswith("+++ ") or line.startswith("--- "):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+    return added, removed
+
+
+def _xml_attr(value: object) -> str:
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _cdata_text(value: str) -> str:
+    return value.replace("]]>", "]]]]><![CDATA[>")
+
+
+def _format_edit_result_content(
+    file_path: str,
+    *,
+    success: bool,
+    replacements: int,
+    replace_all: bool,
+    added: int,
+    removed: int,
+    diff_text: str = "",
+    error: str | None = None,
+    message: str | None = None,
+) -> str:
+    attrs = [
+        f'path="{_xml_attr(file_path)}"',
+        f'success="{str(success).lower()}"',
+        f'replacements="{replacements}"',
+        f'replace_all="{str(replace_all).lower()}"',
+        f'added="{added}"',
+        f'removed="{removed}"',
+    ]
+    if error:
+        attrs.append(f'error="{_xml_attr(error)}"')
+
+    lines = [f"<edit_result {' '.join(attrs)}>"]
+    if message:
+        lines.extend(["<message><![CDATA[", _cdata_text(message), "]]></message>"])
+    if diff_text:
+        lines.extend(["<diff format=\"unified\"><![CDATA[", _cdata_text(diff_text), "]]></diff>"])
+    else:
+        lines.append("<diff format=\"unified\" />")
+    lines.append("</edit_result>")
+    return "\n".join(lines)
+
+
 async def execute_edit_tool(
     file_path: str, old_string: str, new_string: str, replace_all: bool = False
 ) -> ExecutorResult:
@@ -100,9 +165,35 @@ async def execute_edit_tool(
         if old_string not in content:
             return ExecutorResult(
                 display=f"String not found in {file_path}",
-                content=f"String '{old_string}' not found in file '{file_path}'. No changes made.",
+                content=_format_edit_result_content(
+                    file_path,
+                    success=False,
+                    replacements=0,
+                    replace_all=replace_all,
+                    added=0,
+                    removed=0,
+                    error="string_not_found",
+                    message=f"String '{old_string}' not found in file '{file_path}'. No changes made.",
+                ),
             )
 
+        match_count = content.count(old_string)
+        if not replace_all and match_count > 1:
+            return ExecutorResult(
+                display=f"Multiple matches in {file_path}",
+                content=_format_edit_result_content(
+                    file_path,
+                    success=False,
+                    replacements=0,
+                    replace_all=replace_all,
+                    added=0,
+                    removed=0,
+                    error="multiple_matches",
+                    message=f"String '{old_string}' found {match_count} times in '{file_path}'. Use replace_all=true or provide a more specific string.",
+                ),
+            )
+
+        replacements = match_count if replace_all else 1
         if replace_all:
             new_content = content.replace(old_string, new_string)
         else:
@@ -112,22 +203,47 @@ async def execute_edit_tool(
             await f.write(new_content)
 
         # Generate and show the diff
-        diff = difflib.unified_diff(
-            content.splitlines(keepends=True),
-            new_content.splitlines(keepends=True),
-            fromfile=f"old/{file_path}",
-            tofile=f"new/{file_path}",
-            lineterm="",
+        diff = list(
+            difflib.unified_diff(
+                content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=f"old/{file_path}",
+                tofile=f"new/{file_path}",
+                lineterm="",
+            )
         )
-        diff_text = "\n".join(diff)
+        diff_text = "\n".join(_normalize_diff_lines(diff))
 
         display = f"Edited {file_path}"
-        result = f"File '{file_path}' edited successfully."
+        added = 0
+        removed = 0
         if diff_text:
-            result += f"\n\nDiff:\n{diff_text}"
+            added, removed = _count_diff_changes(diff_text)
+            display = f"{display} (+{added} -{removed})"
+        result = _format_edit_result_content(
+            file_path,
+            success=True,
+            replacements=replacements,
+            replace_all=replace_all,
+            added=added,
+            removed=removed,
+            diff_text=diff_text,
+        )
         return ExecutorResult(display=display, content=result)
     except Exception as e:
-        return ExecutorResult(display=f"Edit error {file_path}", content=f"Error editing file {file_path}: {e}")
+        return ExecutorResult(
+            display=f"Edit error {file_path}",
+            content=_format_edit_result_content(
+                file_path,
+                success=False,
+                replacements=0,
+                replace_all=replace_all,
+                added=0,
+                removed=0,
+                error="edit_error",
+                message=f"Error editing file {file_path}: {e}",
+            ),
+        )
 
 
 read_directory = Tool(

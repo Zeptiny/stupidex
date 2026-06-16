@@ -19,13 +19,13 @@ from stupidex.llm.client import classify_error
 from stupidex.widgets import message_widget
 
 
-def chunk(*, reasoning: str = "", content: str = "", tool_calls=None):
+def chunk(*, reasoning: str = "", content: str = "", tool_calls=None, usage=None):
     delta = SimpleNamespace(
         reasoning_content=reasoning,
         content=content,
         tool_calls=tool_calls,
     )
-    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=usage)
 
 
 def tool_delta(index: int):
@@ -291,14 +291,309 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertLess(full_thinking_index, first_tool_result_index)
 
+    async def test_whitespace_reasoning_is_not_emitted(self):
+        async def response():
+            yield chunk(reasoning="   ")
+            yield chunk(reasoning="\n\n")
+            yield chunk(content="Hello")
+
+        msg_q = asyncio.Queue(maxsize=1)
+        ready_q = asyncio.Queue()
+        api_messages = []
+        assistant_appended = asyncio.Event()
+        tool_calls_started = asyncio.Event()
+
+        stream_t = asyncio.create_task(
+            llm_client._stream_task(
+                response(),
+                msg_q,
+                ready_q,
+                api_messages,
+                assistant_appended,
+                tool_calls_started,
+            )
+        )
+        executor_t = asyncio.create_task(
+            llm_client._executor_task(
+                msg_q,
+                ready_q,
+                api_messages,
+                {},
+                assistant_appended,
+            )
+        )
+
+        messages = []
+        while True:
+            msg = await msg_q.get()
+            if msg is None:
+                break
+            messages.append(msg)
+
+        await asyncio.gather(stream_t, executor_t)
+
+        self.assertEqual(
+            [(msg.type, msg.content) for msg in messages],
+            [(MessageType.TEXT, "Hello")],
+        )
+
+    async def test_final_text_message_does_not_duplicate_content(self):
+        async def response():
+            yield chunk(content="Hello")
+            yield chunk(content=" world", usage=Usage(1, 2, 3))
+
+        msg_q = asyncio.Queue(maxsize=1)
+        ready_q = asyncio.Queue()
+        api_messages = []
+        assistant_appended = asyncio.Event()
+        tool_calls_started = asyncio.Event()
+
+        stream_t = asyncio.create_task(
+            llm_client._stream_task(
+                response(),
+                msg_q,
+                ready_q,
+                api_messages,
+                assistant_appended,
+                tool_calls_started,
+            )
+        )
+        executor_t = asyncio.create_task(
+            llm_client._executor_task(
+                msg_q,
+                ready_q,
+                api_messages,
+                {},
+                assistant_appended,
+            )
+        )
+
+        messages = []
+        while True:
+            msg = await msg_q.get()
+            if msg is None:
+                break
+            messages.append(msg)
+
+        await asyncio.gather(stream_t, executor_t)
+
+        text_messages = [msg for msg in messages if msg.type == MessageType.TEXT]
+        self.assertEqual(len(text_messages), 3)
+        self.assertEqual(text_messages[0].content, "Hello")
+        self.assertEqual(text_messages[1].content, "Hello world")
+        self.assertEqual(text_messages[2].content, "")
+        self.assertEqual(text_messages[2].usage, Usage(1, 2, 3))
+
 
 class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
+    def test_tool_result_without_display_uses_safe_collapsed_title(self):
+        raw_content = "x" * 300
+        widget = message_widget.ToolResultMessageWidget(
+            Message(MessageRole.TOOL, raw_content, MessageType.TOOL_RESULT)
+        )
+
+        collapsible = next(widget.compose())
+
+        self.assertEqual(collapsible.title, "Tool result")
+
+    def test_tool_result_display_title_is_one_line_and_bounded(self):
+        widget = message_widget.ToolResultMessageWidget(
+            Message(
+                MessageRole.TOOL,
+                "content",
+                MessageType.TOOL_RESULT,
+                display=f"Read README.md\n{'x' * 300}",
+            )
+        )
+
+        collapsible = next(widget.compose())
+
+        self.assertNotIn("\n", collapsible.title)
+        self.assertLessEqual(len(collapsible.title), 120)
+        self.assertTrue(collapsible.title.endswith("..."))
+
+    def test_edit_tool_result_renders_compact_colored_diff(self):
+        rendered = message_widget.get_tool_result_renderable(
+            Message(
+                MessageRole.TOOL,
+                '<edit_result path="demo.py" success="true" replacements="1" '
+                'replace_all="false" added="2" removed="1">\n'
+                '<diff format="unified"><![CDATA[\n'
+                "--- old/demo.py\n"
+                "+++ new/demo.py\n"
+                "@@ -1,3 +1,4 @@\n"
+                " def alpha():\n"
+                "-    return 1\n"
+                "+    return 2\n"
+                "+class Gamma:\n"
+                "     pass\n"
+                "]]></diff>\n"
+                "</edit_result>",
+                MessageType.TOOL_RESULT,
+                display="Edited demo.py (+2 -1)",
+            )
+        )
+
+        self.assertIn("   1  def alpha():\n", rendered.plain)
+        self.assertIn("   2 -    return 1\n", rendered.plain)
+        self.assertIn("   2 +    return 2\n", rendered.plain)
+        self.assertIn("   3 +class Gamma:\n", rendered.plain)
+        self.assertNotIn("@@", rendered.plain)
+        self.assertNotIn("--- old/demo.py", rendered.plain)
+
+        styles = {span.style for span in rendered.spans}
+        self.assertIn(message_widget._DIFF_ADDED_STYLE, styles)
+        self.assertIn(message_widget._DIFF_REMOVED_STYLE, styles)
+        self.assertTrue(any(getattr(span.style, "color", None) is not None for span in rendered.spans))
+
+    async def test_output_pane_hides_horizontal_overflow(self):
+        from stupidex.app import Stupidex
+
+        app = Stupidex()
+        async with app.run_test():
+            output = app.query_one("#output")
+
+            self.assertEqual(output.styles.overflow_x, "hidden")
+            self.assertEqual(output.styles.overflow_y, "auto")
+
+    async def test_streamed_tool_result_group_has_spacing_after_thinking(self):
+        from stupidex.app import Stupidex
+
+        tool_results = [
+            Message(
+                MessageRole.TOOL,
+                f"file contents {i}",
+                MessageType.TOOL_RESULT,
+                display=f"Read file_{i}.py lines 1-10",
+            )
+            for i in range(3)
+        ]
+        app = Stupidex()
+        async with app.run_test(size=(100, 30)) as pilot:
+            output = app.query_one("#output")
+            state = message_widget.StreamWidgetState()
+
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.USER, "Explore this codebase"),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Checking the file", MessageType.THINKING),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(
+                    MessageRole.ASSISTANT,
+                    "",
+                    MessageType.TOOL_CALL,
+                    metadata={"tool_name": "read"},
+                ),
+                state,
+            )
+            for _ in tool_results[1:]:
+                await message_widget.mount_streamed_message(
+                    output,
+                    Message(
+                        MessageRole.ASSISTANT,
+                        "",
+                        MessageType.TOOL_CALL,
+                        metadata={"tool_name": "read"},
+                    ),
+                    state,
+                )
+            for result in tool_results:
+                await message_widget.mount_streamed_message(output, result, state)
+            await pilot.pause()
+
+            user_widget = output.children[0]
+            thinking_widget = output.children[1]
+            tool_result_widgets = output.children[2:5]
+            thinking_collapse = thinking_widget.query_one(".thinking-collapse")
+
+            self.assertEqual(thinking_widget.region.y, user_widget.region.y + user_widget.region.height + 1)
+            self.assertEqual(thinking_widget.region.y, thinking_collapse.region.y)
+            self.assertEqual(thinking_widget.region.height, thinking_collapse.region.height)
+            self.assertIn("after-thinking", tool_result_widgets[0].classes)
+            self.assertEqual(
+                tool_result_widgets[0].region.y,
+                thinking_collapse.region.y + thinking_collapse.region.height + 1,
+            )
+            for previous, current in zip(tool_result_widgets, tool_result_widgets[1:], strict=False):
+                self.assertNotIn("after-thinking", current.classes)
+                self.assertEqual(current.region.y, previous.region.y + previous.region.height)
+
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Checking another file", MessageType.THINKING),
+                state,
+            )
+            await pilot.pause()
+
+            next_thinking_widget = output.children[5]
+            last_tool_result_widget = tool_result_widgets[-1]
+            self.assertEqual(
+                next_thinking_widget.region.y,
+                last_tool_result_widget.region.y + last_tool_result_widget.region.height + 1,
+            )
+
+    async def test_streamed_tool_result_after_assistant_text_does_not_get_thinking_spacing(self):
+        from stupidex.app import Stupidex
+
+        app = Stupidex()
+        async with app.run_test(size=(100, 30)) as pilot:
+            output = app.query_one("#output")
+            state = message_widget.StreamWidgetState()
+
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Checking the file", MessageType.THINKING),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Let me read the key files.", MessageType.TEXT),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(
+                    MessageRole.ASSISTANT,
+                    "",
+                    MessageType.TOOL_CALL,
+                    metadata={"tool_name": "read"},
+                ),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(
+                    MessageRole.TOOL,
+                    "file contents",
+                    MessageType.TOOL_RESULT,
+                    display="Read README.md lines 1-10",
+                ),
+                state,
+            )
+            await pilot.pause()
+
+            assistant_widget = output.children[1]
+            tool_result_widget = output.children[2]
+
+            self.assertNotIn("after-thinking", tool_result_widget.classes)
+            self.assertEqual(tool_result_widget.region.y, assistant_widget.region.y + assistant_widget.region.height)
+
     async def test_thinking_flushes_before_first_assistant_text_widget_mount(self):
         events = []
 
         class FakeThinking:
             def flush(self):
                 events.append("flush")
+
+            def finish(self):
+                events.append("finish")
 
         class FakeAssistantWidget:
             def __init__(self, msg):
@@ -322,7 +617,7 @@ class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
                 state,
             )
 
-        self.assertEqual(events, ["flush", "mount"])
+        self.assertEqual(events, ["finish", "mount"])
         self.assertIs(state.content, container.widget)
 
 

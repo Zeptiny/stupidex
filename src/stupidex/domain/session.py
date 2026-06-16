@@ -4,6 +4,7 @@ from datetime import datetime
 
 from stupidex.agents.manager import SubagentManager
 from stupidex.config import get_config
+from stupidex.domain.chain import Chain
 from stupidex.domain.message import Message
 from stupidex.domain.todo import TodoStore
 
@@ -12,10 +13,14 @@ from stupidex.domain.todo import TodoStore
 class Session:
     name: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    messages: list[Message] = field(default_factory=list)
+    chains: list[Chain] = field(default_factory=list)
     model: str | None = None
     subagent_manager: SubagentManager = field(default_factory=SubagentManager)
     todo_store: TodoStore = field(default_factory=TodoStore)
+
+    @property
+    def messages(self) -> list[Message]:
+        return [msg for chain in self.chains for msg in chain.messages]
 
 
 class SessionManager:

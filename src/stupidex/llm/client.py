@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 _YIELD_THROTTLE = 0.1
 _TOOL_TIMEOUT = 60
 _ERROR_DETAIL_MAX_LEN = 200
+_TOOLS_WITHOUT_TIMEOUT = {"wait_for_subagent"}
 
 
 def classify_error(exc: Exception) -> tuple[str, str]:
@@ -117,7 +118,10 @@ async def _execute_tool(
             else:
                 executor = filtered_tools[name]["executor"]
                 try:
-                    result = await asyncio.wait_for(executor(**args), timeout=_TOOL_TIMEOUT)
+                    if name in _TOOLS_WITHOUT_TIMEOUT:
+                        result = await executor(**args)
+                    else:
+                        result = await asyncio.wait_for(executor(**args), timeout=_TOOL_TIMEOUT)
                 except TimeoutError:
                     result = ExecutorResult(
                         display=f"Timeout in {name}",
@@ -164,11 +168,13 @@ async def _stream_task(
                 return
             last_thinking_yield = time.monotonic()
             thinking_dirty = False
-            await msg_q.put(Message(
-                role=MessageRole.ASSISTANT,
-                content=thinking,
-                type=MessageType.THINKING,
-            ))
+            stripped = thinking.strip()
+            if stripped:
+                await msg_q.put(Message(
+                    role=MessageRole.ASSISTANT,
+                    content=stripped,
+                    type=MessageType.THINKING,
+                ))
 
         async for chunk in response:
             if not chunk.choices:
@@ -181,11 +187,13 @@ async def _stream_task(
                 if now - last_thinking_yield >= _YIELD_THROTTLE:
                     last_thinking_yield = now
                     thinking_dirty = False
-                    await msg_q.put(Message(
-                        role=MessageRole.ASSISTANT,
-                        content=thinking,
-                        type=MessageType.THINKING,
-                    ))
+                    stripped = thinking.strip()
+                    if stripped:
+                        await msg_q.put(Message(
+                            role=MessageRole.ASSISTANT,
+                            content=stripped,
+                            type=MessageType.THINKING,
+                        ))
                 else:
                     thinking_dirty = True
 
@@ -251,8 +259,8 @@ async def _stream_task(
                 await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
             await ready_q.put(tool_calls[prev_index])
 
-        if not tool_calls:
-            await msg_q.put(Message(role=MessageRole.ASSISTANT, content=content, usage=usage))
+        if not tool_calls and usage:
+            await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
     finally:
         await ready_q.put(None)
 

@@ -467,6 +467,7 @@ Project-level config: `.stupidex.json` (overrides home config).
   - Also /init command for it
 - Session saving to disk
 - Web fetch tool or MCP
+- ask_question tool
 
 ## Subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
@@ -481,6 +482,7 @@ Project-level config: `.stupidex.json` (overrides home config).
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Message queue for the user
+- /index hangs the app
 
 # Considerations
 - Make the read tool usable with directories?
