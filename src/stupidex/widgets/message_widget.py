@@ -375,7 +375,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
             state.thinking.flush()
         state.content = None
     elif msg.type == MessageType.TOOL_RESULT:
-        w = ToolResultMessageWidget(msg)
+        w = ToolResultMessageWidget(msg, classes="after-thinking" if state.thinking else None)
         if state.temp:
             temp = state.temp.pop(0)
             async with container.batch():
@@ -402,6 +402,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
                 w = AssistantMessageWidget(msg)
                 await container.mount(w)
                 state.content = w
+                state.thinking = None
                 w.scroll_visible()
         else:
             if msg.content:

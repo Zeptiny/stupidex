@@ -456,6 +456,135 @@ class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(output.styles.overflow_x, "hidden")
             self.assertEqual(output.styles.overflow_y, "auto")
 
+    async def test_streamed_tool_result_group_has_spacing_after_thinking(self):
+        from stupidex.app import Stupidex
+
+        tool_results = [
+            Message(
+                MessageRole.TOOL,
+                f"file contents {i}",
+                MessageType.TOOL_RESULT,
+                display=f"Read file_{i}.py lines 1-10",
+            )
+            for i in range(3)
+        ]
+        app = Stupidex()
+        async with app.run_test(size=(100, 30)) as pilot:
+            output = app.query_one("#output")
+            state = message_widget.StreamWidgetState()
+
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.USER, "Explore this codebase"),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Checking the file", MessageType.THINKING),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(
+                    MessageRole.ASSISTANT,
+                    "",
+                    MessageType.TOOL_CALL,
+                    metadata={"tool_name": "read"},
+                ),
+                state,
+            )
+            for _ in tool_results[1:]:
+                await message_widget.mount_streamed_message(
+                    output,
+                    Message(
+                        MessageRole.ASSISTANT,
+                        "",
+                        MessageType.TOOL_CALL,
+                        metadata={"tool_name": "read"},
+                    ),
+                    state,
+                )
+            for result in tool_results:
+                await message_widget.mount_streamed_message(output, result, state)
+            await pilot.pause()
+
+            user_widget = output.children[0]
+            thinking_widget = output.children[1]
+            tool_result_widgets = output.children[2:5]
+            thinking_collapse = thinking_widget.query_one(".thinking-collapse")
+
+            self.assertEqual(thinking_widget.region.y, user_widget.region.y + user_widget.region.height + 1)
+            self.assertEqual(thinking_widget.region.y, thinking_collapse.region.y)
+            self.assertEqual(thinking_widget.region.height, thinking_collapse.region.height)
+            self.assertIn("after-thinking", tool_result_widgets[0].classes)
+            self.assertEqual(
+                tool_result_widgets[0].region.y,
+                thinking_collapse.region.y + thinking_collapse.region.height + 1,
+            )
+            for previous, current in zip(tool_result_widgets, tool_result_widgets[1:], strict=False):
+                self.assertNotIn("after-thinking", current.classes)
+                self.assertEqual(current.region.y, previous.region.y + previous.region.height)
+
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Checking another file", MessageType.THINKING),
+                state,
+            )
+            await pilot.pause()
+
+            next_thinking_widget = output.children[5]
+            last_tool_result_widget = tool_result_widgets[-1]
+            self.assertEqual(
+                next_thinking_widget.region.y,
+                last_tool_result_widget.region.y + last_tool_result_widget.region.height + 1,
+            )
+
+    async def test_streamed_tool_result_after_assistant_text_does_not_get_thinking_spacing(self):
+        from stupidex.app import Stupidex
+
+        app = Stupidex()
+        async with app.run_test(size=(100, 30)) as pilot:
+            output = app.query_one("#output")
+            state = message_widget.StreamWidgetState()
+
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Checking the file", MessageType.THINKING),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(MessageRole.ASSISTANT, "Let me read the key files.", MessageType.TEXT),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(
+                    MessageRole.ASSISTANT,
+                    "",
+                    MessageType.TOOL_CALL,
+                    metadata={"tool_name": "read"},
+                ),
+                state,
+            )
+            await message_widget.mount_streamed_message(
+                output,
+                Message(
+                    MessageRole.TOOL,
+                    "file contents",
+                    MessageType.TOOL_RESULT,
+                    display="Read README.md lines 1-10",
+                ),
+                state,
+            )
+            await pilot.pause()
+
+            assistant_widget = output.children[1]
+            tool_result_widget = output.children[2]
+
+            self.assertNotIn("after-thinking", tool_result_widget.classes)
+            self.assertEqual(tool_result_widget.region.y, assistant_widget.region.y + assistant_widget.region.height)
+
     async def test_thinking_flushes_before_first_assistant_text_widget_mount(self):
         events = []
 

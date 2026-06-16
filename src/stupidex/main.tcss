@@ -71,11 +71,17 @@ AssistantMessageWidget {
     padding: 1;
 }
 
+ThinkingMessageWidget {
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 0;
+}
+
 /* Collapse widgets: override Textual defaults to match Rich.Panel style */
 Collapsible.thinking-collapse {
     background: transparent;
     height: auto;
-    margin: 1 0 0 0;
+    margin: 0;
     padding-top: 0;
     padding-right: 0;
     padding-bottom: 0;
@@ -84,12 +90,20 @@ Collapsible.thinking-collapse {
 }
 
 Collapsible.thinking-collapse.-collapsed {
-    margin: 1 0 0 0;
+    height: 1;
+    margin: 0;
     padding-top: 0;
     padding-right: 0;
     padding-bottom: 0;
     padding-left: 0;
     border-top: none;
+}
+
+Collapsible.thinking-collapse.-collapsed > Contents {
+    display: none;
+    height: 0;
+    margin: 0;
+    padding: 0;
 }
 
 Collapsible.thinking-collapse > CollapsibleTitle {
@@ -115,6 +129,10 @@ Collapsible.tool-result-collapse {
     padding-bottom: 0;
     padding-left: 0;
     border: none;
+}
+
+ToolResultMessageWidget.after-thinking {
+    margin-top: 1;
 }
 
 Collapsible.tool-result-collapse > Contents {
