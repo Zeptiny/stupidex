@@ -297,6 +297,12 @@ class Stupidex(App):
                 if msg.usage:
                     await self.rerender_footer()
         except asyncio.CancelledError:
+            interrupted_msg = Message(
+                role=MessageRole.ASSISTANT,
+                content="[Interrupted by user]",
+            )
+            if self._current_chain:
+                self._current_chain.chain.messages.append(interrupted_msg)
             self._freeze_chain(ChainStatus.INTERRUPTED)
             for tw in ws.temp:
                 try:
@@ -304,12 +310,6 @@ class Stupidex(App):
                 except Exception:
                     pass
             ws.temp.clear()
-            interrupted_msg = Message(
-                role=MessageRole.ASSISTANT,
-                content="[Interrupted by user]",
-            )
-            if self._current_chain:
-                self._current_chain.chain.messages.append(interrupted_msg)
             try:
                 await self.mount_message(interrupted_msg)
             except Exception:
