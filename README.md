@@ -467,6 +467,7 @@ Project-level config: `.stupidex.json` (overrides home config).
   - Also /init command for it
 - Session saving to disk
 - Web fetch tool or MCP
+- ask_question tool
 
 ## Subagents
 - BTW/Side agent (Ask a question without interrupting the main flow)
