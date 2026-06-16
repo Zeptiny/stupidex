@@ -1,7 +1,13 @@
 import json
+import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+_MCP_SERVER_NAME_RE = re.compile(r"^[a-z0-9-]+$")
 
 HOME_CONFIG_DIR = Path.home() / ".stupidex"
 HOME_CONFIG_PATH = HOME_CONFIG_DIR / "config.json"
@@ -48,6 +54,12 @@ class Config:
     rag_chunk_overlap: int = 200
     rag_top_k: int = 5
     rag_max_file_size: int = 512000
+    mcp_servers: dict[str, dict] = field(default_factory=lambda: {
+        "context7": {
+            "command": "npx",
+            "args": ["-y", "@upstash/context7-mcp"],
+        },
+    })
 
 
 _ENV_MAP = {
@@ -124,6 +136,20 @@ def _validate_config(cfg: Config) -> Config:
     if values["rag_embedding_provider"] not in valid_providers:
         values["rag_embedding_provider"] = ""
 
+    mcp_servers = values.get("mcp_servers", {})
+    if not isinstance(mcp_servers, dict):
+        mcp_servers = {}
+    cleaned_mcp: dict[str, dict] = {}
+    for name, server_cfg in mcp_servers.items():
+        if not isinstance(server_cfg, dict):
+            log.warning("Skipping MCP server '%s': config must be a dict, got %s", name, type(server_cfg).__name__)
+            continue
+        if not _MCP_SERVER_NAME_RE.match(name):
+            log.warning("Skipping MCP server '%s': name must match [a-z0-9-]+", name)
+            continue
+        cleaned_mcp[name] = server_cfg
+    values["mcp_servers"] = cleaned_mcp
+
     return Config(**values)
 
 
@@ -141,13 +167,19 @@ class ConfigManager:
         home = _load_json(HOME_CONFIG_PATH)
         for k, v in home.items():
             if k in merged:
-                merged[k] = v
+                if k == "mcp_servers" and isinstance(v, dict) and isinstance(merged.get(k), dict):
+                    merged[k] = {**merged[k], **v}
+                else:
+                    merged[k] = v
 
         project_path = Path.cwd() / PROJECT_CONFIG_NAME
         project = _load_json(project_path)
         for k, v in project.items():
             if k in merged:
-                merged[k] = v
+                if k == "mcp_servers" and isinstance(v, dict) and isinstance(merged.get(k), dict):
+                    merged[k] = {**merged[k], **v}
+                else:
+                    merged[k] = v
 
         cfg = Config(**merged)
         cfg = _merge_from_env(cfg)

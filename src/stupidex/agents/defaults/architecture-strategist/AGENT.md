@@ -9,6 +9,7 @@ allowed_tools:
   - glob
   - grep
   - execute_command
+  - mcp_context7_*
 allowed_skills: []
 ---
 

@@ -13,6 +13,7 @@ dependencies = [
     "aiofiles",
     "numpy",
     "fastembed",
+    "mcp>=1.0",
 ]
 
 [project.scripts]

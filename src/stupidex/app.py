@@ -117,6 +117,21 @@ class Stupidex(App):
             pass
         await self.rerender_footer()
         await self.refresh_todos()
+        from stupidex.config import get_config
+        from stupidex.mcp import MCPManager, set_mcp_manager
+        cfg = get_config()
+        if cfg.mcp_servers:
+            mcp_manager = MCPManager()
+            await mcp_manager.start_all(cfg.mcp_servers)
+            set_mcp_manager(mcp_manager)
+            self._mcp_manager = mcp_manager
+
+    async def on_exit(self) -> None:
+        if hasattr(self, '_mcp_manager') and self._mcp_manager is not None:
+            try:
+                await self._mcp_manager.shutdown()
+            except Exception:
+                pass
 
     def _is_streaming(self) -> bool:
         return self._active_worker is not None and not self._active_worker.is_finished

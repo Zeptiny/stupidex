@@ -7,7 +7,8 @@
   - O projeto necessita de LLM para ser útil, com o principal tomando deciões e roteamento (Subagentes) e geração com principal ou subagentes (Código, exploração, etc.)
 - [x] Modelo local (Ollama) - não apenas API paga
   - Ele funciona com modelos locais desde que foneçam API compatível com OpenAI (Anthropic planejada)
-- [ ] MCP com ao menos 1 tool e 1 resource implementados
+- [x] MCP com ao menos 1 tool e 1 resource implementados
+  - MCP client com suporte a stdio e HTTP/SSE, Context7 incluso como padrão
 - [x] Pipeline RAG: ingestão -> Embedding -> busca -> resposta
 - [x] Vector store (ChromeDB/FAISS) com embedding reais
 - [x] Mínimo 3 tools disponíveis e funcionais para os agentes
@@ -264,6 +265,8 @@ Available tools for agents:
 | `todo_update` | Update task status/details |
 | `todo_list` | List tasks filtered by status |
 | `todo_delete` | Delete a task |
+| `read_mcp_resource` | Read a resource from an MCP server by URI |
+| `mcp_*` | Dynamically registered MCP tools (e.g., `mcp_context7_resolve-library-id`) |
 
 ## RAG (Retrieval-Augmented Generation)
 
@@ -358,6 +361,65 @@ All RAG settings in `~/.stupidex/config.json`:
 
 Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_PROVIDER`, `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
 
+## MCP (Model Context Protocol)
+
+The project includes a full MCP client for connecting to external tool servers. MCP servers are configured in `~/.stupidex/config.json` and started automatically on app launch.
+
+### Default Server
+
+**Context7** is included by default — it provides up-to-date, version-specific documentation for any library or framework. Requires `npx` (install [Node.js](https://nodejs.org/) if not available).
+
+Agents can use Context7 tools (`mcp_context7_resolve-library-id`, `mcp_context7_query-docs`) to fetch fresh docs during code generation and exploration.
+
+### Configuration
+
+MCP servers are configured under `mcp_servers` in `~/.stupidex/config.json`:
+
+```json
+{
+  "mcp_servers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    },
+    "filesystem": {
+      "command": "mcp-server-filesystem",
+      "args": ["/home/user/projects"]
+    }
+  }
+}
+```
+
+**stdio servers** use `command` + `args` (+ optional `env`). **HTTP/SSE servers** use `url`.
+
+Project-level config (`.stupidex.json`) merges with home config — project entries override same-name home entries.
+
+### Agent Access
+
+Agents access MCP tools through `allowed_tools` glob patterns in their `AGENT.md`:
+
+```yaml
+allowed_tools:
+  - mcp_context7_*    # All Context7 tools
+  - mcp_*             # All MCP tools
+```
+
+### Available Tools
+
+Each MCP server's tools are registered as `mcp_<server_name>_<tool_name>`. Server names must match `[a-z0-9-]+`.
+
+The `read_mcp_resource` meta-tool lets agents read resources exposed by MCP servers (files, schemas, etc.) by URI.
+
+### Bundled Example Server
+
+A minimal example server is included for development and testing:
+
+```bash
+python -m stupidex.mcp.example_server
+```
+
+Exposes one tool (`echo`) and one resource (`info://stupidex`).
+
 ## Linting
 
 The project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
@@ -420,6 +482,11 @@ src/
       subagent.py              # subagent management tools
       skill.py                 # skill and list_skills tools
       rag.py                   # RAG index/search tool
+      mcp_resource.py          # MCP resource read tool
+    mcp/                       # MCP client
+      __init__.py              # MCPManager, lifecycle, ContextVar accessor
+      schema.py                # MCP tool schema conversion
+      example_server.py        # Bundled example MCP server
     rag/                       # RAG pipeline
       chunker.py               # Language-aware file chunking
       embedder.py              # Embedding provider abstraction
@@ -445,7 +512,13 @@ src/
     "papaca": "mimo-v2.5"
   },
   "rag_embedding_provider": "fastembed",
-  "rag_embedding_model": "BAAI/bge-small-en-v1.5"
+  "rag_embedding_model": "BAAI/bge-small-en-v1.5",
+  "mcp_servers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    }
+  }
 }
 ```
 
@@ -459,7 +532,6 @@ Project-level config: `.stupidex.json` (overrides home config).
   - `write` tool creates arbitrary directory trees with `mkdir(parents=True)` (file_manipulation.py)
   - Error messages leak command strings and file paths in tool execution errors (exec.py)
 - Concurrency control for file locking
-- MCP
 - LSP
 - Provider selector
 - Approval / permission system

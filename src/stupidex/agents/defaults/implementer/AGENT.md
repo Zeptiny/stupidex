@@ -11,6 +11,7 @@ allowed_tools:
   - edit
   - write
   - execute_command
+  - mcp_context7_*
 allowed_skills:
   - work
   - plan
