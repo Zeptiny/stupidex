@@ -4,12 +4,12 @@ from enum import Enum
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
-from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane
-from textual.widgets import TextArea
+from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
 from stupidex.agents import get_agent_registry
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
+from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
 from stupidex.domain.session import SessionManager
 from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
@@ -18,6 +18,7 @@ from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
 from stupidex.widgets.command_picker import CommandPicker
 from stupidex.widgets.message_widget import (
+    ChainContainer,
     StreamWidgetState,
     create_message_widget,
     mount_streamed_message,
@@ -60,6 +61,8 @@ class Stupidex(App):
         self._interrupt_state: InterruptState = InterruptState.IDLE
         self._active_worker: object | None = None
         self._subagent_ui = SubagentUIManager(self)
+        self._current_chain: ChainContainer | None = None
+        self._footer_timer: object | None = None
         self._setup_themes()
 
     def _setup_themes(self) -> None:
@@ -164,7 +167,8 @@ class Stupidex(App):
                         role=MessageRole.ASSISTANT,
                         content=f"[Subagents interrupted by user: {detail}]",
                     )
-                    self.messages.append(interrupt_msg)
+                    if self._current_chain:
+                        self._current_chain.chain.messages.append(interrupt_msg)
                     try:
                         await self.mount_message(interrupt_msg)
                     except Exception:
@@ -197,8 +201,9 @@ class Stupidex(App):
             return
 
         text_area.clear()
+        self._start_chain()
         msg = Message(role=MessageRole.USER, content=user_msg)
-        self.messages.append(msg)
+        self._current_chain.chain.messages.append(msg)
         await self.mount_message(msg)
         self._reset_interrupt_state()
         self.streaming_started()
@@ -265,7 +270,8 @@ class Stupidex(App):
         sidebar.set_active("main")
 
     async def _stream_response(self) -> None:
-        container = self.query_one("#output", ScrollableContainer)
+        output = self.query_one("#output", ScrollableContainer)
+        container = self._current_chain.messages_area if self._current_chain else output
 
         ws = StreamWidgetState()
         history_state = StreamHistoryState()
@@ -282,7 +288,7 @@ class Stupidex(App):
                 system_prompt=system_prompt,
                 allowed_skills=general.allowed_skills,
             ):
-                record_streamed_message(self.messages, msg, history_state)
+                record_streamed_message(self._current_chain.chain.messages, msg, history_state)
 
                 await mount_streamed_message(container, msg, ws)
 
@@ -291,6 +297,7 @@ class Stupidex(App):
                 if msg.usage:
                     await self.rerender_footer()
         except asyncio.CancelledError:
+            self._freeze_chain(ChainStatus.INTERRUPTED)
             for tw in ws.temp:
                 try:
                     await tw.remove()
@@ -301,13 +308,15 @@ class Stupidex(App):
                 role=MessageRole.ASSISTANT,
                 content="[Interrupted by user]",
             )
-            self.messages.append(interrupted_msg)
+            if self._current_chain:
+                self._current_chain.chain.messages.append(interrupted_msg)
             try:
                 await self.mount_message(interrupted_msg)
             except Exception:
                 pass
             raise
         except Exception as exc:
+            self._freeze_chain(ChainStatus.FAILED)
             log.exception("Stream response failed")
             for tw in ws.temp:
                 try:
@@ -337,13 +346,49 @@ class Stupidex(App):
         finally:
             await self.streaming_finished()
 
+    def _start_chain(self) -> None:
+        chain = Chain(model=self.model)
+        if self.sessions.active:
+            self.sessions.active.chains.append(chain)
+        container = self.query_one("#output", ScrollableContainer)
+        self._current_chain = ChainContainer(chain)
+        container.mount(self._current_chain)
+
+    async def _mount_in_chain(self, msg: Message) -> None:
+        widget = create_message_widget(msg)
+        if widget is None:
+            return
+        if self._current_chain and self._current_chain.messages_area:
+            await self._current_chain.messages_area.mount(widget)
+            widget.scroll_visible()
+        else:
+            container = self.query_one("#output", ScrollableContainer)
+            await container.mount(widget)
+            widget.scroll_visible()
+
     def streaming_started(self) -> None:
         self.query_one("#spinner").display = True
+        self._footer_timer = self.set_interval(1.0, self._tick_footer)
 
     async def streaming_finished(self) -> None:
         self.query_one("#spinner").display = False
+        self._freeze_chain()
         if self._interrupt_state != InterruptState.CONFIRM_SUBAGENTS:
             self._reset_interrupt_state()
+        await self.rerender_footer()
+
+    def _freeze_chain(self, status: ChainStatus = ChainStatus.COMPLETED) -> None:
+        if self._footer_timer:
+            self._footer_timer.stop()
+            self._footer_timer = None
+        if self._current_chain:
+            self._current_chain.chain.finish(status)
+            self._current_chain.freeze()
+            self._current_chain = None
+
+    async def _tick_footer(self) -> None:
+        if self._current_chain:
+            self._current_chain.tick()
         await self.rerender_footer()
 
     def on_sidebar_main_selected(self, event: SidebarMainSelected) -> None:
@@ -361,12 +406,7 @@ class Stupidex(App):
         sidebar.set_active(event.subagent_id)
 
     async def mount_message(self, msg: Message) -> None:
-        container = self.query_one("#output", ScrollableContainer)
-        widget = create_message_widget(msg)
-        if widget is None:
-            return
-        await container.mount(widget)
-        widget.scroll_visible()
+        await self._mount_in_chain(msg)
 
     async def mount_all_messages(self) -> None:
         container = self.query_one("#output", ScrollableContainer)
@@ -406,10 +446,8 @@ class Stupidex(App):
         except Exception:
             pass
 
-        if self.model:
-            self.query_one("#model", Static).update(f"{self.model}")
-        else:
-            self.query_one("#model", Static).update("No Model")
+        model_label = self.model or "No Model"
+        self.query_one("#model", Static).update(model_label)
 
         await self._subagent_ui.update_sidebar()
 
