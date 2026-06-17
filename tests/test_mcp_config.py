@@ -70,6 +70,26 @@ class TestMCPConfigValidation(unittest.TestCase):
         self.assertEqual(validated.mcp_servers["home-only"]["command"], "home-cmd")
         self.assertEqual(validated.mcp_servers["shared"]["command"], "project-cmd")
 
+    def test_command_must_be_string_for_stdio_server(self):
+        servers = {"bad": {"command": ["python", "-m", "foo"]}, "good": {"command": "python"}}
+        cfg = Config(mcp_servers=servers)
+        validated = _validate_config(cfg)
+        self.assertNotIn("bad", validated.mcp_servers)
+        self.assertIn("good", validated.mcp_servers)
+
+    def test_args_must_be_list(self):
+        servers = {"bad": {"command": "python", "args": "not-a-list"}, "good": {"command": "python", "args": ["-m", "foo"]}}
+        cfg = Config(mcp_servers=servers)
+        validated = _validate_config(cfg)
+        self.assertNotIn("bad", validated.mcp_servers)
+        self.assertIn("good", validated.mcp_servers)
+
+    def test_command_validation_skipped_for_url_servers(self):
+        servers = {"sse": {"url": "http://localhost:3000"}}
+        cfg = Config(mcp_servers=servers)
+        validated = _validate_config(cfg)
+        self.assertIn("sse", validated.mcp_servers)
+
 
 if __name__ == "__main__":
     unittest.main()

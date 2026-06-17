@@ -59,6 +59,10 @@ class Config:
             "command": "npx",
             "args": ["-y", "@upstash/context7-mcp"],
         },
+        "example": {
+            "command": "python",
+            "args": ["-m", "stupidex.mcp.example_server"],
+        },
     })
 
 
@@ -147,6 +151,15 @@ def _validate_config(cfg: Config) -> Config:
         if not _MCP_SERVER_NAME_RE.match(name):
             log.warning("Skipping MCP server '%s': name must match [a-z0-9-]+", name)
             continue
+        if "url" not in server_cfg:
+            cmd = server_cfg.get("command")
+            if not isinstance(cmd, str):
+                log.warning("Skipping MCP server '%s': 'command' must be a string, got %s", name, type(cmd).__name__)
+                continue
+            args = server_cfg.get("args", [])
+            if not isinstance(args, list):
+                log.warning("Skipping MCP server '%s': 'args' must be a list, got %s", name, type(args).__name__)
+                continue
         cleaned_mcp[name] = server_cfg
     values["mcp_servers"] = cleaned_mcp
 

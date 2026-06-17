@@ -365,9 +365,11 @@ Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_PROVIDER`, `STUPIDEX_RAG
 
 The project includes a full MCP client for connecting to external tool servers. MCP servers are configured in `~/.stupidex/config.json` and started automatically on app launch.
 
-### Default Server
+### Default Servers
 
 **Context7** is included by default — it provides up-to-date, version-specific documentation for any library or framework. Requires `npx` (install [Node.js](https://nodejs.org/) if not available).
+
+**Example** is a minimal reference server for testing and learning. Agents can use `mcp_example_echo` to verify MCP connectivity.
 
 Agents can use Context7 tools (`mcp_context7_resolve-library-id`, `mcp_context7_query-docs`) to fetch fresh docs during code generation and exploration.
 
@@ -390,7 +392,7 @@ MCP servers are configured under `mcp_servers` in `~/.stupidex/config.json`:
 }
 ```
 
-**stdio servers** use `command` + `args` (+ optional `env`). **HTTP/SSE servers** use `url`.
+**stdio servers** use `command` (string) + `args` (list, optional) + `env` (object, optional). **HTTP/SSE servers** use `url`.
 
 Project-level config (`.stupidex.json`) merges with home config — project entries override same-name home entries.
 
