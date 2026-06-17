@@ -20,7 +20,7 @@ def get_mcp_manager() -> MCPManager | None:
     return _mcp_manager.get()
 
 
-def set_mcp_manager(manager: MCPManager) -> None:
+def set_mcp_manager(manager: MCPManager | None) -> None:
     _mcp_manager.set(manager)
 
 

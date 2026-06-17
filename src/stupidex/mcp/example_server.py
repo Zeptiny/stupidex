@@ -1,5 +1,10 @@
 """Minimal example MCP server demonstrating tool + resource usage.
 
+A reference implementation for testing and learning. Not intended for production.
+Demonstrates the MCP server structure: tool registration, resource exposure, and
+stdio transport. For real MCP servers, see the official MCP server implementations
+at https://github.com/modelcontextprotocol/servers.
+
 Run standalone: python -m stupidex.mcp.example_server
 """
 
@@ -19,6 +24,7 @@ server = Server("stupidex-example")
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
+    """Return the list of tools this server exposes. Called by the MCP framework during tool discovery."""
     return [
         Tool(
             name="echo",
@@ -36,16 +42,18 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    """Handle a tool invocation. Called by the MCP framework when an agent calls a tool."""
     if name == "echo":
-        return [TextContent(type="text", text=arguments.get("message", ""))]
+        return [TextContent(type="text", text=arguments["message"])]
     raise ValueError(f"Unknown tool: {name}")
 
 
 @server.list_resources()
 async def list_resources() -> list[Resource]:
+    """Return the list of readable resources this server exposes. Called during resource discovery."""
     return [
         Resource(
-            uri=AnyUrl("info://stupidex"),
+            uri=AnyUrl("example://stupidex"),
             name="App Info",
             description="Basic information about the stupidex application",
             mimeType="text/plain",
@@ -55,7 +63,8 @@ async def list_resources() -> list[Resource]:
 
 @server.read_resource()
 async def read_resource(uri: AnyUrl) -> Iterable[ReadResourceContents]:
-    if str(uri) == "info://stupidex":
+    """Read a resource by URI. Called by the MCP framework when an agent requests a resource."""
+    if str(uri) == "example://stupidex":
         return [ReadResourceContents(
             content="stupidex is a coding CLI with MCP support",
             mime_type="text/plain",

@@ -125,6 +125,8 @@ class Stupidex(App):
             await mcp_manager.start_all(cfg.mcp_servers)
             set_mcp_manager(mcp_manager)
             self._mcp_manager = mcp_manager
+        else:
+            set_mcp_manager(None)
         await self.refresh_mcp_servers()
 
     async def on_exit(self) -> None:
@@ -133,6 +135,8 @@ class Stupidex(App):
                 await self._mcp_manager.shutdown()
             except Exception:
                 pass
+        from stupidex.mcp import set_mcp_manager
+        set_mcp_manager(None)
 
     def _is_streaming(self) -> bool:
         return self._active_worker is not None and not self._active_worker.is_finished

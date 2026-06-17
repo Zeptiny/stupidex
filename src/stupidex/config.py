@@ -168,7 +168,11 @@ class ConfigManager:
         for k, v in home.items():
             if k in merged:
                 if k == "mcp_servers" and isinstance(v, dict) and isinstance(merged.get(k), dict):
-                    merged[k] = {**merged[k], **v}
+                    for sname, scfg in v.items():
+                        if sname in merged[k] and isinstance(merged[k][sname], dict) and isinstance(scfg, dict):
+                            merged[k][sname] = {**merged[k][sname], **scfg}
+                        else:
+                            merged[k][sname] = scfg
                 else:
                     merged[k] = v
 
@@ -177,7 +181,11 @@ class ConfigManager:
         for k, v in project.items():
             if k in merged:
                 if k == "mcp_servers" and isinstance(v, dict) and isinstance(merged.get(k), dict):
-                    merged[k] = {**merged[k], **v}
+                    for sname, scfg in v.items():
+                        if sname in merged[k] and isinstance(merged[k][sname], dict) and isinstance(scfg, dict):
+                            merged[k][sname] = {**merged[k][sname], **scfg}
+                        else:
+                            merged[k][sname] = scfg
                 else:
                     merged[k] = v
 
