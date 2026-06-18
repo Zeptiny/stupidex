@@ -12,6 +12,7 @@ from stupidex.config import get_config
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.domain.tool import ExecutorResult, Tool
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
+from stupidex.llm.providers import ProviderResolutionError, resolve_model_ref
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.tools import get_tool_registry
 
@@ -26,6 +27,11 @@ _TOOLS_WITHOUT_TIMEOUT = {"wait_for_subagent"}
 def classify_error(exc: Exception) -> tuple[str, str]:
     """Map an exception to a (title, detail) pair for user-facing display."""
     detail = str(exc)[:_ERROR_DETAIL_MAX_LEN] or type(exc).__name__
+    if isinstance(exc, ProviderResolutionError):
+        return (
+            "Unknown Provider",
+            detail or "The model reference could not be resolved. Check your providers config.",
+        )
     if isinstance(exc, litellm.AuthenticationError):
         return "Authentication Failed", "Invalid or missing API key. Check your configuration."
     if isinstance(exc, litellm.RateLimitError):
@@ -321,12 +327,18 @@ async def stream_response(
 
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
+    litellm_provider, model_id, base_url, api_key = resolve_model_ref(
+        model or cfg.default_model
+    )
+    litellm_model = f"{litellm_provider}/{model_id}" if litellm_provider else model_id
+
     while True:
         response = await litellm.acompletion(
-            model=cfg.provider_api_type + "/" + (model or cfg.default_model),
+            model=litellm_model,
             messages=api_messages,
             tools=tools_list,
-            base_url=cfg.base_url,
+            base_url=base_url,
+            api_key=api_key,
             stream=True,
             stream_options={"include_usage": True},
         )
