@@ -69,8 +69,15 @@ async def execute_command(app: App, cmd: str) -> None:
             async def on_sessions_delete_picked(result: str | None):
                 if result:
                     deleted = app.sessions.delete(result)
+                    if not deleted:
+                        from stupidex.storage import delete_session
+                        deleted = delete_session(result)
                     if deleted:
                         app.notify("Session deleted.", severity="information")
+                        if not app.sessions.active:
+                            app.sessions.create()
+                            set_todo_store(app.sessions.active.todo_store)
+                            await app.rerender_all()
                     else:
                         app.notify("Failed to delete session.", severity="error")
 

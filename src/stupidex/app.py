@@ -11,7 +11,7 @@ from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
-from stupidex.domain.session import SessionManager
+from stupidex.domain.session import Session, SessionManager
 from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
 from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
@@ -396,8 +396,8 @@ class Stupidex(App):
         if self._interrupt_state != InterruptState.CONFIRM_SUBAGENTS:
             self._reset_interrupt_state()
         await self.rerender_footer()
-        await self._auto_name_session()
-        await self._auto_save_session()
+        named_session = await self._auto_name_session()
+        await self._auto_save_session(named_session)
 
     def _freeze_chain(self, status: ChainStatus = ChainStatus.COMPLETED) -> None:
         if self._footer_timer:
@@ -408,18 +408,25 @@ class Stupidex(App):
             self._current_chain.freeze()
             self._current_chain = None
 
-    async def _auto_save_session(self) -> None:
-        """Fire-and-forget save of the active session to disk."""
+    async def _auto_save_session(self, session: Session | None = None) -> None:
+        """Fire-and-forget save of the given session (or active) to disk."""
+        target = session or self.sessions.active
+        if not target:
+            return
         try:
-            await asyncio.to_thread(self.sessions.save_active)
+            await asyncio.to_thread(self.sessions.save, target)
         except Exception:
             log.exception("Auto-save failed")
 
-    async def _auto_name_session(self) -> None:
-        """Generate a session name after the first exchange using tolo tier."""
+    async def _auto_name_session(self) -> Session | None:
+        """Generate a session name after the first exchange using tolo tier.
+
+        Returns the captured session so the caller can save it explicitly,
+        even if the active session has changed in the meantime.
+        """
         session = self.sessions.active
         if not session:
-            return
+            return None
         if session.name.startswith("Session "):
             try:
                 from stupidex.config import get_model_for_tier
@@ -439,7 +446,7 @@ class Stupidex(App):
                     if user_content and assistant_content:
                         break
                 if not user_content:
-                    return
+                    return session
                 prompt = (
                     "Generate a short, descriptive session title (3-6 words) for this conversation.\n"
                     "Reply with ONLY the title, no quotes, no extra text.\n\n"
@@ -457,12 +464,14 @@ class Stupidex(App):
                 title = response.choices[0].message.content.strip().strip('"').strip("'")
                 if title and len(title) < 80:
                     session.name = title
-                    try:
-                        self.query_one("#title", Static).update(title)
-                    except Exception:
-                        pass
+                    if self.sessions.active is session:
+                        try:
+                            self.query_one("#title", Static).update(title)
+                        except Exception:
+                            pass
             except Exception:
                 log.debug("Auto-naming failed, keeping default name", exc_info=True)
+        return session
 
     async def _tick_footer(self) -> None:
         if self._current_chain:

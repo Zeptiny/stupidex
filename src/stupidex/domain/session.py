@@ -97,12 +97,16 @@ class SessionManager:
         if self.active:
             self.active.model = model_id
 
+    def save(self, session: Session) -> None:
+        """Persist a specific session to disk."""
+        from stupidex.storage import save_session
+        save_session(session.to_storage_dict())
+
     def save_active(self) -> None:
         """Persist the active session to disk."""
         if not self.active:
             return
-        from stupidex.storage import save_session
-        save_session(self.active.to_storage_dict())
+        self.save(self.active)
 
     def load(self, session_id: str) -> Session | None:
         """Load a session from disk into memory and set it active."""
