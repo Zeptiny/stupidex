@@ -357,7 +357,7 @@ class TestFormatModelLabel(unittest.TestCase):
         self.assertEqual(label, "work-openai/gpt-4o [vision] [text] 128k→16k")
 
     def test_token_shorthand_sub_1000(self):
-        """Sub-1000 integer token counts render verbatim with a 'k' suffix (defensive edge case)."""
+        """Sub-1000 token counts render as plain decimals (no 'k' suffix that would misstate magnitude)."""
         label = _format_model_label(
             "p1",
             "m1",
@@ -368,7 +368,7 @@ class TestFormatModelLabel(unittest.TestCase):
                 mode="embedding",
             ),
         )
-        self.assertEqual(label, "p1/m1 500k→200k")
+        self.assertEqual(label, "p1/m1 500→200")
 
 
 class TestExecuteCommandEmptyConfig(unittest.TestCase):

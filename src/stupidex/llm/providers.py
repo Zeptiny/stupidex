@@ -65,10 +65,12 @@ def _resolve_api_key(provider: dict, alias: str) -> str | None:
     api_key_env = provider.get("api_key_env")
     if api_key_env:
         value = os.environ.get(api_key_env)
-        if value is None:
+        if not value:
+            # Treat both unset (None) and explicitly-empty env vars as missing
+            # so litellm falls back to its own detection (e.g. `OPENAI_API_KEY`).
             log.debug(
-                "Provider %r: env var %r is unset; letting litellm fall back to "
-                "its default API key detection",
+                "Provider %r: env var %r is unset or empty; letting litellm fall "
+                "back to its default API key detection",
                 alias,
                 api_key_env,
             )
@@ -97,6 +99,11 @@ def resolve_model_ref(alias_model: str) -> tuple[str, str, str, str | None]:
     if not sep:
         raise ProviderResolutionError(
             f"Model reference {alias_model!r} must be in `alias/model` form"
+        )
+    if not alias or not model_id:
+        raise ProviderResolutionError(
+            f"Model reference {alias_model!r} has an empty alias or model id; "
+            "expected `alias/model` with both parts non-empty"
         )
     provider = get_provider(alias)
     api_key = _resolve_api_key(provider, alias)

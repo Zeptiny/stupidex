@@ -167,13 +167,20 @@ class TestProvidersConfigEnvOverride(unittest.TestCase):
     """Scenario 10: STUPIDEX_RAG_EMBEDDING_MODEL override still maps."""
 
     def test_rag_embedding_model_env_override(self):
+        # Capture the pre-existing value (or sentinel for unset) so we can
+        # restore it exactly, avoiding state leakage if another test or the
+        # user's shell had this var set.
+        prior = os.environ.get("STUPIDEX_RAG_EMBEDDING_MODEL")
         os.environ["STUPIDEX_RAG_EMBEDDING_MODEL"] = "work-openai/text-embedding-3-large"
         try:
             cfg = Config()
             merged = _merge_from_env(cfg)
             self.assertEqual(merged.rag_embedding_model, "work-openai/text-embedding-3-large")
         finally:
-            del os.environ["STUPIDEX_RAG_EMBEDDING_MODEL"]
+            if prior is None:
+                os.environ.pop("STUPIDEX_RAG_EMBEDDING_MODEL", None)
+            else:
+                os.environ["STUPIDEX_RAG_EMBEDDING_MODEL"] = prior
 
 
 class TestProvidersConfigDefaults(unittest.TestCase):
@@ -205,15 +212,20 @@ class TestProvidersConfigDefaults(unittest.TestCase):
             home_agents = tmpdir / "agents"
             home_skills = tmpdir / "skills"
 
-            with patch.object(cfg_mod, "HOME_CONFIG_DIR", tmpdir), \
-                 patch.object(cfg_mod, "HOME_CONFIG_PATH", home_path), \
-                 patch.object(cfg_mod, "HOME_AGENTS_DIR", home_agents), \
-                 patch.object(cfg_mod, "HOME_SKILLS_DIR", home_skills), \
-                 patch("stupidex.agents.seed_agents_dir"), \
-                 patch("stupidex.agents.load_agents"), \
-                 patch("stupidex.skills.seed_skills_dir"), \
-                 patch("stupidex.skills.load_skills"), \
-                 patch("stupidex.personality.load_personalities"):
+            # Point PROJECT_CONFIG_NAME at a non-existent path so ConfigManager.load()
+            # does NOT pick up a real .stupidex.json from the test runner's cwd.
+            with (
+                patch.object(cfg_mod, "HOME_CONFIG_DIR", tmpdir),
+                patch.object(cfg_mod, "HOME_CONFIG_PATH", home_path),
+                patch.object(cfg_mod, "HOME_AGENTS_DIR", home_agents),
+                patch.object(cfg_mod, "HOME_SKILLS_DIR", home_skills),
+                patch.object(cfg_mod, "PROJECT_CONFIG_NAME", "nonexistent-project-config.json"),
+                patch("stupidex.agents.seed_agents_dir"),
+                patch("stupidex.agents.load_agents"),
+                patch("stupidex.skills.seed_skills_dir"),
+                patch("stupidex.skills.load_skills"),
+                patch("stupidex.personality.load_personalities"),
+            ):
                 ConfigManager.reset()
                 ConfigManager.ensure_home_config()
 

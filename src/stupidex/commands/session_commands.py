@@ -33,10 +33,14 @@ COMMANDS = {
 
 
 def _token_shorthand(tokens: int) -> str:
-    """Render an integer token count as an `Nk` shorthand (128000 -> '128k')."""
+    """Render an integer token count as an `Nk` shorthand (128000 -> '128k').
+
+    Values below 1000 are returned as a plain decimal (`500` -> `'500'`) so
+    the suffix does not misrepresent the magnitude.
+    """
     if tokens >= 1000:
         return f"{tokens // 1000}k"
-    return f"{tokens}k"
+    return str(tokens)
 
 
 def _format_model_label(alias: str, model_id: str, metadata: dict) -> str:
