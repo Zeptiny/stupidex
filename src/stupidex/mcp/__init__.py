@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from contextvars import ContextVar
@@ -25,25 +26,73 @@ def set_mcp_manager(manager: MCPManager | None) -> None:
 
 
 class MCPManager:
+    """Manages MCP client sessions and their transports.
+
+    The ``stdio_client`` / ``sse_client`` transports wrap ``anyio`` task groups
+    whose cancel scopes are task-bound: the task that *enters* a transport
+    context must be the one that *exits* it. In the app, ``start_all`` runs from
+    ``App.on_mount`` and ``shutdown`` from ``App.on_exit`` — Textual dispatches
+    these in different tasks. To keep the enter/exit pair on a single task, the
+    whole lifecycle (enter transports, then later close them) runs inside one
+    dedicated runner task that owns the :class:`AsyncExitStack`.
+    """
+
     def __init__(self):
         self._exit_stack = contextlib.AsyncExitStack()
         self._sessions: dict[str, ClientSession] = {}
         self._tools: dict[str, dict] = {}
         self._uri_map: dict[str, str] = {}  # uri -> server_name
         self._server_status: dict[str, dict] = {}  # name -> {status, tool_count, error}
+        self._runner: asyncio.Task | None = None
+        self._ready: asyncio.Event = asyncio.Event()
+        self._stop: asyncio.Event = asyncio.Event()
+        self._start_error: BaseException | None = None
 
     async def start_all(self, servers: dict[str, dict]) -> None:
-        await self._exit_stack.__aenter__()
         for server_name in servers:
             self._server_status[server_name] = {"status": "starting", "tool_count": 0, "error": None}
-        for server_name, config in servers.items():
+        # The runner owns the exit stack; transports are entered AND exited in
+        # this task, avoiding anyio's cross-task cancel-scope error.
+        self._runner = asyncio.create_task(self._run(servers))
+        await self._ready.wait()
+        if self._start_error is not None:
+            # Startup itself failed; ensure the runner has torn down.
+            await self._await_runner()
+            raise self._start_error
+
+    async def _run(self, servers: dict[str, dict]) -> None:
+        try:
+            await self._exit_stack.__aenter__()
+            for server_name, config in servers.items():
+                try:
+                    await self._start_server(server_name, config)
+                    tool_count = sum(1 for k in self._tools if k.startswith(f"mcp_{server_name}_"))
+                    self._server_status[server_name] = {"status": "connected", "tool_count": tool_count, "error": None}
+                except Exception as e:
+                    self._server_status[server_name] = {"status": "failed", "tool_count": 0, "error": str(e)[:80]}
+                    logger.warning("Failed to start MCP server '%s'", server_name, exc_info=True)
+        except BaseException as e:
+            # Captured so start_all can re-raise after the runner unwinds.
+            self._start_error = e
+        finally:
+            self._ready.set()
+            # Idle until shutdown is requested, then close the stack in THIS
+            # task — the same task that entered every transport.
+            await self._stop.wait()
             try:
-                await self._start_server(server_name, config)
-                tool_count = sum(1 for k in self._tools if k.startswith(f"mcp_{server_name}_"))
-                self._server_status[server_name] = {"status": "connected", "tool_count": tool_count, "error": None}
-            except Exception as e:
-                self._server_status[server_name] = {"status": "failed", "tool_count": 0, "error": str(e)[:80]}
-                logger.warning("Failed to start MCP server '%s'", server_name, exc_info=True)
+                await self._exit_stack.aclose()
+            except Exception:
+                logger.warning("Error during MCP shutdown", exc_info=True)
+
+    async def _await_runner(self) -> None:
+        self._stop.set()
+        runner = self._runner
+        if runner is not None:
+            try:
+                await runner
+            except Exception:
+                logger.warning("MCP runner task ended with an error", exc_info=True)
+        self._runner = None
 
     async def _start_server(self, server_name: str, config: dict) -> None:
         from stupidex.mcp.schema import convert_mcp_tool, make_mcp_executor
@@ -76,14 +125,10 @@ class MCPManager:
             self._uri_map[str(resource.uri)] = server_name
 
     async def shutdown(self) -> None:
-        try:
-            await self._exit_stack.aclose()
-        except Exception:
-            logger.warning("Error during MCP shutdown", exc_info=True)
-        finally:
-            self._sessions.clear()
-            self._tools.clear()
-            self._uri_map.clear()
+        await self._await_runner()
+        self._sessions.clear()
+        self._tools.clear()
+        self._uri_map.clear()
 
     def get_tools(self) -> dict[str, dict]:
         return dict(self._tools)
