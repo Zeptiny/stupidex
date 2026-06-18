@@ -130,7 +130,7 @@ class Stupidex(App):
         await self.refresh_mcp_servers()
         await self.refresh_index_status()
 
-    async def on_exit(self) -> None:
+    async def on_unmount(self) -> None:
         self._subagent_ui.stop()
         if hasattr(self, '_mcp_manager') and self._mcp_manager is not None:
             try:
