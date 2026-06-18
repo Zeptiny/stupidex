@@ -227,7 +227,9 @@ def discover_provider_models(alias: str, force: bool = False) -> list[str]:
             model_ids = [
                 m["id"]
                 for m in data.get("data", [])
-                if isinstance(m, dict) and "id" in m
+                if isinstance(m, dict)
+                and isinstance(m.get("id"), str)
+                and m["id"]
             ]
     except Exception as e:  # noqa: BLE001 -- network is best-effort
         log.warning("Model discovery for provider %r failed: %s", alias, e)
