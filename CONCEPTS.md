@@ -22,6 +22,14 @@ Shared domain vocabulary for the stupidex project. This file defines terms used 
 - **RAG Search** — Semantic code search using embeddings and cosine similarity over indexed project files.
 - **RAG Index** — The vector store (SQLite + numpy) built by indexing and chunking project files.
 
+## AST Tools
+
+- **Symbol Index** — A standalone SQLite database (`.stupidex/ast/symbols.db`) that stores parsed symbol definitions and references across the project, enabling cross-file queries and renames.
+- **Tree-sitter** — The incremental parser library used to build concrete syntax trees for source files. Provides error-tolerant parsing and S-expression query matching.
+- **AST range** — The byte-offset span of a syntax node within a file, expressed as `(start_line, start_column, end_line, end_column, char_start, char_end)`.
+- **Extended range** — An AST range expanded to include preceding comments, docstrings, decorators, and export keywords. Used by `replace_symbol` to replace entire definitions including metadata.
+- **FNV-1a** — A fast non-cryptographic hash function used for per-function content change detection in `get_function`. Reports "no changes" when the hash matches the last-sent value.
+
 ## Knowledge Management
 
 - **Solution Doc** — A documented problem/solution in `docs/solutions/` with YAML frontmatter for searchability.
