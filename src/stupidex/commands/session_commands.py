@@ -1,13 +1,23 @@
+import logging
 from functools import partial
 
 from textual.app import App
 from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
 
-from stupidex.config import get_current_personality, get_current_theme, set_current_personality, set_current_theme
+from stupidex.config import (
+    Config,
+    get_config,
+    get_current_personality,
+    get_current_theme,
+    set_current_personality,
+    set_current_theme,
+)
 from stupidex.domain.todo import set_todo_store
-from stupidex.llm.models import list_models
+from stupidex.llm.providers import resolve_model_metadata
 from stupidex.personality import load_personalities
 from stupidex.screens.picker import OptionPicker, PickerItem
+
+log = logging.getLogger(__name__)
 
 COMMANDS = {
     "/new": "Start a new session",
@@ -20,6 +30,84 @@ COMMANDS = {
     "/rag status": "Show RAG index status",
     "/rag clear": "Clear the RAG index",
 }
+
+
+def _token_shorthand(tokens: int) -> str:
+    """Render an integer token count as an `Nk` shorthand (128000 -> '128k')."""
+    if tokens >= 1000:
+        return f"{tokens // 1000}k"
+    return f"{tokens}k"
+
+
+def _format_model_label(alias: str, model_id: str, metadata: dict) -> str:
+    """Render a picker label for a configured model entry.
+
+    Format: `alias/model [vision] [text] {in}k→{out}k` -- each optional
+    segment is appended only when its condition holds.
+
+    * `[vision]` -- appended when `metadata["supports_vision"]` is truthy.
+    * `[text]` -- appended when `metadata["mode"]` is in `{"chat", "completion"}`.
+    * `{in}k→{out}k` -- appended only when BOTH `max_input_tokens` and
+      `max_output_tokens` are integers (per U2: `None` means unknown).
+
+    Badges remain plain searchable text since `OptionPicker._filter` matches on
+    `label.lower()` (see `screens/picker.py:31-33`).
+    """
+    parts: list[str] = [f"{alias}/{model_id}"]
+    if metadata.get("supports_vision"):
+        parts.append("[vision]")
+    if metadata.get("mode") in {"chat", "completion"}:
+        parts.append("[text]")
+    max_in = metadata.get("max_input_tokens")
+    max_out = metadata.get("max_output_tokens")
+    if isinstance(max_in, int) and isinstance(max_out, int):
+        parts.append(f"{_token_shorthand(max_in)}→{_token_shorthand(max_out)}")
+    return " ".join(parts)
+
+
+def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
+    """Build the picker-list for `/model` from configured providers + resolved metadata.
+
+    Iterates each configured provider's declared `models` dict (per U1),
+    hydrates capability metadata via `resolve_model_metadata` (per U2), and
+    builds a `PickerItem` per `(alias, model_id)` pair with the `id` set to
+    `f"{alias}/{model_id}"` -- the form `change_model` stores.
+
+    Never raises: malformed provider entries and metadata-resolution failures
+    are logged and skipped, keeping the rest of the list intact. The validator
+    (U1) should have rejected malformed entries already, so the try/except is
+    purely defensive.
+    """
+    items: list[PickerItem] = []
+    for alias, provider_entry in cfg.providers.items():
+        if not isinstance(provider_entry, dict):
+            log.warning(
+                "Skipping provider %r: entry must be a dict, got %s",
+                alias,
+                type(provider_entry).__name__,
+            )
+            continue
+        models = provider_entry.get("models", {})
+        if not isinstance(models, dict):
+            log.warning(
+                "Skipping provider %r: 'models' must be a dict, got %s",
+                alias,
+                type(models).__name__,
+            )
+            continue
+        for model_id in models:
+            try:
+                metadata = resolve_model_metadata(alias, model_id)
+                label = _format_model_label(alias, model_id, metadata)
+                items.append(PickerItem(label=label, id=f"{alias}/{model_id}"))
+            except Exception:  # noqa: BLE001 -- defensive; resolver never raises by design
+                log.warning(
+                    "Skipping model %r for provider %r: metadata resolution failed",
+                    model_id,
+                    alias,
+                )
+                continue
+    return items
 
 
 async def execute_command(app: App, cmd: str) -> None:
@@ -53,11 +141,14 @@ async def execute_command(app: App, cmd: str) -> None:
 
             app.push_screen(OptionPicker(items), on_picked)
         case "/model":
-            models = await list_models()
-            if not models:
-                app.notify("Failed to fetch models", severity="error")
+            cfg = get_config()
+            items = _build_model_picker_items(cfg)
+            if not items:
+                app.notify(
+                    "No models configured. Add providers to your config.",
+                    severity="warning",
+                )
                 return
-            items = [PickerItem(label=m.id, id=m.id) for m in models]
 
             async def on_picked(result: str | None):
                 if result:
