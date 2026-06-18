@@ -27,6 +27,7 @@ COMMANDS = {
     "/theme": "Switch the application theme",
     "/personality": "Switch the agent personality",
     "/index": "Index the project for RAG semantic search",
+    "/reindex-ast": "Re-scan the project for AST symbol indexing",
     "/rag status": "Show RAG index status",
     "/rag clear": "Clear the RAG index",
 }
@@ -253,6 +254,30 @@ async def execute_command(app: App, cmd: str) -> None:
                 app.notify(msg, severity="information" if not result.errors else "warning")
             except Exception as e:
                 app.notify(f"Indexing failed: {e}", severity="error")
+        case "/reindex-ast":
+            from stupidex.ast.indexer import index_project
+
+            app.notify("Re-scanning project for AST symbols...", severity="information")
+
+            async def _run_reindex_ast():
+                try:
+                    result = await index_project(force=True)
+                    msg = (
+                        f"AST indexed {result.files_indexed} files "
+                        f"({result.symbols_extracted} symbols) in "
+                        f"{result.duration_seconds:.1f}s. "
+                        f"Skipped: {result.files_skipped}, Deleted: {result.files_deleted}"
+                    )
+                    if result.errors:
+                        msg += f" Errors: {len(result.errors)}"
+                    app.notify(
+                        msg,
+                        severity="information" if not result.errors else "warning",
+                    )
+                except Exception as e:
+                    app.notify(f"AST re-index failed: {e}", severity="error")
+
+            app.run_worker(_run_reindex_ast)
         case "/rag status":
             from stupidex.rag.indexer import get_status
 
