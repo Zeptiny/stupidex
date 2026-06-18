@@ -21,7 +21,8 @@ log = logging.getLogger(__name__)
 
 COMMANDS = {
     "/new": "Start a new session",
-    "/switch": "Switch to another session",
+    "/sessions": "Load a saved session from disk",
+    "/rename": "Rename the active session",
     "/delete": "Delete a session",
     "/model": "Change the model for the current session",
     "/theme": "Switch the application theme",
@@ -169,30 +170,6 @@ async def execute_command(app: App, cmd: str) -> None:
             app.sessions.create()
             set_todo_store(app.sessions.active.todo_store)
             await app.rerender_all()
-        case "/switch":
-            sessions = list(app.sessions.sessions.values())
-            items = [PickerItem(label=s.name, id=s.id) for s in sessions]
-
-            async def on_picked(result: str | None):
-                if result:
-                    app.sessions.switch(result)
-                    set_todo_store(app.sessions.active.todo_store)
-                    await app.rerender_all()
-
-            app.push_screen(OptionPicker(items), on_picked)
-        case "/delete":
-            sessions = list(app.sessions.sessions.values())
-            items = [PickerItem(label=s.name, id=s.id) for s in sessions]
-
-            async def on_picked(result: str | None):
-                if result:
-                    app.sessions.delete(result)
-                    if app.sessions.active is None:
-                        app.sessions.create()
-                    set_todo_store(app.sessions.active.todo_store)
-                    await app.rerender_all()
-
-            app.push_screen(OptionPicker(items), on_picked)
         case "/model":
             cfg = get_config()
             items = _build_model_picker_items(cfg)
@@ -209,8 +186,71 @@ async def execute_command(app: App, cmd: str) -> None:
                     await app.rerender_footer()
 
             app.push_screen(OptionPicker(items, header=_MODEL_PICKER_HEADER), on_picked)
+
+        case "/sessions":
+            saved = app.sessions.list_saved()
+            if not saved:
+                app.notify("No saved sessions found.", severity="information")
+                return
+            items = [PickerItem(label=s["name"], id=s["id"]) for s in saved]
+
+            async def on_sessions_picked(result: str | None):
+                if result:
+                    session = app.sessions.load(result)
+                    if session:
+                        set_todo_store(session.todo_store)
+                        await app.rerender_all()
+                    else:
+                        app.notify("Failed to load session", severity="error")
+
+            app.push_screen(OptionPicker(items), on_sessions_picked)
+        case "/delete":
+            saved = app.sessions.list_saved()
+            if not saved:
+                app.notify("No saved sessions found.", severity="information")
+                return
+            items = [PickerItem(label=s["name"], id=s["id"]) for s in saved]
+
+            async def on_sessions_delete_picked(result: str | None):
+                if result:
+                    deleted = app.sessions.delete(result)
+                    if not deleted:
+                        from stupidex.storage import delete_session
+                        deleted = delete_session(result)
+                    if deleted:
+                        app.notify("Session deleted.", severity="information")
+                        if not app.sessions.active:
+                            app.sessions.create()
+                            set_todo_store(app.sessions.active.todo_store)
+                            await app.rerender_all()
+                    else:
+                        app.notify("Failed to delete session.", severity="error")
+
+            app.push_screen(OptionPicker(items), on_sessions_delete_picked)
+        case "/rename":
+            if not app.sessions.active:
+                app.notify("No active session.", severity="error")
+                return
+            from stupidex.screens.input_modal import InputModal
+
+            async def on_rename_result(result: str | None):
+                if result and result.strip():
+                    app.sessions.active.name = result.strip()
+                    app.query_one("#title").update(result.strip())
+                    app.sessions.save_active()
+
+            app.push_screen(
+                InputModal(
+                    title="Rename Session",
+                    placeholder="New session name",
+                    default=app.sessions.active.name,
+                ),
+                on_rename_result,
+            )
+
         case "/theme":
             from stupidex.themes import get_theme_registry
+
             registry = get_theme_registry()
             current = get_current_theme()
             items = [
@@ -227,10 +267,7 @@ async def execute_command(app: App, cmd: str) -> None:
         case "/personality":
             personalities = load_personalities()
             current = get_current_personality()
-            items = [
-                PickerItem(label=f"● {p}" if p == current else f"  {p}", id=p)
-                for p in personalities
-            ]
+            items = [PickerItem(label=f"● {p}" if p == current else f"  {p}", id=p) for p in personalities]
 
             async def on_personality_picked(result: str | None):
                 if result:

@@ -11,7 +11,7 @@ from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
-from stupidex.domain.session import SessionManager
+from stupidex.domain.session import Session, SessionManager
 from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
 from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
@@ -397,6 +397,8 @@ class Stupidex(App):
         if self._interrupt_state != InterruptState.CONFIRM_SUBAGENTS:
             self._reset_interrupt_state()
         await self.rerender_footer()
+        named_session = await self._auto_name_session()
+        await self._auto_save_session(named_session)
 
     def _freeze_chain(self, status: ChainStatus = ChainStatus.COMPLETED) -> None:
         if self._footer_timer:
@@ -406,6 +408,71 @@ class Stupidex(App):
             self._current_chain.chain.finish(status)
             self._current_chain.freeze()
             self._current_chain = None
+
+    async def _auto_save_session(self, session: Session | None = None) -> None:
+        """Fire-and-forget save of the given session (or active) to disk."""
+        target = session or self.sessions.active
+        if not target:
+            return
+        try:
+            await asyncio.to_thread(self.sessions.save, target)
+        except Exception:
+            log.exception("Auto-save failed")
+
+    async def _auto_name_session(self) -> Session | None:
+        """Generate a session name after the first exchange using tolo tier.
+
+        Returns the captured session so the caller can save it explicitly,
+        even if the active session has changed in the meantime.
+        """
+        session = self.sessions.active
+        if not session:
+            return None
+        if session.name.startswith("Session "):
+            try:
+                from stupidex.config import get_model_for_tier
+                model = get_model_for_tier("tolo")
+                from stupidex.config import get_config
+                cfg = get_config()
+                user_content = ""
+                assistant_content = ""
+                for chain in session.chains:
+                    for msg in chain.messages:
+                        if msg.type == MessageType.THINKING:
+                            continue
+                        if msg.role == MessageRole.USER and not user_content:
+                            user_content = msg.content[:200]
+                        elif msg.role == MessageRole.ASSISTANT and msg.type == MessageType.TEXT and not assistant_content:
+                            assistant_content = msg.content[:200]
+                    if user_content and assistant_content:
+                        break
+                if not user_content:
+                    return session
+                prompt = (
+                    "Generate a short, descriptive session title (3-6 words) for this conversation.\n"
+                    "Reply with ONLY the title, no quotes, no extra text.\n\n"
+                    f"User: {user_content}\n"
+                )
+                if assistant_content:
+                    prompt += f"Assistant: {assistant_content}\n"
+                import litellm
+                response = await litellm.acompletion(
+                    model=cfg.provider_api_type + "/" + model,
+                    messages=[{"role": "user", "content": prompt}],
+                    base_url=cfg.base_url,
+                    timeout=60,
+                )
+                title = response.choices[0].message.content.strip().strip('"').strip("'")
+                if title and len(title) < 80:
+                    session.name = title
+                    if self.sessions.active is session:
+                        try:
+                            self.query_one("#title", Static).update(title)
+                        except Exception:
+                            pass
+            except Exception:
+                log.debug("Auto-naming failed, keeping default name", exc_info=True)
+        return session
 
     async def _tick_footer(self) -> None:
         if self._current_chain:
@@ -432,10 +499,16 @@ class Stupidex(App):
     async def mount_all_messages(self) -> None:
         container = self.query_one("#output", ScrollableContainer)
         await container.remove_children()
-        for msg in self.messages:
-            widget = create_message_widget(msg)
-            if widget is not None:
-                await container.mount(widget)
+        if not self.sessions.active:
+            return
+        for chain in self.sessions.active.chains:
+            chain_container = ChainContainer(chain)
+            await container.mount(chain_container)
+            chain_container.freeze()
+            for msg in chain.messages:
+                widget = create_message_widget(msg, loaded=True)
+                if widget is not None:
+                    await chain_container.messages_area.mount(widget)
 
     async def rerender_all(self) -> None:
         if not self.sessions.active:
