@@ -105,6 +105,64 @@ class SubagentRecord:
             return round(time.time() - self.start_time, 1)
         return None
 
+    def to_storage_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "agent_name": self.name,
+            "agent_type": self.type,
+            "state": self.state.value,
+            "label": self.label,
+            "task": self.task,
+            "result": self.result,
+            "error": self.error,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "messages": [m.to_storage_dict() for m in self.messages],
+        }
+
+    @classmethod
+    def from_storage_dict(cls, data: dict[str, Any]) -> SubagentRecord:
+        from stupidex.agents import get_agent_registry
+        from stupidex.domain.message import Message
+        agent_name = data.get("agent_name", "")
+        agent_type = data.get("agent_type", "Subagent")
+        try:
+            registry = get_agent_registry()
+            agent = registry.get(agent_name)
+            if agent is None:
+                from stupidex.domain.agent import Agent, AgentTypes, ModelTier
+                agent = Agent(
+                    name=agent_name,
+                    type=AgentTypes.from_str(agent_type),
+                    tier=ModelTier.PAPUDO,
+                    description="Restored from storage",
+                    system_prompt="",
+                )
+        except Exception:
+            from stupidex.domain.agent import Agent, AgentTypes, ModelTier
+            agent = Agent(
+                name=agent_name,
+                type=AgentTypes.from_str(agent_type),
+                tier=ModelTier.PAPUDO,
+                description="Restored from storage",
+                system_prompt="",
+            )
+        state = SubagentState(data.get("state", "completed"))
+        if state == SubagentState.RUNNING:
+            state = SubagentState.INTERRUPTED
+        return cls(
+            id=data["id"],
+            agent=agent,
+            state=state,
+            label=data.get("label", ""),
+            task=data.get("task", ""),
+            result=data.get("result"),
+            error=data.get("error"),
+            start_time=data.get("start_time", 0.0),
+            end_time=data.get("end_time"),
+            messages=[Message.from_storage_dict(m) for m in data.get("messages", [])],
+        )
+
 
 class SubagentManager:
     def __init__(self) -> None:

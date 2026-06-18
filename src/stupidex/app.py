@@ -396,6 +396,8 @@ class Stupidex(App):
         if self._interrupt_state != InterruptState.CONFIRM_SUBAGENTS:
             self._reset_interrupt_state()
         await self.rerender_footer()
+        await self._auto_name_session()
+        self._auto_save_session()
 
     def _freeze_chain(self, status: ChainStatus = ChainStatus.COMPLETED) -> None:
         if self._footer_timer:
@@ -405,6 +407,60 @@ class Stupidex(App):
             self._current_chain.chain.finish(status)
             self._current_chain.freeze()
             self._current_chain = None
+
+    def _auto_save_session(self) -> None:
+        """Fire-and-forget save of the active session to disk."""
+        try:
+            self.sessions.save_active()
+        except Exception:
+            log.exception("Auto-save failed")
+
+    async def _auto_name_session(self) -> None:
+        """Generate a session name after the first exchange using tolo tier."""
+        if not self.sessions.active:
+            return
+        if self.sessions.active.name.startswith("Session "):
+            try:
+                from stupidex.config import get_model_for_tier
+                model = get_model_for_tier("tolo")
+                from stupidex.config import get_config
+                cfg = get_config()
+                user_content = ""
+                assistant_content = ""
+                for chain in self.sessions.active.chains:
+                    for msg in chain.messages:
+                        if msg.type == MessageType.THINKING:
+                            continue
+                        if msg.role == MessageRole.USER and not user_content:
+                            user_content = msg.content[:200]
+                        elif msg.role == MessageRole.ASSISTANT and msg.type == MessageType.TEXT and not assistant_content:
+                            assistant_content = msg.content[:200]
+                    if user_content and assistant_content:
+                        break
+                if not user_content:
+                    return
+                prompt = (
+                    "Generate a short, descriptive session title (3-6 words) for this conversation.\n"
+                    "Reply with ONLY the title, no quotes, no extra text.\n\n"
+                    f"User: {user_content}\n"
+                )
+                if assistant_content:
+                    prompt += f"Assistant: {assistant_content}\n"
+                import litellm
+                response = await litellm.acompletion(
+                    model=cfg.provider_api_type + "/" + model,
+                    messages=[{"role": "user", "content": prompt}],
+                    base_url=cfg.base_url,
+                )
+                title = response.choices[0].message.content.strip().strip('"').strip("'")
+                if title and len(title) < 80:
+                    self.sessions.active.name = title
+                    try:
+                        self.query_one("#title", Static).update(title)
+                    except Exception:
+                        pass
+            except Exception:
+                log.debug("Auto-naming failed, keeping default name", exc_info=True)
 
     async def _tick_footer(self) -> None:
         if self._current_chain:
