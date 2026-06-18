@@ -9,7 +9,7 @@ SESSIONS_DIR = Path.home() / ".stupidex" / "sessions"
 
 
 def ensure_sessions_dir() -> Path:
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     return SESSIONS_DIR
 
 
@@ -20,7 +20,8 @@ def save_session(data: dict) -> None:
     path = SESSIONS_DIR / f"{session_id}.json"
     tmp = path.with_suffix(".tmp")
     try:
-        with open(tmp, "w") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
@@ -62,7 +63,7 @@ def list_saved_sessions() -> list[dict]:
                 "model": data.get("model"),
                 "chain_count": len(data.get("chains", [])),
             })
-        except (json.JSONDecodeError, OSError, KeyError) as e:
+        except (json.JSONDecodeError, OSError, KeyError, TypeError, AttributeError) as e:
             log.warning("Skipping corrupted session file %s: %s", path.name, e)
     return sessions
 

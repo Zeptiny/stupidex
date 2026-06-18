@@ -88,7 +88,7 @@ From the `/sessions` browser, the user can open a saved session in read-only mod
 
 One JSON file per session:
 
-```
+```shell
 ~/.stupidex/sessions/
   <uuid-1>.json
   <uuid-2>.json
@@ -143,7 +143,7 @@ This means `SessionManager` needs `load_session(session_id)` and `save_session(s
 
 ## Known Future Concerns
 
-- **Session file size:** No cap in v1. If sessions grow very large (hundreds of messages), full-serialization on every save becomes expensive. Mitigation options for later: incremental/dirty-flag saves, message truncation, or archiving old chains.
+- **Session file size:** No cap in v1. If sessions grow beyond a few hundred messages, full-serialization on every save becomes expensive. Mitigation options for later: incremental/dirty-flag saves, message truncation, or archiving old chains.
 
 ## Scope
 

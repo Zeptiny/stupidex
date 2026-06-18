@@ -1,3 +1,4 @@
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -8,6 +9,8 @@ from stupidex.config import get_config
 from stupidex.domain.chain import Chain
 from stupidex.domain.message import Message
 from stupidex.domain.todo import TodoStore
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,7 +56,7 @@ class Session:
                 record = SubagentRecord.from_storage_dict(sd)
                 session.subagent_manager._subagents[record.id] = record
             except Exception:
-                pass
+                log.warning("Failed to restore subagent record %s", sd, exc_info=True)
         return session
 
 
@@ -107,7 +110,11 @@ class SessionManager:
         data = load_session(session_id)
         if data is None:
             return None
-        session = Session.from_storage_dict(data)
+        try:
+            session = Session.from_storage_dict(data)
+        except Exception:
+            log.warning("Failed to deserialize session %s", session_id, exc_info=True)
+            return None
         self.sessions[session.id] = session
         self.active = session
         return session

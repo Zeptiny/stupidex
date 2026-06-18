@@ -12,7 +12,7 @@ from stupidex.screens.picker import OptionPicker, PickerItem
 COMMANDS = {
     "/new": "Start a new session",
     "/sessions": "Load a saved session from disk",
-    "/rename": "Delete a saved session from disk",
+    "/rename": "Rename the active session",
     "/delete": "Delete a session",
     "/model": "Change the model for the current session",
     "/theme": "Switch the application theme",
@@ -68,10 +68,11 @@ async def execute_command(app: App, cmd: str) -> None:
 
             async def on_sessions_delete_picked(result: str | None):
                 if result:
-                    from stupidex.storage import delete_session
-
-                    delete_session(result)
-                    app.notify("Session deleted.", severity="information")
+                    deleted = app.sessions.delete(result)
+                    if deleted:
+                        app.notify("Session deleted.", severity="information")
+                    else:
+                        app.notify("Failed to delete session.", severity="error")
 
             app.push_screen(OptionPicker(items), on_sessions_delete_picked)
         case "/rename":

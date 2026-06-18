@@ -109,7 +109,7 @@ Add `created_at: float` and `updated_at: float` fields to `Session`. Initialize 
 `SessionSummary` is a lightweight dataclass: `id`, `name`, `updated_at`, `message_count`. Used by `list_all()` to avoid loading full sessions into memory.
 
 Atomic write pattern (from `ConfigManager.save()`):
-```
+```text
 write to tmp file → flush → fsync → os.replace to final path → fsync dir
 ```
 
@@ -363,7 +363,7 @@ For delete mode:
 
 ## Dependency Graph
 
-```
+```mermaid
 U1 (Serialization) ──→ U2 (Storage Engine) ──→ U3 (SessionManager Integration)
                                                     ├──→ U4 (Auto-Save)
                                                     ├──→ U5 (Auto-Naming)

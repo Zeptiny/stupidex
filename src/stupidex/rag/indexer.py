@@ -112,9 +112,19 @@ async def index_project(
 
     # Check embedder availability before processing files to avoid N identical errors
     try:
-        test_embeddings = await embedder.embed([""])
+        test_embeddings = await embedder.embed(["test"])
     except Exception as e:
         stats.errors.append(f"Embedding provider failed before indexing: {e}")
+        stats.duration_seconds = asyncio.get_event_loop().time() - t0
+        return stats
+
+    if (
+        not test_embeddings
+        or not isinstance(test_embeddings[0], list)
+        or not test_embeddings[0]
+        or not isinstance(test_embeddings[0][0], float)
+    ):
+        stats.errors.append("Embedding provider returned unexpected format")
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
         return stats
 
