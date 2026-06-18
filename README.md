@@ -800,7 +800,6 @@ Project-level config: `.stupidex.json` (deep-merges with home config — project
 - BTW/Side agent (Ask a question without interrupting the main flow)
 
 ## Needs improvement
-- Support for Anthropic API (litellm already supports it; needs provider config + testing)
 - Bug: Automatically scrolling down after a message is finished
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool
@@ -808,7 +807,6 @@ Project-level config: `.stupidex.json` (deep-merges with home config — project
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Message queue for the user
-- /index hangs the app
 
 # Considerations
 - Make the read tool usable with directories?
