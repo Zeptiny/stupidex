@@ -662,6 +662,10 @@ Run `/model` (Ctrl+P → `/model`) to see all configured models across all provi
 - `[text]` badge — if the model mode is `chat` or `completion`
 - `128k→16k` — token shorthand (input→output) when metadata is available
 
+**Hybrid discovery (R10).** When a provider entry omits the `models` dict (or leaves it empty), the picker falls back to fetching the provider's `GET /models` endpoint. Well-known models still get badges + token shorthand from litellm's registry; unknown ones appear with `[text]` only. Discovery is cached per-session per-alias; network failures yield an empty list (the picker degrades to "no models for this provider" instead of crashing).
+
+Set `STUPIDEX_DISABLE_MODEL_DISCOVERY=1` (or `true` / `yes`) to enforce strict configured-only behavior — useful for offline use or when you want to limit which models the agent can switch to.
+
 ### RAG Embeddings
 
 RAG uses the same `alias/model` format via `rag_embedding_model`. The built-in `fastembed` pseudo-provider handles local ONNX embeddings — see the [RAG](#rag-retrieval-augmented-generation) section for details.

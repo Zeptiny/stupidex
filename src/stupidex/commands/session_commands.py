@@ -13,7 +13,7 @@ from stupidex.config import (
     set_current_theme,
 )
 from stupidex.domain.todo import set_todo_store
-from stupidex.llm.providers import resolve_model_metadata
+from stupidex.llm.providers import discover_provider_models, resolve_model_metadata
 from stupidex.personality import load_personalities
 from stupidex.screens.picker import OptionPicker, PickerItem
 
@@ -99,6 +99,22 @@ def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
                 type(models).__name__,
             )
             continue
+        # Hybrid fallback (R10): if no models are declared for this provider,
+        # discover them from the endpoint's GET /models. Well-known models
+        # still get badges + token shorthand from litellm's registry. Respects
+        # STUPIDEX_DISABLE_MODEL_DISCOVERY for strict configured-only behavior.
+        if not models:
+            try:
+                discovered = discover_provider_models(alias)
+            except Exception:  # noqa: BLE001 -- discovery is best-effort
+                discovered = []
+            if not discovered:
+                log.debug(
+                    "Skipping provider %r: no declared models and discovery yielded nothing",
+                    alias,
+                )
+                continue
+            models = {m: {} for m in discovered}
         for model_id in models:
             try:
                 metadata = resolve_model_metadata(alias, model_id)

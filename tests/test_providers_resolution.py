@@ -11,14 +11,16 @@ do not touch the on-disk singleton; `_metadata_cache` is reset between tests.
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import httpx
 import litellm
 
 from stupidex.config import Config, _validate_config
 from stupidex.llm import providers as providers_mod
 from stupidex.llm.providers import (
     ProviderResolutionError,
+    discover_provider_models,
     reset_cache,
     resolve_embedding_ref,
     resolve_model_metadata,
@@ -338,6 +340,135 @@ class TestDefaultConfigIntegration(ProviderResolutionTestCase):
                 "mode": "chat",
             },
         )
+
+
+class TestDiscoverProviderModels(ProviderResolutionTestCase):
+    """Hybrid fallback: GET /models discovery for providers without declared `models`."""
+
+    _PROVIDERS = {
+        "openai-prod": {
+            "base_url": "https://api.openai.com/v1",
+            "litellm_provider": "openai",
+            "api_key": "sk-test",
+        },
+        "no-url": {
+            "litellm_provider": "anthropic",
+            "api_key_env": "DEFINITELY_UNSET_TEST_ENV_VAR",
+        },
+    }
+
+    def _patch_providers(self):
+        """Local variant: this class always uses `_PROVIDERS` (overriding base signature)."""
+        return patch.object(providers_mod, "get_config", return_value=_cfg(self._PROVIDERS))
+
+    def _patch_httpx(self, fake_client):
+        """Patch the httpx module on providers_mod so `httpx.Client(...)` returns our mock."""
+        return patch.object(providers_mod, "httpx", MagicMock(Client=MagicMock(return_value=fake_client)))
+
+    def _fake_response(self, model_ids: list[str]):
+        fake = MagicMock()
+        fake.raise_for_status.return_value = None
+        fake.json.return_value = {"data": [{"id": mid} for mid in model_ids]}
+        return fake
+
+    def _fake_client(self, response=None, side_effect=None):
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.__exit__.return_value = None
+        if side_effect is not None:
+            client.get.side_effect = side_effect
+        else:
+            client.get.return_value = response or self._fake_response([])
+        return client
+
+    def test_unknown_alias_raises(self):
+        """Discovery propagates ProviderResolutionError for bad aliases."""
+        with self._patch_providers(), self.assertRaises(ProviderResolutionError):
+            discover_provider_models("does-not-exist")
+
+    def test_provider_without_base_url_returns_empty(self):
+        """Providers with no base_url (e.g. native anthropic) cannot discover."""
+        with self._patch_providers():
+            self.assertEqual(discover_provider_models("no-url"), [])
+
+    def test_successful_discovery_returns_model_ids(self):
+        """Happy path: GET /models returns {"data": [{"id": ...}, ...]}."""
+        client = self._fake_client(self._fake_response(["gpt-4o", "gpt-4o-mini", "text-embedding-3-small"]))
+        with self._patch_providers(), self._patch_httpx(client):
+            result = discover_provider_models("openai-prod")
+        self.assertEqual(result, ["gpt-4o", "gpt-4o-mini", "text-embedding-3-small"])
+
+    def test_discovery_passes_api_key_in_authorization_header(self):
+        """Resolved api_key becomes a Bearer header (OpenAI-compatible endpoints require it)."""
+        client = self._fake_client(self._fake_response([]))
+        with self._patch_providers(), self._patch_httpx(client):
+            discover_provider_models("openai-prod")
+        headers = client.get.call_args.kwargs.get("headers", {})
+        self.assertEqual(headers.get("Authorization"), "Bearer sk-test")
+
+    def test_discovery_skips_authorization_when_api_key_missing(self):
+        """When api_key resolves to None, no Authorization header is set."""
+        providers = {
+            "local": {"base_url": "http://localhost:11434/v1", "litellm_provider": "openai"},
+        }
+        client = self._fake_client(self._fake_response(["llama3.1"]))
+        with patch.object(providers_mod, "get_config", return_value=_cfg(providers)), self._patch_httpx(client):
+            result = discover_provider_models("local")
+        self.assertEqual(result, ["llama3.1"])
+        headers = client.get.call_args.kwargs.get("headers", {})
+        self.assertNotIn("Authorization", headers)
+
+    def test_network_failure_returns_empty_list(self):
+        """Any exception (timeout, 401, malformed JSON) -> empty list, no raise."""
+        client = self._fake_client(side_effect=httpx.ConnectError("server down"))
+        with self._patch_providers(), self._patch_httpx(client):
+            result = discover_provider_models("openai-prod")
+        self.assertEqual(result, [])
+
+    def test_discovered_models_are_cached(self):
+        """Second call within session returns cached list (no second HTTP call)."""
+        client = self._fake_client(self._fake_response(["gpt-4o"]))
+        with self._patch_providers(), self._patch_httpx(client):
+            first = discover_provider_models("openai-prod")
+            second = discover_provider_models("openai-prod")
+        self.assertEqual(first, ["gpt-4o"])
+        self.assertEqual(second, ["gpt-4o"])
+        self.assertEqual(client.get.call_count, 1)
+
+    def test_force_refetch_bypasses_cache(self):
+        """force=True triggers a new HTTP call even if cached."""
+        client = self._fake_client(self._fake_response(["gpt-4o"]))
+        with self._patch_providers(), self._patch_httpx(client):
+            discover_provider_models("openai-prod")
+            discover_provider_models("openai-prod", force=True)
+        self.assertEqual(client.get.call_count, 2)
+
+    def test_env_disable_flag_short_circuits_to_empty(self):
+        """STUPIDEX_DISABLE_MODEL_DISCOVERY=true short-circuits discovery, no HTTP call."""
+        client = self._fake_client(self._fake_response(["gpt-4o"]))
+        with self._patch_providers(), self._patch_httpx(client), patch.dict(os.environ, {"STUPIDEX_DISABLE_MODEL_DISCOVERY": "true"}):
+            result = discover_provider_models("openai-prod")
+        self.assertEqual(result, [])
+        client.get.assert_not_called()
+
+    def test_malformed_response_yields_empty_list(self):
+        """Missing 'data' key or non-dict entries return empty, not crash."""
+        fake = MagicMock()
+        fake.raise_for_status.return_value = None
+        fake.json.return_value = {"unexpected": "shape"}
+        client = self._fake_client(fake)
+        with self._patch_providers(), self._patch_httpx(client):
+            result = discover_provider_models("openai-prod")
+        self.assertEqual(result, [])
+
+    def test_reset_cache_clears_discovery_cache(self):
+        """reset_cache() invalidates both metadata and discovery caches."""
+        client = self._fake_client(self._fake_response(["gpt-4o"]))
+        with self._patch_providers(), self._patch_httpx(client):
+            discover_provider_models("openai-prod")
+            reset_cache()
+            discover_provider_models("openai-prod")
+        self.assertEqual(client.get.call_count, 2)
 
 
 if __name__ == "__main__":

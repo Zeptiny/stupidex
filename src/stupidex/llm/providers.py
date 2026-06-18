@@ -20,6 +20,7 @@ import os
 # below so the cost-map is read from the packaged local copy instead.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+import httpx  # noqa: E402
 import litellm  # noqa: E402
 
 from stupidex.config import get_config  # noqa: E402
@@ -35,6 +36,9 @@ _DEFAULT_METADATA: dict = {
 }
 
 _metadata_cache: dict[tuple[str, str], dict] = {}
+_discovery_cache: dict[str, list[str]] = {}
+_DISCOVERY_TIMEOUT = 2.0
+_DISABLE_DISCOVERY_VALUES = {"1", "true", "yes"}
 
 
 class ProviderResolutionError(Exception):
@@ -176,5 +180,59 @@ def resolve_embedding_ref(
 
 
 def reset_cache() -> None:
-    """Clear the resolved-metadata cache (test hook; matches R8 frozen-for-session)."""
+    """Clear the resolved-metadata + endpoint-discovery caches (test hook)."""
     _metadata_cache.clear()
+    _discovery_cache.clear()
+
+
+def discover_provider_models(alias: str, force: bool = False) -> list[str]:
+    """Discover available model IDs from a provider's `GET /models` endpoint.
+
+    Hybrid fallback for the `/model` picker: when a provider's `models`
+    dict is undeclared (or empty), the picker calls this to list what the
+    endpoint actually serves. Resolved entries still pass through
+    `resolve_model_metadata`, so well-known models get badges + token
+    shorthand from litellm's registry.
+
+    * Cached per-alias for the session — call `force=True` to refetch.
+    * Respects `STUPIDEX_DISABLE_MODEL_DISCOVERY=1/true/yes` for strict
+      configured-only behavior.
+    * Returns `[]` when the provider has no `base_url`, the endpoint is
+      unreachable, or the response is malformed. Network failures never
+      raise — they just yield an empty list so the picker degrades to
+      "no models for this provider" instead of crashing.
+
+    Raises `ProviderResolutionError` only if `alias` itself is unknown.
+    """
+    if os.environ.get("STUPIDEX_DISABLE_MODEL_DISCOVERY", "").lower() in _DISABLE_DISCOVERY_VALUES:
+        log.debug("Model discovery disabled via STUPIDEX_DISABLE_MODEL_DISCOVERY")
+        return []
+    if not force and alias in _discovery_cache:
+        return _discovery_cache[alias]
+
+    provider = get_provider(alias)
+    base_url = provider.get("base_url") or ""
+    if not base_url:
+        _discovery_cache[alias] = []
+        return []
+
+    api_key = _resolve_api_key(provider, alias)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    try:
+        with httpx.Client(timeout=_DISCOVERY_TIMEOUT) as client:
+            response = client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            model_ids = [
+                m["id"]
+                for m in data.get("data", [])
+                if isinstance(m, dict) and "id" in m
+            ]
+    except Exception as e:  # noqa: BLE001 -- network is best-effort
+        log.warning("Model discovery for provider %r failed: %s", alias, e)
+        _discovery_cache[alias] = []
+        return []
+
+    _discovery_cache[alias] = model_ids
+    return model_ids

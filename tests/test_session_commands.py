@@ -38,6 +38,7 @@ def _meta(
 
 _RESOLVER = "stupidex.commands.session_commands.resolve_model_metadata"
 _GET_CONFIG = "stupidex.commands.session_commands.get_config"
+_DISCOVER = "stupidex.commands.session_commands.discover_provider_models"
 
 
 class TestBuildModelPickerItems(unittest.TestCase):
@@ -308,6 +309,71 @@ class TestBuildModelPickerItems(unittest.TestCase):
             }
         )
         with patch(_RESOLVER, return_value=_meta()):
+            items = _build_model_picker_items(cfg)
+        self.assertEqual([item.id for item in items], ["ok/m1"])
+
+
+class TestBuildModelPickerItemsDiscovery(unittest.TestCase):
+    """Hybrid fallback (R10): undeclared models trigger GET /models discovery."""
+
+    def _cfg(self, providers: dict) -> Config:
+        return Config(providers=providers)
+
+    def test_empty_models_dict_triggers_discovery(self):
+        """Provider with no declared models falls back to endpoint discovery."""
+        cfg = self._cfg({
+            "openai-prod": {
+                "base_url": "https://api.openai.com/v1",
+                "litellm_provider": "openai",
+                "api_key": "sk-test",
+            }
+        })
+        with (
+            patch(_DISCOVER, return_value=["gpt-4o", "gpt-4o-mini"]),
+            patch(_RESOLVER, return_value=_meta()),
+        ):
+            items = _build_model_picker_items(cfg)
+        ids = [i.id for i in items]
+        self.assertEqual(ids, ["openai-prod/gpt-4o", "openai-prod/gpt-4o-mini"])
+
+    def test_declared_models_skip_discovery(self):
+        """When models are declared, the GET /models endpoint is never hit."""
+        cfg = self._cfg({
+            "openai-prod": {
+                "base_url": "https://api.openai.com/v1",
+                "models": {"gpt-4o": {}},
+            }
+        })
+        with patch(_DISCOVER) as mock_discover, patch(_RESOLVER, return_value=_meta()):
+            _build_model_picker_items(cfg)
+        mock_discover.assert_not_called()
+
+    def test_discovery_returns_empty_skips_provider_silently(self):
+        """Empty discovery result = no items for that provider, no raise."""
+        cfg = self._cfg({
+            "dead-endpoint": {
+                "base_url": "http://localhost:9999/v1",
+                "litellm_provider": "openai",
+            },
+            "ok": {"models": {"m1": {}}},
+        })
+        with (
+            patch(_DISCOVER, return_value=[]),
+            patch(_RESOLVER, return_value=_meta()),
+        ):
+            items = _build_model_picker_items(cfg)
+        self.assertEqual([item.id for item in items], ["ok/m1"])
+
+    def test_discovery_failure_swallowed_silently(self):
+        """If discovery raises, that provider is skipped, others still appear."""
+        cfg = self._cfg({
+            "broken": {"base_url": "http://example.com"},
+            "ok": {"models": {"m1": {}}},
+        })
+        with (
+            patch(_DISCOVER, side_effect=RuntimeError("boom")),
+            patch(_RESOLVER, return_value=_meta()),
+        ):
             items = _build_model_picker_items(cfg)
         self.assertEqual([item.id for item in items], ["ok/m1"])
 
