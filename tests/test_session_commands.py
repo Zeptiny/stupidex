@@ -72,14 +72,21 @@ class TestBuildModelPickerItems(unittest.TestCase):
 
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0].id, "work-openai/gpt-4o")
-        self.assertEqual(items[0].label, "work-openai/gpt-4o [vision] [text] 128k→16k")
         self.assertEqual(items[1].id, "anthropic-prod/claude-3-opus")
-        self.assertEqual(items[1].label, "anthropic-prod/claude-3-opus [text] 200k→4k")
+        # Label is tabular: model_ref + token shorthand + yes/no vision.
+        self.assertIn("work-openai/gpt-4o", items[0].label)
+        self.assertIn("128k", items[0].label)
+        self.assertIn("16k", items[0].label)
+        self.assertIn("yes", items[0].label)  # supports_vision=True
+        self.assertIn("anthropic-prod/claude-3-opus", items[1].label)
+        self.assertIn("200k", items[1].label)
+        self.assertIn("4k", items[1].label)
+        self.assertIn("no", items[1].label)  # supports_vision default False
         mock.assert_any_call("work-openai", "gpt-4o")
         mock.assert_any_call("anthropic-prod", "claude-3-opus")
 
     def test_covers_ae5_multiple_providers_multiple_models(self):
-        """Scenario 2 (covers AE5): two providers, three models; badges + tokens on each."""
+        """Scenario 2 (covers AE5): two providers, three models; tokens + vision on each."""
         cfg = self._cfg(
             {
                 "work-openai": {"models": {"gpt-4o": {}, "gpt-4o-mini": {}}},
@@ -107,91 +114,74 @@ class TestBuildModelPickerItems(unittest.TestCase):
                 "anthropic-prod/claude-3-opus",
             ],
         )
-        # Every label carries the [vision] + [text] + token shorthand segments.
+        # Each label carries both token shorthands and a vision indicator.
         for item in items:
-            self.assertIn("[vision]", item.label)
-            self.assertIn("[text]", item.label)
-            self.assertIn("→", item.label)
-            self.assertIn("k", item.label)
-
-        self.assertEqual(items[0].label, "work-openai/gpt-4o [vision] [text] 128k→16k")
-        self.assertEqual(items[1].label, "work-openai/gpt-4o-mini [vision] [text] 128k→16k")
-        self.assertEqual(items[2].label, "anthropic-prod/claude-3-opus [vision] [text] 200k→4k")
+            self.assertIn("yes", item.label)
+        self.assertIn("128k", items[0].label)
+        self.assertIn("16k", items[0].label)
+        self.assertIn("200k", items[2].label)
+        self.assertIn("4k", items[2].label)
 
     # ------------------------------------------------------------------
-    # Scenarios 3 + 4: capability badges
+    # Scenarios 3 + 4: capability columns
     # ------------------------------------------------------------------
 
-    def test_vision_badge_present_when_supported(self):
-        """Scenario 3: supports_vision=True -> '[vision]' appears in label."""
+    def test_vision_yes_shown_when_supported(self):
+        """Scenario 3: supports_vision=True -> 'yes' appears in label."""
         cfg = self._cfg({"p1": {"models": {"m1": {}}}})
         with patch(_RESOLVER, return_value=_meta(supports_vision=True)):
             items = _build_model_picker_items(cfg)
         self.assertEqual(len(items), 1)
-        self.assertIn("[vision]", items[0].label)
+        self.assertIn("yes", items[0].label)
+        self.assertNotIn("no", items[0].label)
 
-    def test_vision_badge_absent_when_unsupported(self):
-        """Scenario 3: supports_vision=False -> '[vision]' absent from label."""
+    def test_vision_no_shown_when_unsupported(self):
+        """Scenario 3: supports_vision=False -> 'no' appears in label."""
         cfg = self._cfg({"p1": {"models": {"m1": {}}}})
         with patch(_RESOLVER, return_value=_meta(supports_vision=False)):
             items = _build_model_picker_items(cfg)
         self.assertEqual(len(items), 1)
-        self.assertNotIn("[vision]", items[0].label)
-
-    def test_text_badge_present_for_chat_mode(self):
-        """Scenario 4: mode='chat' -> '[text]' appears in label."""
-        cfg = self._cfg({"p1": {"models": {"m1": {}}}})
-        with patch(_RESOLVER, return_value=_meta(mode="chat")):
-            items = _build_model_picker_items(cfg)
-        self.assertIn("[text]", items[0].label)
-
-    def test_text_badge_present_for_completion_mode(self):
-        """Scenario 4: mode='completion' -> '[text]' appears in label."""
-        cfg = self._cfg({"p1": {"models": {"m1": {}}}})
-        with patch(_RESOLVER, return_value=_meta(mode="completion")):
-            items = _build_model_picker_items(cfg)
-        self.assertIn("[text]", items[0].label)
-
-    def test_text_badge_absent_for_embedding_mode(self):
-        """Scenario 4: mode='embedding' -> '[text]' absent from label."""
-        cfg = self._cfg({"p1": {"models": {"m1": {}}}})
-        with patch(_RESOLVER, return_value=_meta(mode="embedding")):
-            items = _build_model_picker_items(cfg)
-        self.assertNotIn("[text]", items[0].label)
+        self.assertIn("no", items[0].label)
+        self.assertNotIn("yes", items[0].label)
 
     # ------------------------------------------------------------------
     # Scenarios 5 + 6: token shorthand
     # ------------------------------------------------------------------
 
     def test_token_shorthand_rendered_when_both_int(self):
-        """Scenario 5: max_input=128000, max_output=16384 -> '128k→16k' appended."""
+        """Scenario 5: max_input=128000, max_output=16384 -> shorthands appear in label."""
         cfg = self._cfg({"p1": {"models": {"m1": {}}}})
         with patch(_RESOLVER, return_value=_meta(max_in=128000, max_out=16384)):
             items = _build_model_picker_items(cfg)
-        self.assertIn("128k→16k", items[0].label)
+        self.assertIn("128k", items[0].label)
+        self.assertIn("16k", items[0].label)
+        self.assertNotIn("n/a", items[0].label)
 
-    def test_token_shorthand_omitted_when_max_in_none(self):
-        """Scenario 6: max_input_tokens=None -> no token shorthand on label."""
+    def test_na_rendered_when_max_in_none(self):
+        """Scenario 6: max_input_tokens=None -> 'n/a' shown in input column."""
         cfg = self._cfg({"p1": {"models": {"m1": {}}}})
         with patch(_RESOLVER, return_value=_meta(max_in=None, max_out=16384)):
             items = _build_model_picker_items(cfg)
-        self.assertNotIn("→", items[0].label)
+        self.assertIn("n/a", items[0].label)
+        self.assertIn("16k", items[0].label)  # output still rendered
         self.assertNotIn("None", items[0].label)
 
-    def test_token_shorthand_omitted_when_max_out_none(self):
-        """Scenario 6: max_output_tokens=None -> no token shorthand on label."""
+    def test_na_rendered_when_max_out_none(self):
+        """Scenario 6: max_output_tokens=None -> 'n/a' shown in output column."""
         cfg = self._cfg({"p1": {"models": {"m1": {}}}})
         with patch(_RESOLVER, return_value=_meta(max_in=128000, max_out=None)):
             items = _build_model_picker_items(cfg)
-        self.assertNotIn("→", items[0].label)
+        self.assertIn("n/a", items[0].label)
+        self.assertIn("128k", items[0].label)
         self.assertNotIn("None", items[0].label)
 
-    def test_token_shorthand_omitted_when_both_none(self):
-        """Scenario 6: both limits None -> no token shorthand on label."""
+    def test_na_rendered_when_both_none(self):
+        """Scenario 6: both limits None -> 'n/a' shown for both columns."""
         cfg = self._cfg({"p1": {"models": {"m1": {}}}})
         with patch(_RESOLVER, return_value=_meta(max_in=None, max_out=None)):
             items = _build_model_picker_items(cfg)
-        self.assertNotIn("→", items[0].label)
+        # Both columns render 'n/a' -- the string appears at least twice.
+        self.assertEqual(items[0].label.count("n/a"), 2)
 
     # ------------------------------------------------------------------
     # Scenario 7: empty models
@@ -379,51 +369,51 @@ class TestBuildModelPickerItemsDiscovery(unittest.TestCase):
 
 
 class TestFormatModelLabel(unittest.TestCase):
-    """Direct unit tests for the label formatter (covers each branch combination)."""
+    """Direct unit tests for the label formatter (covers each column combination)."""
 
-    def test_no_badges_no_tokens(self):
+    def test_no_metadata_renders_na_and_no(self):
+        """All fields absent: 'no' for vision, 'n/a' for both token columns."""
         label = _format_model_label(
             "p1", "m1", _meta(supports_vision=False, mode="embedding")
         )
-        self.assertEqual(label, "p1/m1")
+        self.assertIn("p1/m1", label)
+        self.assertIn("n/a", label)
+        self.assertIn("no", label)
+        self.assertNotIn("yes", label)
 
-    def test_vision_only(self):
+    def test_vision_yes_shown_when_supported(self):
+        """supports_vision=True -> 'yes' renders in the vision column."""
         label = _format_model_label(
             "p1", "m1", _meta(supports_vision=True, mode="embedding")
         )
-        self.assertEqual(label, "p1/m1 [vision]")
+        self.assertIn("yes", label)
+        self.assertNotIn("no", label)
 
-    def test_text_only(self):
-        label = _format_model_label(
-            "p1", "m1", _meta(supports_vision=False, mode="chat")
-        )
-        self.assertEqual(label, "p1/m1 [text]")
-
-    def test_completion_text_only(self):
-        label = _format_model_label(
-            "p1", "m1", _meta(supports_vision=False, mode="completion")
-        )
-        self.assertEqual(label, "p1/m1 [text]")
-
-    def test_tokens_only(self):
+    def test_tokens_rendered_when_present(self):
+        """Both max_input_tokens + max_output_tokens present -> shorthand formatted."""
         label = _format_model_label(
             "p1",
             "m1",
             _meta(max_in=128000, max_out=16384, supports_vision=False, mode="embedding"),
         )
-        self.assertEqual(label, "p1/m1 128k→16k")
+        self.assertIn("128k", label)
+        self.assertIn("16k", label)
+        self.assertNotIn("n/a", label)
 
-    def test_full_label_with_all_segments(self):
-        """Scenario 5 (alt): all optional segments appear in the expected order."""
+    def test_full_label_with_all_fields(self):
+        """Happy path: alias, model_id, max_in, max_out, vision all populated."""
         label = _format_model_label(
             "work-openai",
             "gpt-4o",
             _meta(max_in=128000, max_out=16384, supports_vision=True, mode="chat"),
         )
-        self.assertEqual(label, "work-openai/gpt-4o [vision] [text] 128k→16k")
+        self.assertIn("work-openai/gpt-4o", label)
+        self.assertIn("128k", label)
+        self.assertIn("16k", label)
+        self.assertIn("yes", label)
 
     def test_token_shorthand_sub_1000(self):
-        """Sub-1000 token counts render as plain decimals (no 'k' suffix that would misstate magnitude)."""
+        """Sub-1000 token counts render as plain decimals (no 'k' misrepresentation)."""
         label = _format_model_label(
             "p1",
             "m1",
@@ -434,7 +424,47 @@ class TestFormatModelLabel(unittest.TestCase):
                 mode="embedding",
             ),
         )
-        self.assertEqual(label, "p1/m1 500→200")
+        self.assertIn("500", label)
+        self.assertIn("200", label)
+        self.assertNotIn("500k", label)
+        self.assertNotIn("200k", label)
+
+    def test_long_model_ref_is_truncated_with_ellipsis(self):
+        """A model ref wider than the column width is truncated with an ellipsis char.
+
+        The truncated prefix + ellipsis must fit in `_MODEL_COL_REF_WIDTH`; the
+        full ref is preserved on the PickerItem.id (not the label).
+        """
+        from stupidex.commands.session_commands import _MODEL_COL_REF_WIDTH
+
+        long_alias = "very-long-alias-name-that-exceeds-the-column"
+        long_model = "model-with-an-exceptionally-long-identifier"
+        label = _format_model_label(long_alias, long_model, _meta())
+        # Truncated to the column width including the ellipsis character.
+        ref_part = label.split(" ")[0]  # everything up to the first space
+        self.assertEqual(len(ref_part), _MODEL_COL_REF_WIDTH)
+        self.assertTrue(ref_part.endswith("\u2026"))
+        self.assertIn(long_alias[:10], ref_part)
+
+
+class TestModelPickerHeader(unittest.TestCase):
+    """Verify the column-titles header is built with the right widths + labels."""
+
+    def test_header_contains_column_titles(self):
+        from stupidex.commands.session_commands import _MODEL_PICKER_HEADER
+
+        self.assertIn("Model", _MODEL_PICKER_HEADER)
+        self.assertIn("In", _MODEL_PICKER_HEADER)
+        self.assertIn("Out", _MODEL_PICKER_HEADER)
+        self.assertIn("Vision", _MODEL_PICKER_HEADER)
+
+    def test_header_width_matches_label_width(self):
+        """Header and label rows share the same column widths so they align."""
+        from stupidex.commands.session_commands import _MODEL_PICKER_HEADER
+
+        label = _format_model_label("p1", "m1", _meta())
+        # Strip trailing whitespace for an exact comparison (both end together).
+        self.assertEqual(len(_MODEL_PICKER_HEADER.rstrip()), len(label.rstrip()))
 
 
 class TestExecuteCommandEmptyConfig(unittest.TestCase):

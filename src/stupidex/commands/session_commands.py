@@ -43,30 +43,63 @@ def _token_shorthand(tokens: int) -> str:
     return str(tokens)
 
 
+# Column widths for the /model picker's pseudo-table layout. Picked so the
+# widest realistic alias/model_id (e.g. `anthropic-prod/claude-3-opus`) fits
+# while keeping the picker container at ~70 columns (see main.tcss).
+_MODEL_COL_REF_WIDTH = 36
+_MODEL_COL_TOKEN_WIDTH = 6
+_MODEL_COL_VISION_WIDTH = 6
+
+# Header shown above the option list -- same column widths as the row labels
+# produced by `_format_model_label` so the columns line up visually.
+_MODEL_PICKER_HEADER = (
+    f"{'Model'.ljust(_MODEL_COL_REF_WIDTH)}  "
+    f"{'In'.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+    f"{'Out'.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+    f"{'Vision'.rjust(_MODEL_COL_VISION_WIDTH)}"
+)
+
+
 def _format_model_label(alias: str, model_id: str, metadata: dict) -> str:
-    """Render a picker label for a configured model entry.
+    """Render a tabular label for the `/model` picker.
 
-    Format: `alias/model [vision] [text] {in}k→{out}k` -- each optional
-    segment is appended only when its condition holds.
+    Each label is a single padded row with four fixed-width columns so multiple
+    options align as a pseudo-table when listed together:
 
-    * `[vision]` -- appended when `metadata["supports_vision"]` is truthy.
-    * `[text]` -- appended when `metadata["mode"]` is in `{"chat", "completion"}`.
-    * `{in}k→{out}k` -- appended only when BOTH `max_input_tokens` and
-      `max_output_tokens` are integers (per U2: `None` means unknown).
+        ```
+        work-openai/gpt-4o                          128k    16k     yes
+        anthropic-prod/claude-3-opus               200k     4k      no
+        custom/unknown-model                       n/a    n/a      n/a
+        ```
 
-    Badges remain plain searchable text since `OptionPicker._filter` matches on
-    `label.lower()` (see `screens/picker.py:31-33`).
+    The `_MODEL_PICKER_HEADER` constant uses the same column widths for a
+    column-titles row placed above the option list (via `OptionPicker`'s
+    optional `header=` parameter).
+
+    * `max_input_tokens` / `max_output_tokens` -- rendered with `_token_shorthand`
+      when present (int), otherwise `n/a` (unknown).
+    * `supports_vision` -- `yes` if truthy, `no` otherwise.
+    * Model refs that exceed `_MODEL_COL_REF_WIDTH` are truncated with an ellipsis
+      so the columns stay aligned; the option `id` retains the full ref.
     """
-    parts: list[str] = [f"{alias}/{model_id}"]
-    if metadata.get("supports_vision"):
-        parts.append("[vision]")
-    if metadata.get("mode") in {"chat", "completion"}:
-        parts.append("[text]")
+    ref = f"{alias}/{model_id}"
+    if len(ref) > _MODEL_COL_REF_WIDTH:
+        ref = ref[: _MODEL_COL_REF_WIDTH - 1] + "\u2026"
+    ref_str = ref.ljust(_MODEL_COL_REF_WIDTH)
+
     max_in = metadata.get("max_input_tokens")
     max_out = metadata.get("max_output_tokens")
-    if isinstance(max_in, int) and isinstance(max_out, int):
-        parts.append(f"{_token_shorthand(max_in)}→{_token_shorthand(max_out)}")
-    return " ".join(parts)
+    in_str = _token_shorthand(max_in) if isinstance(max_in, int) else "n/a"
+    out_str = _token_shorthand(max_out) if isinstance(max_out, int) else "n/a"
+
+    vision_str = "yes" if metadata.get("supports_vision") else "no"
+
+    return (
+        f"{ref_str}  "
+        f"{in_str.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+        f"{out_str.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+        f"{vision_str.rjust(_MODEL_COL_VISION_WIDTH)}"
+    )
 
 
 def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
@@ -175,7 +208,7 @@ async def execute_command(app: App, cmd: str) -> None:
                     app.sessions.change_model(result)
                     await app.rerender_footer()
 
-            app.push_screen(OptionPicker(items), on_picked)
+            app.push_screen(OptionPicker(items, header=_MODEL_PICKER_HEADER), on_picked)
         case "/theme":
             from stupidex.themes import get_theme_registry
             registry = get_theme_registry()
