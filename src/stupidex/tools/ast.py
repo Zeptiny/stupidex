@@ -2,9 +2,13 @@ import asyncio
 import difflib
 import logging
 import os
+import stat
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from xml.sax.saxutils import escape
+
+import tree_sitter
 
 from stupidex.ast.indexer import ensure_indexed
 from stupidex.ast.parser import lang_for_extension, load_query_file, parse_file, run_query
@@ -20,7 +24,12 @@ _get_function_sent_hashes: dict[str, str] = {}
 
 # Post-write callbacks registered by the AST indexer.
 # edit and write tools call each callback after a successful file write.
-post_write_callbacks: list = []
+post_write_callbacks: list[Callable[[str], Awaitable[None]]] = []
+
+# Register the indexer's update_file so edit/write tools keep the AST store in sync.
+from stupidex.ast.indexer import update_file  # noqa: E402
+
+post_write_callbacks.append(update_file)
 
 # FNV-1a constants (64-bit)
 _FNV_OFFSET = 14695981039346656037
@@ -121,18 +130,37 @@ def _format_edit_result(
 
 
 def _find_extended_range(
-    content_bytes: bytes, node, file_path: str
+    content_bytes: bytes, node: tree_sitter.Node
 ) -> tuple[int, int]:
     """Extend the node's range backward to include preceding decorators/comments."""
     start = node.start_byte
     text_before = content_bytes[:start].decode("utf-8", errors="replace")
     lines_before = text_before.split("\n")
 
+    # Compute the indentation level of the node's first line.
+    node_line_idx = node.start_point[0]
+    all_lines = content_bytes.decode("utf-8", errors="replace").split("\n")
+    node_line_text = all_lines[node_line_idx] if node_line_idx < len(all_lines) else ""
+    node_indent = len(node_line_text) - len(node_line_text.lstrip())
+
     check_lines = 0
+    in_block_comment = False
     for line in reversed(lines_before[:-1] if len(lines_before) > 1 else []):
         stripped = line.strip()
         if not stripped:
             break
+
+        # If we're inside a block comment, keep including middle/end lines.
+        if in_block_comment:
+            if stripped.startswith("/*") or stripped.startswith("/**"):
+                check_lines += 1
+                in_block_comment = False
+                continue
+            if stripped.startswith("*") or stripped.startswith("*/"):
+                check_lines += 1
+                continue
+            break
+
         is_decorator = stripped.startswith("@")
         is_comment = stripped.startswith("#") or stripped.startswith("//")
         is_docstring = stripped.startswith('"""') or stripped.startswith("'''")
@@ -140,7 +168,13 @@ def _find_extended_range(
         is_multiline_end = stripped.endswith("*/")
         if is_decorator or is_comment or is_docstring or is_export or is_multiline_end:
             check_lines += 1
+            if is_multiline_end:
+                in_block_comment = True
         else:
+            # Stop if this line is at a lower indentation (e.g. class definition).
+            line_indent = len(line) - len(line.lstrip())
+            if line_indent < node_indent:
+                break
             break
 
     if check_lines > 0:
@@ -152,6 +186,12 @@ def _find_extended_range(
 
 def _atomic_write(file_path: str, content: str) -> None:
     """Write content atomically: tmp + fsync + os.replace."""
+    # Preserve original file permissions.
+    try:
+        orig_mode = os.stat(file_path).st_mode
+    except OSError:
+        orig_mode = None
+
     fd, tmp_path = tempfile.mkstemp(
         dir=str(Path(file_path).parent),
         prefix=".ast_edit_",
@@ -163,6 +203,8 @@ def _atomic_write(file_path: str, content: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, file_path)
+        if orig_mode is not None:
+            os.chmod(file_path, stat.S_IMODE(orig_mode))
         dir_fd = os.open(str(Path(file_path).parent), os.O_RDONLY)
         try:
             os.fsync(dir_fd)
@@ -533,7 +575,7 @@ async def execute_find_symbol_references(
                 f"Must be: definition, reference, or both.</ast_error>",
             )
 
-        ensure_indexed()
+        await ensure_indexed()
 
         loop = asyncio.get_running_loop()
         project_path = str(Path.cwd())
@@ -633,6 +675,7 @@ async def execute_replace_symbol(
             )
 
         replacements_list = []
+        parent_contexts: list[str] = []
         for r in target_caps:
             if r.node.parent is None:
                 continue
@@ -658,8 +701,23 @@ async def execute_replace_symbol(
                 else:
                     continue
 
-            start, end = _find_extended_range(content_bytes, definition_node, file_path)
+            # Determine parent class context for disambiguation.
+            ctx_name = "<module>"
+            p = definition_node.parent
+            while p is not None:
+                if p.type in ("class_definition", "class_declaration"):
+                    # Find the class name node.
+                    name_node = p.child_by_field_name("name")
+                    if name_node is not None:
+                        ctx_name = content.encode("utf-8")[
+                            name_node.start_byte : name_node.end_byte
+                        ].decode("utf-8", errors="replace")
+                    break
+                p = p.parent
+
+            start, end = _find_extended_range(content_bytes, definition_node)
             replacements_list.append((start, end))
+            parent_contexts.append(ctx_name)
 
         if not replacements_list:
             return ExecutorResult(
@@ -672,6 +730,34 @@ async def execute_replace_symbol(
                     removed=0,
                     error="symbol_not_found",
                     message=f"Symbol '{name}' not found in {file_path}",
+                ),
+            )
+
+        # P1 #8: If multiple definitions exist in different parent contexts,
+        # ask the user to disambiguate rather than silently replacing all.
+        unique_contexts = set(parent_contexts)
+        if len(replacements_list) > 1 and len(unique_contexts) > 1:
+            locations = []
+            for ctx, (_, end) in zip(parent_contexts, replacements_list, strict=False):
+                # Compute line number from byte offset.
+                line_num = content_bytes[:end].count(b"\n") + 1
+                locations.append(f"  - {ctx} (line {line_num})")
+            ctx_list = "\n".join(locations)
+            return ExecutorResult(
+                display=f"Multiple '{name}' definitions found — disambiguate",
+                content=_format_edit_result(
+                    file_path,
+                    success=False,
+                    replacements=0,
+                    added=0,
+                    removed=0,
+                    error="ambiguous_symbol",
+                    message=(
+                        f"Multiple definitions of '{name}' found in {file_path}:\n"
+                        f"{ctx_list}\n"
+                        f"Please specify which definition to replace (e.g. by providing "
+                        f"the class name or line number)."
+                    ),
                 ),
             )
 
@@ -757,7 +843,7 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
                 "Symbol name is required.</ast_error>",
             )
 
-        ensure_indexed()
+        await ensure_indexed()
 
         loop = asyncio.get_running_loop()
         project_path = str(Path.cwd())
@@ -779,9 +865,12 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
         for s in symbols:
             by_file.setdefault(s["file_path"], []).append(s)
 
-        total_added = 0
-        total_removed = 0
-        edit_results = []
+        # Identifier characters for word boundary check.
+        _ident_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+
+        # Phase 1: compute all new contents without writing.
+        # Each entry: (rel_path, abs_path, old_content, new_content, file_symbols)
+        planned: list[tuple[str, str, str, str, list[dict]]] = []
 
         for rel_path, file_symbols in by_file.items():
             abs_path = str(Path(project_path) / rel_path)
@@ -802,18 +891,62 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
 
             for s in sorted_syms:
                 line_idx = s["start_line"]
-                col = s["start_column"]
-                if line_idx < len(lines):
-                    line = lines[line_idx]
-                    if line[col : col + len(name)] == name:
-                        lines[line_idx] = line[:col] + new_name + line[col + len(name):]
+                byte_col = s["start_column"]
+                if line_idx >= len(lines):
+                    continue
+                line = lines[line_idx]
+
+                # P0 #2: Convert byte-based column to character-based column.
+                line_bytes = line.encode("utf-8")
+                if byte_col > len(line_bytes):
+                    continue
+                char_col = len(line_bytes[:byte_col].decode("utf-8", errors="replace"))
+                char_end = char_col + len(name)
+
+                if line[char_col:char_end] != name:
+                    continue
+
+                # P0 #4: Word boundary check — skip if adjacent chars are identifiers.
+                if char_col > 0 and line[char_col - 1] in _ident_chars:
+                    continue
+                if char_end < len(line) and line[char_end] in _ident_chars:
+                    continue
+
+                lines[line_idx] = line[:char_col] + new_name + line[char_end:]
 
             new_content = "\n".join(lines)
 
             if new_content == content:
                 continue
 
-            _atomic_write(abs_path, new_content)
+            planned.append((rel_path, abs_path, content, new_content, file_symbols))
+
+        if not planned:
+            return ExecutorResult(
+                display=f"No changes for '{name}'",
+                content=f'<ast_error tool="rename_symbol">'
+                f"No changes made for '{escape(name)}'.</ast_error>",
+            )
+
+        # Phase 2: write all files. Track successes and failures.
+        total_added = 0
+        total_removed = 0
+        edit_results = []
+        failed_files: list[str] = []
+
+        for rel_path, abs_path, content, new_content, file_symbols in planned:
+            try:
+                _atomic_write(abs_path, new_content)
+            except Exception as write_err:
+                failed_files.append(rel_path)
+                logger.warning("rename_symbol write failed for %s: %s", rel_path, write_err)
+                edit_results.append(
+                    f'<edit_result path="{_xml_attr(rel_path)}" success="false" '
+                    f'replacements="0" replace_all="false" '
+                    f'added="0" removed="0" '
+                    f'error="{_xml_attr(str(write_err))}" />'
+                )
+                continue
 
             diff_text = _generate_diff(content, new_content, rel_path)
             added, removed = _count_diff_changes(diff_text)
@@ -837,19 +970,30 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
                 f"No changes made for '{escape(name)}'.</ast_error>",
             )
 
+        overall_success = len(failed_files) == 0
         result_xml = (
             f'<rename_result name="{_xml_attr(name)}" '
             f'new_name="{_xml_attr(new_name)}" '
             f'files="{len(edit_results)}" '
-            f'total_added="{total_added}" total_removed="{total_removed}">\n'
+            f'total_added="{total_added}" total_removed="{total_removed}" '
+            f'success="{str(overall_success).lower()}">\n'
             + "\n".join(edit_results)
             + "\n</rename_result>"
         )
 
-        return ExecutorResult(
-            display=f"Renamed '{name}' -> '{new_name}' in {len(edit_results)} file(s) (+{total_added} -{total_removed})",
-            content=result_xml,
-        )
+        if failed_files:
+            display = (
+                f"Renamed '{name}' -> '{new_name}' with errors: "
+                f"{len(planned) - len(failed_files)} succeeded, "
+                f"{len(failed_files)} failed ({', '.join(failed_files)})"
+            )
+        else:
+            display = (
+                f"Renamed '{name}' -> '{new_name}' in "
+                f"{len(edit_results)} file(s) (+{total_added} -{total_removed})"
+            )
+
+        return ExecutorResult(display=display, content=result_xml)
 
     except Exception as e:
         logger.warning("rename_symbol error: %s", e)

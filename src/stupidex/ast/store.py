@@ -44,7 +44,6 @@ class ASTStore:
         self.project_path = project_path
         self.ast_dir = Path(project_path) / PROJECT_AST_DIR
         self.db_path = self.ast_dir / AST_INDEX_DB
-        self._post_write_callbacks: list = []
 
     def _ensure_dir(self) -> None:
         self.ast_dir.mkdir(parents=True, exist_ok=True)
@@ -53,14 +52,18 @@ class ASTStore:
         self._ensure_dir()
         try:
             conn = sqlite3.connect(str(self.db_path))
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.executescript(_DB_SCHEMA)
             conn.commit()
             conn.close()
-        except Exception as e:
+        except sqlite3.DatabaseError as e:
             logger.error("Corrupted symbols.db, rebuilding: %s", e)
             if self.db_path.exists():
                 self.db_path.unlink()
             conn = sqlite3.connect(str(self.db_path))
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.executescript(_DB_SCHEMA)
             conn.commit()
             conn.close()
@@ -74,7 +77,7 @@ class ASTStore:
             conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("SELECT 1 FROM files LIMIT 1")
             return conn
-        except Exception as e:
+        except sqlite3.DatabaseError as e:
             logger.error("Corrupted symbols.db, rebuilding: %s", e)
             if conn is not None:
                 conn.close()
@@ -194,9 +197,6 @@ class ASTStore:
             conn.commit()
         finally:
             conn.close()
-
-    def register_post_write_callback(self, callback) -> None:
-        self._post_write_callbacks.append(callback)
 
     def clear(self) -> None:
         if self.db_path.exists():

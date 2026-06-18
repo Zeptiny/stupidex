@@ -228,6 +228,8 @@ async def test_find_symbol_references_happy(tmp_path, monkeypatch):
             Symbol("process", "reference", "", 1, 0, 1, 7, 8, 15),
         ],
     })
+    import stupidex.ast.indexer as indexer_mod
+    indexer_mod._session_initialized = True
 
     result = await execute_find_symbol_references("process")
     assert isinstance(result, ExecutorResult)
@@ -248,6 +250,8 @@ async def test_find_symbol_references_type_filter_definition(tmp_path, monkeypat
             Symbol("foo", "reference", "", 0, 0, 0, 3, 0, 3),
         ],
     })
+    import stupidex.ast.indexer as indexer_mod
+    indexer_mod._session_initialized = True
 
     result = await execute_find_symbol_references("foo", type_filter="definition")
     assert isinstance(result, ExecutorResult)

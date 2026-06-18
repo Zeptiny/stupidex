@@ -47,11 +47,9 @@ def _load_language(lang_name: str) -> tree_sitter.Language:
 
     if lang_name not in _grammars:
         logger.debug("Loading grammar for %s", lang_name)
-        # Trigger download if not already cached
         get_language(lang_name)
         so_name = lang_name
         so_path = Path("~/.cache/tree-sitter-language-pack").expanduser()
-        # Find the .so file in the cache
         for version_dir in sorted(so_path.iterdir(), reverse=True):
             candidate = version_dir / "libs" / f"libtree_sitter_{so_name}.so"
             if candidate.exists():
@@ -61,20 +59,9 @@ def _load_language(lang_name: str) -> tree_sitter.Language:
                 _grammars[lang_name] = tree_sitter.Language(func())
                 break
         else:
-            # Fallback: trigger download via tree_sitter_language_pack then retry
-            get_language(lang_name)
-            for version_dir in sorted(so_path.iterdir(), reverse=True):
-                candidate = version_dir / "libs" / f"libtree_sitter_{so_name}.so"
-                if candidate.exists():
-                    lib = ctypes.cdll.LoadLibrary(str(candidate))
-                    func = getattr(lib, f"tree_sitter_{so_name}")
-                    func.restype = ctypes.c_void_p
-                    _grammars[lang_name] = tree_sitter.Language(func())
-                    break
-            else:
-                raise RuntimeError(
-                    f"Could not find compiled grammar for '{lang_name}'"
-                )
+            raise RuntimeError(
+                f"Could not find compiled grammar for '{lang_name}'"
+            )
     return _grammars[lang_name]
 
 

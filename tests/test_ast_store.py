@@ -232,15 +232,6 @@ def test_clear_removes_db(tmp_path):
     assert not store.db_path.exists()
 
 
-def test_register_post_write_callback(tmp_path):
-    """register_post_write_callback should add callbacks to the list."""
-    store = ASTStore(str(tmp_path))
-
-    called = []
-    store.register_post_write_callback(lambda fp: called.append(fp))
-    assert len(store._post_write_callbacks) == 1
-
-
 def test_symbols_preserve_all_fields(tmp_path):
     """Upserted symbols should preserve all fields correctly."""
     store = ASTStore(str(tmp_path))

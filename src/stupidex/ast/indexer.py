@@ -24,7 +24,7 @@ _SKIP_DIRS = frozenset({
     ".next", ".cache", "target",
 })
 
-_session_initialized = False
+_session_initialized: bool = False
 
 
 @dataclass
@@ -38,7 +38,7 @@ class IndexResult:
     duration_seconds: float = 0.0
 
 
-def ensure_indexed(project_path: str | None = None) -> None:
+async def ensure_indexed(project_path: str | None = None) -> None:
     """Trigger a full project scan if the session hasn't been initialized.
 
     Index-dependent tools (find_symbol_references, rename_symbol) call this
@@ -47,9 +47,7 @@ def ensure_indexed(project_path: str | None = None) -> None:
     """
     global _session_initialized
     if not _session_initialized:
-        loop = asyncio.get_running_loop()
-        loop.create_task(index_project(project_path=project_path))
-        _session_initialized = True
+        await index_project(project_path=project_path)
 
 
 async def update_file(file_path: str, project_path: str | None = None) -> None:
