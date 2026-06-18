@@ -5,12 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from stupidex.rag.chunker import Chunk
-from stupidex.rag.embedder import (
-    DEFAULT_FASTEMBED_MODEL,
-    DEFAULT_OPENAI_MODEL,
-    Embedder,
-    EmbeddingError,
-)
+from stupidex.rag.embedder import Embedder, EmbeddingError
 from stupidex.rag.indexer import index_project
 from stupidex.rag.store import RAGStore
 
@@ -107,10 +102,14 @@ def test_corrupted_index_db_get_conn_rebuild(tmp_path):
 @pytest.mark.asyncio
 async def test_embedder_failure_after_retries():
     """Embedder should fail gracefully after max retries."""
-    embedder = Embedder(model="test-model")
+    embedder = Embedder(model="work-openai/text-embedding-3-small")
 
+    fake_ref = ("openai", "text-embedding-3-small", "https://example.com", "sk-test")
     error = EmbeddingError("Simulated API failure")
-    with patch("litellm.aembedding", new_callable=AsyncMock, side_effect=error):
+    with (
+        patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=fake_ref),
+        patch("litellm.aembedding", new_callable=AsyncMock, side_effect=error),
+    ):
         with pytest.raises(EmbeddingError) as exc_info:
             await embedder.embed(["test text"])
 
@@ -122,7 +121,7 @@ async def test_embedder_success_with_retries():
     """Embedder should succeed if retry succeeds."""
     from unittest.mock import MagicMock
 
-    embedder = Embedder(model="test-model")
+    embedder = Embedder(model="work-openai/text-embedding-3-small")
 
     good_response = MagicMock()
     good_response.data = [{"embedding": [0.1, 0.2, 0.3, 0.4]}]
@@ -136,7 +135,11 @@ async def test_embedder_success_with_retries():
             raise EmbeddingError("Temporary failure")
         return good_response
 
-    with patch("litellm.aembedding", side_effect=fail_then_succeed):
+    fake_ref = ("openai", "text-embedding-3-small", "https://example.com", "sk-test")
+    with (
+        patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=fake_ref),
+        patch("litellm.aembedding", side_effect=fail_then_succeed),
+    ):
         result = await embedder.embed(["test text"])
 
     assert len(result) == 1
@@ -213,34 +216,59 @@ async def test_indexer_handles_missing_vectors(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_provider_defaults_to_api_type():
-    e = Embedder(model="m", provider_api_type="openai")
-    assert e._resolve_provider() == "openai"
+def test_resolve_ref_fastembed_pseudo_provider():
+    """`fastembed/<model_id>` short-circuits to local ONNX without consulting config."""
+    e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
+    assert e._resolve_ref() == ("fastembed", "BAAI/bge-small-en-v1.5")
 
 
-def test_resolve_provider_embedding_provider_overrides():
-    e = Embedder(model="m", provider_api_type="openai", embedding_provider="fastembed")
-    assert e._resolve_provider() == "fastembed"
+def test_resolve_ref_provider_alias_routes_to_litellm():
+    """`alias/model` resolves through the providers dict to a litellm 4-tuple."""
+    from stupidex.config import Config, _validate_config
+    from stupidex.llm import providers as providers_mod
+
+    providers = {
+        "work-openai": {
+            "litellm_provider": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-test",
+            "models": {"text-embedding-3-small": {}},
+        }
+    }
+    cfg = _validate_config(Config(providers=providers))
+    e = Embedder("work-openai/text-embedding-3-small")
+    with patch.object(providers_mod, "get_config", return_value=cfg):
+        assert e._resolve_ref() == (
+            "openai",
+            "text-embedding-3-small",
+            "https://api.openai.com/v1",
+            "sk-test",
+        )
 
 
-def test_resolve_model_fastembed_default():
-    e = Embedder(provider_api_type="openai", embedding_provider="fastembed")
-    assert e._resolve_model() == DEFAULT_FASTEMBED_MODEL
+def test_resolve_ref_explicit_model_id_preserved():
+    """The model id portion of `alias/<model_id>` is preserved verbatim."""
+    from stupidex.config import Config, _validate_config
+    from stupidex.llm import providers as providers_mod
 
-
-def test_resolve_model_openai_default():
-    e = Embedder(provider_api_type="openai")
-    assert e._resolve_model() == DEFAULT_OPENAI_MODEL
-
-
-def test_resolve_model_explicit_overrides_default():
-    e = Embedder(model="custom-model", embedding_provider="fastembed")
-    assert e._resolve_model() == "custom-model"
+    providers = {
+        "work-openai": {
+            "litellm_provider": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-test",
+        }
+    }
+    cfg = _validate_config(Config(providers=providers))
+    e = Embedder("work-openai/custom-embedding-model")
+    with patch.object(providers_mod, "get_config", return_value=cfg):
+        ref = e._resolve_ref()
+    # ref is a 4-tuple (litellm_provider, model_id, base_url, api_key)
+    assert ref[1] == "custom-embedding-model"
 
 
 @pytest.mark.asyncio
 async def test_fastembed_missing_package_raises():
-    e = Embedder(embedding_provider="fastembed", model="BAAI/bge-small-en-v1.5")
+    e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
     Embedder._fastembed_cache.clear()
     with (
         patch.dict("sys.modules", {"fastembed": None}),
@@ -253,7 +281,7 @@ async def test_fastembed_missing_package_raises():
 async def test_fastembed_routing_called():
     import numpy as np
 
-    e = Embedder(embedding_provider="fastembed", model="BAAI/bge-small-en-v1.5")
+    e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
     Embedder._fastembed_cache.clear()
     mock_vectors = [np.array([0.1, 0.2, 0.3])]
 

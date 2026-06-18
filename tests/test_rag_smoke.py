@@ -90,3 +90,40 @@ def test_delete_by_file():
         store.delete_by_file("a.py")
         assert store.status().total_chunks == 0
         assert store.status().total_files == 0
+
+
+def test_embedder_fastembed_local_routes_correctly():
+    """`Embedder("fastembed/<id>")` dispatches to the local ONNX path and returns vectors.
+
+    Smoke test for U6: verifies the fastembed pseudo-provider routing switch in
+    `Embedder.embed()` without depending on the network or the slow ONNX model
+    init. `fastembed.TextEmbedding` is stubbed via `sys.modules` so no model
+    download happens and the test stays fast.
+    """
+    from unittest.mock import patch
+
+    import numpy as np
+
+    from stupidex.rag.embedder import Embedder
+
+    e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
+    Embedder._fastembed_cache.clear()
+    mock_vector = np.array([0.1, 0.2, 0.3])
+
+    class FakeTextEmbedding:
+        def __init__(self, **kw):
+            pass
+
+        def embed(self, texts):
+            return [mock_vector for _ in texts]
+
+    fake_module = type("M", (), {"TextEmbedding": FakeTextEmbedding})
+    with patch.dict("sys.modules", {"fastembed": fake_module}):
+        import asyncio
+
+        vectors = asyncio.run(e.embed(["hello", "world"]))
+
+    assert isinstance(vectors, list)
+    assert len(vectors) == 2
+    assert all(isinstance(v, list) for v in vectors)
+    assert all(isinstance(x, float) for x in vectors[0])

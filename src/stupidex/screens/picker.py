@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Input, OptionList
+from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 
@@ -15,14 +15,17 @@ class PickerItem:
 class OptionPicker(Screen[str]):
     """Generic picker screen with search filtering that returns the selected id."""
 
-    def __init__(self, items: list[PickerItem]) -> None:
+    def __init__(self, items: list[PickerItem], header: str | None = None) -> None:
         super().__init__()
         self._items = items
         self._filtered: list[PickerItem] = list(items)
+        self._header = header
 
     def compose(self):
         with Vertical(id="picker-container"):
             yield Input(placeholder="Search...", id="picker-search")
+            if self._header:
+                yield Static(self._header, id="picker-header")
             yield OptionList(*[Option(item.label, id=item.id) for item in self._filtered], id="picker-list")
 
     def on_mount(self) -> None:

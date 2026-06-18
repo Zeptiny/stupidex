@@ -81,11 +81,7 @@ async def index_project(
         store.init_db()
         await loop.run_in_executor(None, _flush_store, store, [], [])
         if embedder is None:
-            embedder = Embedder(
-                model=cfg.rag_embedding_model or None,
-                provider_api_type=cfg.provider_api_type,
-                embedding_provider=cfg.rag_embedding_provider,
-            )
+            embedder = Embedder(model=cfg.rag_embedding_model or None)
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
         return stats
 
@@ -93,11 +89,7 @@ async def index_project(
     store.init_db()
 
     if embedder is None:
-        embedder = Embedder(
-            model=cfg.rag_embedding_model or None,
-            provider_api_type=cfg.provider_api_type,
-            embedding_provider=cfg.rag_embedding_provider,
-        )
+        embedder = Embedder(model=cfg.rag_embedding_model or None)
 
     existing_hashes: dict[str, str] = {}
     if not force:

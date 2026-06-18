@@ -130,6 +130,7 @@ class Stupidex(App):
         await self.refresh_mcp_servers()
 
     async def on_exit(self) -> None:
+        self._subagent_ui.stop()
         if hasattr(self, '_mcp_manager') and self._mcp_manager is not None:
             try:
                 await self._mcp_manager.shutdown()
@@ -532,10 +533,16 @@ class Stupidex(App):
             sidebar = self.query_one("#sidebar", Sidebar)
             if last_usage:
                 sidebar.update_tokens(
-                    last_usage.prompt_tokens, last_usage.completion_tokens, last_usage.total_tokens, view_id="main"
+                    last_usage.prompt_tokens,
+                    last_usage.completion_tokens,
+                    last_usage.total_tokens,
+                    view_id="main",
+                    max_context=self._resolve_active_max_context(),
                 )
             else:
-                sidebar.update_tokens(0, 0, 0, view_id="main")
+                sidebar.update_tokens(
+                    0, 0, 0, view_id="main", max_context=self._resolve_active_max_context()
+                )
         except Exception:
             pass
 
@@ -543,6 +550,39 @@ class Stupidex(App):
         self.query_one("#model", Static).update(model_label)
 
         await self._subagent_ui.update_sidebar()
+
+    def _resolve_active_max_context(self) -> int | None:
+        """Look up the active session's model `max_input_tokens`.
+
+        Uses `self.model` (an `alias/model_id` string) -- or, when the session
+        has not picked a model, the config default model -- and resolves it via
+        `resolve_model_metadata`. The config alias (the segment before the `/`)
+        is what `resolve_model_metadata` keys on, because the user's per-model
+        override (`max_input_tokens`, etc.) lives under
+        `providers.<alias>.models.<model_id>` in the config.
+
+        Returns None when no model is configured, the ref is malformed, or the
+        resolver returns a non-int `max_input_tokens` (None means "unknown").
+        """
+        from stupidex.config import get_config
+        from stupidex.llm.providers import resolve_model_metadata
+
+        model_ref = self.model or get_config().default_model
+        if not model_ref:
+            return None
+        # Extract the config alias + model_id from the ref directly.
+        # `resolve_model_ref` returns the *litellm provider name* (e.g. "openai")
+        # as its first element, NOT the config alias -- and `resolve_model_metadata`
+        # keys on the alias to find the user override.
+        alias, sep, model_id = model_ref.partition("/")
+        if not sep or not alias or not model_id:
+            return None
+        try:
+            metadata = resolve_model_metadata(alias, model_id)
+        except Exception:
+            return None
+        max_ctx = metadata.get("max_input_tokens")
+        return max_ctx if isinstance(max_ctx, int) else None
 
     async def refresh_todos(self) -> None:
         try:

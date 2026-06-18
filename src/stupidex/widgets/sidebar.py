@@ -173,6 +173,7 @@ class Sidebar(Vertical):
     _prompt_tokens: int = 0
     _completion_tokens: int = 0
     _total_tokens: int = 0
+    _max_context: int | None = None
     _active_view: str = "main"
     _last_token_update: float = 0
     _token_flush_scheduled: bool = False
@@ -184,7 +185,7 @@ class Sidebar(Vertical):
 
     def compose(self):
         yield Static("Tokens", id="sidebar-tokens-label")
-        yield Static("Context: 0\nResponse: 0\nTotal: 0", id="token-info")
+        yield Static("Context: 0", id="token-info")
         with Vertical(id="sidebar-nav"):
             yield NavEntry("▸ Main", "main", id="nav-main")
         yield Static("Subagents", id="sidebar-subagents-label")
@@ -261,11 +262,18 @@ class Sidebar(Vertical):
     def _show_usage_for_view(self, view_id: str) -> None:
         usage = self._usage_by_view.get(view_id)
         if usage:
-            self._prompt_tokens, self._completion_tokens, self._total_tokens = usage
+            # Stored as 4-tuple: (prompt, completion, total, max_context).
+            # Older entries without max_context fall back to None.
+            if len(usage) == 4:
+                self._prompt_tokens, self._completion_tokens, self._total_tokens, self._max_context = usage
+            else:
+                self._prompt_tokens, self._completion_tokens, self._total_tokens = usage
+                self._max_context = None
         else:
             self._prompt_tokens = 0
             self._completion_tokens = 0
             self._total_tokens = 0
+            self._max_context = None
         self._flush_token_update()
 
     def _update_active_styles(self) -> None:
@@ -289,13 +297,28 @@ class Sidebar(Vertical):
         except Exception:
             pass
 
-    def update_tokens(self, prompt_tokens: int, completion_tokens: int, total_tokens: int, view_id: str = "main") -> None:
-        self._usage_by_view[view_id] = (prompt_tokens, completion_tokens, total_tokens)
+    def update_tokens(
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        view_id: str = "main",
+        max_context: int | None = None,
+    ) -> None:
+        """Record token usage for a view (main session, or a subagent tab).
+
+        `max_context` (the active model's `max_input_tokens`) is optional; when
+        provided, the sidebar renders `Context: <prompt> (<pct>%)` where the
+        percentage is `prompt_tokens / max_context * 100`. When omitted, the
+        sidebar renders `Context: <prompt>` without the percentage.
+        """
+        self._usage_by_view[view_id] = (prompt_tokens, completion_tokens, total_tokens, max_context)
         if view_id != self._active_view:
             return
         self._prompt_tokens = prompt_tokens
         self._completion_tokens = completion_tokens
         self._total_tokens = total_tokens
+        self._max_context = max_context
         now = time.monotonic()
         if now - self._last_token_update >= _TOKEN_THROTTLE_INTERVAL:
             self._last_token_update = now
@@ -309,9 +332,13 @@ class Sidebar(Vertical):
         self._token_flush_scheduled = False
         self._last_token_update = time.monotonic()
         try:
-            self.query_one("#token-info", Static).update(
-                f"Context:  {self._prompt_tokens}\nResponse: {self._completion_tokens}\nTotal:    {self._total_tokens}"
-            )
+            line = f"Context: {self._prompt_tokens}"
+            if self._max_context and self._max_context > 0:
+                pct = self._prompt_tokens / self._max_context * 100
+                # Clamp so 0% and 100% render cleanly; never show negative.
+                pct = max(0.0, min(100.0, pct))
+                line += f" ({pct:.1f}%)"
+            self.query_one("#token-info", Static).update(line)
         except Exception:
             pass
 
@@ -404,15 +431,18 @@ class Sidebar(Vertical):
 
         if done_entries:
             finished_label = f"Finished ({len(done)})"
+            # Done entries are passed as Collapsible children so they are part
+            # of its compose() — avoids a post-mount query_one("Contents")
+            # that races the DOM during teardown (NoMatches on a partially
+            # composed Collapsible).
             collapse = Collapsible(
+                *done_entries,
                 classes="finished-collapse",
                 title=finished_label,
                 collapsed=was_finished_collapsed,
             )
             collapse.can_focus = True
             await container.mount(collapse)
-            contents = collapse.query_one("Contents")
-            await contents.mount(*done_entries)
 
     def _format_entry(self, record: SubagentRecord) -> str:
         indicator = self._get_indicator(record.state)
@@ -536,14 +566,16 @@ class Sidebar(Vertical):
             await container.mount(*active_entries)
 
         if done_entries:
+            # See _refresh_subagent_display: children are passed to the
+            # Collapsible constructor rather than mounted via a post-mount
+            # query_one("Contents") to avoid the teardown NoMatches race.
             collapse = Collapsible(
+                *done_entries,
                 classes="finished-collapse",
                 title=f"Done ({len(done)})",
                 collapsed=was_finished_collapsed,
             )
             await container.mount(collapse)
-            contents = collapse.query_one("Contents")
-            await contents.mount(*done_entries)
 
     @staticmethod
     def _format_todo(task: TodoTask) -> str:
