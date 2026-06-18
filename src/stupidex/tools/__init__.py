@@ -11,6 +11,7 @@ from stupidex.tools.file_manipulation import (
     read_tool,
     write_tool,
 )
+from stupidex.tools.mcp_resource import execute_read_mcp_resource, read_mcp_resource_tool
 from stupidex.tools.rag import (
     execute_rag_index,
     execute_rag_search,
@@ -72,6 +73,7 @@ def get_tool_registry() -> dict[str, dict]:
         "interrupt_subagents": {"tool": interrupt_subagents, "executor": execute_interrupt_subagents},
         "skill": {"tool": build_skill_tool(), "executor": execute_skill},
         "list_skills": {"tool": build_list_skills_tool(), "executor": execute_list_skills},
+        "read_mcp_resource": {"tool": read_mcp_resource_tool, "executor": execute_read_mcp_resource},
     }
     return _TOOL_REGISTRY
 

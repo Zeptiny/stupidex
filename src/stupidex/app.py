@@ -117,6 +117,26 @@ class Stupidex(App):
             pass
         await self.rerender_footer()
         await self.refresh_todos()
+        from stupidex.config import get_config
+        from stupidex.mcp import MCPManager, set_mcp_manager
+        cfg = get_config()
+        if cfg.mcp_servers:
+            mcp_manager = MCPManager()
+            await mcp_manager.start_all(cfg.mcp_servers)
+            set_mcp_manager(mcp_manager)
+            self._mcp_manager = mcp_manager
+        else:
+            set_mcp_manager(None)
+        await self.refresh_mcp_servers()
+
+    async def on_exit(self) -> None:
+        if hasattr(self, '_mcp_manager') and self._mcp_manager is not None:
+            try:
+                await self._mcp_manager.shutdown()
+            except Exception:
+                pass
+        from stupidex.mcp import set_mcp_manager
+        set_mcp_manager(None)
 
     def _is_streaming(self) -> bool:
         return self._active_worker is not None and not self._active_worker.is_finished
@@ -456,5 +476,20 @@ class Stupidex(App):
             store = get_todo_store()
             sidebar = self.query_one("#sidebar", Sidebar)
             await sidebar.update_todos(store.list())
+        except Exception:
+            pass
+
+    async def refresh_mcp_servers(self) -> None:
+        try:
+            from stupidex.mcp import get_mcp_manager
+            sidebar = self.query_one("#sidebar", Sidebar)
+            manager = get_mcp_manager()
+            if manager is not None:
+                await sidebar.update_mcp_servers(manager.get_server_statuses())
+            else:
+                from stupidex.config import get_config
+                cfg = get_config()
+                statuses = {name: {"status": "off", "tool_count": 0} for name in cfg.mcp_servers}
+                await sidebar.update_mcp_servers(statuses)
         except Exception:
             pass

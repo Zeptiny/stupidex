@@ -19,6 +19,8 @@ allowed_tools:
   - list_skills
   - rag_search
   - rag_index
+  - mcp_context7_*
+  - mcp_example_*
   - todo_create
   - todo_list
   - todo_update

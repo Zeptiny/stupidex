@@ -1,7 +1,13 @@
 import json
+import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+_MCP_SERVER_NAME_RE = re.compile(r"^[a-z0-9-]+$")
 
 HOME_CONFIG_DIR = Path.home() / ".stupidex"
 HOME_CONFIG_PATH = HOME_CONFIG_DIR / "config.json"
@@ -21,21 +27,39 @@ class Config:
     base_url: str = "https://opencode.ai/zen/go/v1"
     default_model: str = "mimo-v2.5"
     provider_api_type: str = "openai"
-    tier_models: dict[str, str] = field(default_factory=lambda: {
-        "tolo": "mimo-v2.5",
-        "tainha": "mimo-v2.5",
-        "papudo": "mimo-v2.5",
-        "papaca": "mimo-v2.5",
-    })
-    ignored_dirs: list[str] = field(default_factory=lambda: [
-        ".git", ".svn", ".hg",
-        "node_modules", "__pycache__",
-        "venv", ".venv", "env",
-        "dist", "build", "target",
-        ".idea", ".vscode", ".vs",
-        ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox",
-        ".eggs", "*.egg-info",
-    ])
+    tier_models: dict[str, str] = field(
+        default_factory=lambda: {
+            "tolo": "mimo-v2.5",
+            "tainha": "mimo-v2.5",
+            "papudo": "mimo-v2.5",
+            "papaca": "mimo-v2.5",
+        }
+    )
+    ignored_dirs: list[str] = field(
+        default_factory=lambda: [
+            ".git",
+            ".svn",
+            ".hg",
+            "node_modules",
+            "__pycache__",
+            "venv",
+            ".venv",
+            "env",
+            "dist",
+            "build",
+            "target",
+            ".idea",
+            ".vscode",
+            ".vs",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".tox",
+            ".nox",
+            ".eggs",
+            "*.egg-info",
+        ]
+    )
     command_timeout: int = 30
     read_line_limit: int = 1000
     grep_max_results: int = 100
@@ -48,6 +72,18 @@ class Config:
     rag_chunk_overlap: int = 200
     rag_top_k: int = 5
     rag_max_file_size: int = 512000
+    mcp_servers: dict[str, dict] = field(
+        default_factory=lambda: {
+            "context7": {
+                "command": "npx",
+                "args": ["-y", "@upstash/context7-mcp"],
+            },
+            "example": {
+                "command": "python",
+                "args": ["-m", "stupidex.mcp.example_server"],
+            },
+        }
+    )
 
 
 _ENV_MAP = {
@@ -124,6 +160,29 @@ def _validate_config(cfg: Config) -> Config:
     if values["rag_embedding_provider"] not in valid_providers:
         values["rag_embedding_provider"] = ""
 
+    mcp_servers = values.get("mcp_servers", {})
+    if not isinstance(mcp_servers, dict):
+        mcp_servers = {}
+    cleaned_mcp: dict[str, dict] = {}
+    for name, server_cfg in mcp_servers.items():
+        if not isinstance(server_cfg, dict):
+            log.warning("Skipping MCP server '%s': config must be a dict, got %s", name, type(server_cfg).__name__)
+            continue
+        if not _MCP_SERVER_NAME_RE.match(name):
+            log.warning("Skipping MCP server '%s': name must match [a-z0-9-]+", name)
+            continue
+        if "url" not in server_cfg:
+            cmd = server_cfg.get("command")
+            if not isinstance(cmd, str):
+                log.warning("Skipping MCP server '%s': 'command' must be a string, got %s", name, type(cmd).__name__)
+                continue
+            args = server_cfg.get("args", [])
+            if not isinstance(args, list):
+                log.warning("Skipping MCP server '%s': 'args' must be a list, got %s", name, type(args).__name__)
+                continue
+        cleaned_mcp[name] = server_cfg
+    values["mcp_servers"] = cleaned_mcp
+
     return Config(**values)
 
 
@@ -141,13 +200,27 @@ class ConfigManager:
         home = _load_json(HOME_CONFIG_PATH)
         for k, v in home.items():
             if k in merged:
-                merged[k] = v
+                if k == "mcp_servers" and isinstance(v, dict) and isinstance(merged.get(k), dict):
+                    for sname, scfg in v.items():
+                        if sname in merged[k] and isinstance(merged[k][sname], dict) and isinstance(scfg, dict):
+                            merged[k][sname] = {**merged[k][sname], **scfg}
+                        else:
+                            merged[k][sname] = scfg
+                else:
+                    merged[k] = v
 
         project_path = Path.cwd() / PROJECT_CONFIG_NAME
         project = _load_json(project_path)
         for k, v in project.items():
             if k in merged:
-                merged[k] = v
+                if k == "mcp_servers" and isinstance(v, dict) and isinstance(merged.get(k), dict):
+                    for sname, scfg in v.items():
+                        if sname in merged[k] and isinstance(merged[k][sname], dict) and isinstance(scfg, dict):
+                            merged[k][sname] = {**merged[k][sname], **scfg}
+                        else:
+                            merged[k][sname] = scfg
+                else:
+                    merged[k] = v
 
         cfg = Config(**merged)
         cfg = _merge_from_env(cfg)
@@ -166,12 +239,15 @@ class ConfigManager:
                 json.dump(asdict(defaults), f, indent=2)
             os.chmod(str(HOME_CONFIG_PATH), 0o600)
         from stupidex.agents import load_agents, seed_agents_dir
+
         seed_agents_dir(HOME_AGENTS_DIR)
         load_agents()
         from stupidex.skills import load_skills, seed_skills_dir
+
         seed_skills_dir(HOME_SKILLS_DIR)
         load_skills()
         from stupidex.personality import load_personalities
+
         load_personalities()
 
     @classmethod
@@ -219,6 +295,7 @@ def get_current_theme() -> str:
 
 def set_current_theme(name: str) -> None:
     from stupidex.themes import get_theme_registry
+
     get_theme_registry().get(name)  # raises ValueError for unknown theme
     cfg = get_config()
     cfg.theme = name
@@ -231,6 +308,7 @@ def get_current_personality() -> str:
 
 def set_current_personality(name: str) -> None:
     from stupidex.personality import get_personality_registry
+
     get_personality_registry().get(name)  # raises ValueError for unknown
     cfg = get_config()
     cfg.personality = name

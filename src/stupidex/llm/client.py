@@ -311,6 +311,14 @@ async def stream_response(
     from fnmatch import fnmatch
     filtered_tools = {k: v for k, v in registry.items()
                       if any(fnmatch(k, p) for p in allowed_tools)}
+
+    from stupidex.mcp import get_mcp_manager
+    mcp_manager = get_mcp_manager()
+    if mcp_manager is not None:
+        for name, tool_entry in mcp_manager.get_tools().items():
+            if any(fnmatch(name, p) for p in allowed_tools):
+                filtered_tools[name] = tool_entry
+
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
     while True:
