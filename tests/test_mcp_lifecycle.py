@@ -147,3 +147,55 @@ class TestMCPLifecycle(unittest.IsolatedAsyncioTestCase):
             "shutdown logged a warning (swallowed cross-task "
             f"error): {[r.getMessage() for r in shutdown_warnings]}",
         )
+
+    async def test_start_all_reinitializes_lifecycle_for_restart(self):
+        """A manager can be ``start_all``-ed again after ``shutdown``.
+
+        The one-shot ``asyncio.Event``s and the closed ``AsyncExitStack`` must
+        be reinitialized at the start of ``start_all``; otherwise the second
+        run returns before the runner enters any transport (``_ready`` already
+        set) and its ``finally`` closes the stack immediately (``_stop``
+        already set).
+        """
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        servers = {"srv1": {"command": "fake", "args": []}}
+
+        with (
+            patch("stupidex.mcp.stdio_client", fake_stdio_client),
+            patch("stupidex.mcp.ClientSession", FakeClientSession),
+        ):
+            await manager.start_all(servers)
+            self.assertEqual(
+                manager.get_server_statuses()["srv1"]["status"],
+                "connected",
+            )
+            await manager.shutdown()
+
+            # Second lifecycle on the same instance must work end to end.
+            await manager.start_all(servers)
+            self.assertEqual(
+                manager.get_server_statuses()["srv1"]["status"],
+                "connected",
+            )
+            await manager.shutdown()
+
+    async def test_start_all_rejects_concurrent_start(self):
+        """A second ``start_all`` while a runner is active must raise, rather
+        than overwrite ``_runner`` and corrupt the in-flight run's state."""
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        servers = {"srv1": {"command": "fake", "args": []}}
+
+        with (
+            patch("stupidex.mcp.stdio_client", fake_stdio_client),
+            patch("stupidex.mcp.ClientSession", FakeClientSession),
+        ):
+            await manager.start_all(servers)
+            try:
+                with self.assertRaises(RuntimeError):
+                    await manager.start_all(servers)
+            finally:
+                await manager.shutdown()

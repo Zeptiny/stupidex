@@ -49,6 +49,16 @@ class MCPManager:
         self._start_error: BaseException | None = None
 
     async def start_all(self, servers: dict[str, dict]) -> None:
+        if self._runner is not None and not self._runner.done():
+            raise RuntimeError("MCPManager.start_all already in progress")
+        # Reinitialize the one-shot lifecycle state so a manager can be
+        # restarted after shutdown: the Events were set by the prior run and
+        # the exit stack was closed by shutdown, which would otherwise make the
+        # second start return before the runner enters any transport.
+        self._ready = asyncio.Event()
+        self._stop = asyncio.Event()
+        self._start_error = None
+        self._exit_stack = contextlib.AsyncExitStack()
         for server_name in servers:
             self._server_status[server_name] = {"status": "starting", "tool_count": 0, "error": None}
         # The runner owns the exit stack; transports are entered AND exited in
