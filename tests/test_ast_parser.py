@@ -183,6 +183,19 @@ def test_tsx_uses_typescript_query():
     assert names[0].text == "App"
 
 
+def test_run_query_typescript_captures_named_arrow_function():
+    source = "const myFunction = () => {}"
+    tree = parse_file("test.ts", source)
+    query_text = load_query_file("typescript")
+    results = run_query(tree, "typescript", query_text, source)
+
+    assert "name.definition.function" in results
+    names = results["name.definition.function"]
+    assert any(r.text == "myFunction" for r in names)
+
+    assert "definition.function" in results
+
+
 def test_query_cache_separate_by_lang():
     query_text = load_query_file("typescript")
     # Load grammars first

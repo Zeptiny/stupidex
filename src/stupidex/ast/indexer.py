@@ -111,11 +111,9 @@ async def index_project(
     store = ASTStore(project_path)
     store.init_db()
 
-    existing_hashes: dict[str, str] = {}
-    if not force:
-        existing_hashes = await loop.run_in_executor(
-            None, store.get_all_file_hashes
-        )
+    existing_hashes: dict[str, str] = await loop.run_in_executor(
+        None, store.get_all_file_hashes
+    )
 
     indexed_files: set[str] = set()
 
@@ -139,7 +137,7 @@ async def index_project(
 
             if content is None or file_hash is None:
                 logger.debug("Skipping %s (binary, empty, or too large)", rel)
-                if not force and existing_hashes.get(rel):
+                if existing_hashes.get(rel):
                     await loop.run_in_executor(None, store.delete_by_file, rel)
                 continue
 
@@ -162,11 +160,10 @@ async def index_project(
             logger.warning("AST indexing error: %s", msg)
             result.errors.append(msg)
 
-    if not force and existing_hashes:
-        for stored_path in existing_hashes:
-            if stored_path not in indexed_files:
-                await loop.run_in_executor(None, store.delete_by_file, stored_path)
-                result.files_deleted += 1
+    for stored_path in existing_hashes:
+        if stored_path not in indexed_files:
+            await loop.run_in_executor(None, store.delete_by_file, stored_path)
+            result.files_deleted += 1
 
     result.duration_seconds = loop.time() - t0
     _session_initialized = True

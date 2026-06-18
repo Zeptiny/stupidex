@@ -11,6 +11,10 @@
 
 (arrow_function) @definition.function
 
+(variable_declarator
+  name: (identifier) @name.definition.function
+  value: (arrow_function) @definition.function)
+
 (method_definition
   name: (property_identifier) @name.definition.method
   body: (statement_block) @definition.method)

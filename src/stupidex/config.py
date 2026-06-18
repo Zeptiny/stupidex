@@ -288,7 +288,7 @@ def _validate_config(cfg: Config) -> Config:
         values["rag_top_k"] = defaults.rag_top_k
     if not isinstance(values["rag_max_file_size"], int) or values["rag_max_file_size"] <= 0:
         values["rag_max_file_size"] = defaults.rag_max_file_size
-    if not isinstance(values["ast_max_file_size"], int) or values["ast_max_file_size"] <= 0:
+    if not isinstance(values["ast_max_file_size"], int) or isinstance(values["ast_max_file_size"], bool) or values["ast_max_file_size"] <= 0:
         values["ast_max_file_size"] = defaults.ast_max_file_size
 
     mcp_servers = values.get("mcp_servers", {})

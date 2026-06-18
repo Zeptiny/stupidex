@@ -424,6 +424,33 @@ async def test_rename_symbol_empty_name(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_rename_symbol_empty_new_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _populate_store(str(tmp_path), {
+        "mod.py": [
+            Symbol("foo", "definition", "function", 0, 4, 0, 7, 0, 7),
+        ],
+    })
+    result = await execute_rename_symbol("foo", "")
+    assert isinstance(result, ExecutorResult)
+    assert "<ast_error" in result.content
+    assert "New name" in result.content or "new" in result.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_rename_symbol_whitespace_new_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _populate_store(str(tmp_path), {
+        "mod.py": [
+            Symbol("foo", "definition", "function", 0, 4, 0, 7, 0, 7),
+        ],
+    })
+    result = await execute_rename_symbol("foo", "   ")
+    assert isinstance(result, ExecutorResult)
+    assert "<ast_error" in result.content
+
+
+@pytest.mark.asyncio
 async def test_rename_symbol_preserves_other_code(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "mod.py").write_text(
@@ -442,6 +469,24 @@ async def test_rename_symbol_preserves_other_code(tmp_path, monkeypatch):
     assert "x = 42" in content
     assert "handle" in content
     assert "process" not in content
+
+
+@pytest.mark.asyncio
+async def test_rename_symbol_word_boundary_dollar(tmp_path, monkeypatch):
+    """Symbols prefixed with $ should not be renamed when $ is adjacent."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "mod.js").write_text("const $foo = 1;\nconst bar = $foo;\n")
+    _populate_store(str(tmp_path), {
+        "mod.js": [
+            Symbol("$foo", "definition", "function", 0, 6, 0, 10, 0, 10),
+            Symbol("$foo", "reference", "", 1, 12, 1, 16, 0, 0),
+        ],
+    })
+    result = await execute_rename_symbol("$foo", "$bar")
+    assert isinstance(result, ExecutorResult)
+    content = Path("mod.js").read_text()
+    assert "$bar" in content
+    assert "$foo" not in content
 
 
 # ---------------------------------------------------------------------------

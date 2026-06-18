@@ -490,7 +490,7 @@ async def execute_get_function(
                     func_node.start_byte : func_node.end_byte
                 ].decode("utf-8", errors="replace")
 
-                hash_key = f"{file_path}:{target_name}"
+                hash_key = f"{file_path}:{target_name}:{class_text}"
                 current_hash = _fnv1a(func_text)
                 last_hash = _get_function_sent_hashes.get(hash_key)
 
@@ -843,6 +843,13 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
                 "Symbol name is required.</ast_error>",
             )
 
+        if not new_name or not new_name.strip():
+            return ExecutorResult(
+                display="Empty new name",
+                content='<ast_error tool="rename_symbol">'
+                "New name is required.</ast_error>",
+            )
+
         await ensure_indexed()
 
         loop = asyncio.get_running_loop()
@@ -869,8 +876,8 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
         _ident_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
 
         # Phase 1: compute all new contents without writing.
-        # Each entry: (rel_path, abs_path, old_content, new_content, file_symbols)
-        planned: list[tuple[str, str, str, str, list[dict]]] = []
+        # Each entry: (rel_path, abs_path, old_content, new_content, replacements)
+        planned: list[tuple[str, str, str, str, int]] = []
 
         for rel_path, file_symbols in by_file.items():
             abs_path = str(Path(project_path) / rel_path)
@@ -889,6 +896,7 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
                 reverse=True,
             )
 
+            file_replacements = 0
             for s in sorted_syms:
                 line_idx = s["start_line"]
                 byte_col = s["start_column"]
@@ -913,13 +921,14 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
                     continue
 
                 lines[line_idx] = line[:char_col] + new_name + line[char_end:]
+                file_replacements += 1
 
             new_content = "\n".join(lines)
 
             if new_content == content:
                 continue
 
-            planned.append((rel_path, abs_path, content, new_content, file_symbols))
+            planned.append((rel_path, abs_path, content, new_content, file_replacements))
 
         if not planned:
             return ExecutorResult(
@@ -934,7 +943,7 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
         edit_results = []
         failed_files: list[str] = []
 
-        for rel_path, abs_path, content, new_content, file_symbols in planned:
+        for rel_path, abs_path, content, new_content, file_replacements in planned:
             try:
                 _atomic_write(abs_path, new_content)
             except Exception as write_err:
@@ -957,7 +966,7 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
 
             edit_results.append(
                 f'<edit_result path="{_xml_attr(rel_path)}" success="true" '
-                f'replacements="{len(file_symbols)}" replace_all="false" '
+                f'replacements="{file_replacements}" replace_all="false" '
                 f'added="{added}" removed="{removed}">\n'
                 f'<diff format="unified"><![CDATA[{_cdata_text(diff_text)}]]></diff>\n'
                 f"</edit_result>"

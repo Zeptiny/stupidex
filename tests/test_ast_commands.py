@@ -14,7 +14,7 @@ Scenarios from the plan:
 import asyncio
 import inspect
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from stupidex.commands.session_commands import COMMANDS, execute_command
 
@@ -98,8 +98,7 @@ class TestReindexAstExecution(unittest.TestCase):
         self.assertIsNot(captured_fns[0], captured_fns[1])
 
     def test_worker_body_awaits_index_project_force_true(self):
-        """The worker coroutine's source includes force=True, confirming
-        it will call index_project with the force flag."""
+        """The worker coroutine actually calls index_project with force=True."""
         captured_fn = {}
 
         def capture_worker(coro_fn):
@@ -108,12 +107,16 @@ class TestReindexAstExecution(unittest.TestCase):
         app = MagicMock()
         app.run_worker = capture_worker
 
-        with patch(_INDEX_PROJECT):
+        mock_index = AsyncMock(return_value=MagicMock(
+            files_indexed=1, symbols_extracted=2,
+            duration_seconds=0.1, files_skipped=0, files_deleted=0, errors=[],
+        ))
+
+        with patch(_INDEX_PROJECT, mock_index):
             asyncio.run(execute_command(app, "/reindex-ast"))
 
-        # Verify the coroutine function's code references force=True.
-        source = inspect.getsource(captured_fn["fn"])
-        self.assertIn("force=True", source)
+        asyncio.run(captured_fn["fn"]())
+        mock_index.assert_called_with(force=True)
 
 if __name__ == "__main__":
     unittest.main()
