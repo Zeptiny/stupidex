@@ -1,10 +1,10 @@
 import asyncio
 import logging
 
+from stupidex.llm.providers import resolve_embedding_ref
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
-DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
 BATCH_SIZE = 100
 MAX_RETRIES = 3
 
@@ -16,49 +16,48 @@ class EmbeddingError(Exception):
 class Embedder:
     _fastembed_cache: dict[str, object] = {}
 
-    def __init__(
-        self,
-        model: str | None = None,
-        provider_api_type: str = "openai",
-        embedding_provider: str = "",
-    ):
+    def __init__(self, model: str | None = None):
         self.model = model or ""
-        self.provider_api_type = provider_api_type
-        self.embedding_provider = embedding_provider
 
-    def _resolve_provider(self) -> str:
-        if self.embedding_provider:
-            return self.embedding_provider
-        return self.provider_api_type
+    def _resolve_ref(self) -> tuple[str, str] | tuple[str, str, str, str | None]:
+        """Resolve self.model to an embedding ref via the providers resolver.
 
-    def _resolve_model(self) -> str:
-        if self.model:
-            return self.model
-        provider = self._resolve_provider()
-        if provider == "openai":
-            return DEFAULT_OPENAI_MODEL
-        if provider == "fastembed":
-            return DEFAULT_FASTEMBED_MODEL
-        raise EmbeddingError(
-            f"No embedding model configured for provider '{provider}'. "
-            "Set 'rag_embedding_model' in config.json or STUPIDEX_RAG_EMBEDDING_MODEL env var."
-        )
+        Returns ``("fastembed", model_id)`` for the local ONNX short-circuit, or
+        ``(litellm_provider, model_id, base_url, api_key)`` for an ``alias/model``
+        reference routed through the providers dict.
+
+        Raises:
+            EmbeddingError: if no model is configured (empty/None).
+            ProviderResolutionError: propagated from ``resolve_embedding_ref`` when
+                ``self.model`` is not a valid ``alias/model`` reference (e.g. bare
+                ``"fastembed"`` or an unknown provider alias).
+        """
+        if not self.model:
+            raise EmbeddingError(
+                "No embedding model configured. Set 'rag_embedding_model' in "
+                "config.json or STUPIDEX_RAG_EMBEDDING_MODEL env var."
+            )
+        return resolve_embedding_ref(self.model)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
-        model = self._resolve_model()
-        provider = self._resolve_provider()
-        logger.debug("Embedding %d texts with %s/%s", len(texts), provider, model)
+        ref = self._resolve_ref()
         all_embeddings: list[list[float]] = []
 
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i : i + BATCH_SIZE]
-            if provider == "fastembed":
-                batch_embeddings = await self._embed_fastembed(model, batch)
+            if len(ref) == 2:
+                _, model_id = ref
+                logger.debug("Embedding %d texts with fastembed/%s", len(batch), model_id)
+                batch_embeddings = await self._embed_fastembed(model_id, batch)
             else:
-                batch_embeddings = await self._embed_litellm(model, batch)
+                _, model_id, base_url, api_key = ref
+                litellm_provider = ref[0]
+                qualified = f"{litellm_provider}/{model_id}" if litellm_provider else model_id
+                logger.debug("Embedding %d texts with %s", len(batch), qualified)
+                batch_embeddings = await self._embed_litellm(qualified, batch, base_url, api_key)
             all_embeddings.extend(batch_embeddings)
 
         return all_embeddings
@@ -83,14 +82,25 @@ class Embedder:
 
         return await asyncio.to_thread(_run)
 
-    async def _embed_litellm(self, model: str, texts: list[str]) -> list[list[float]]:
+    async def _embed_litellm(
+        self,
+        model: str,
+        texts: list[str],
+        base_url: str,
+        api_key: str | None,
+    ) -> list[list[float]]:
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES):
             try:
                 from litellm import aembedding
 
-                response = await aembedding(model=model, input=texts)
+                response = await aembedding(
+                    model=model,
+                    input=texts,
+                    base_url=base_url or None,
+                    api_key=api_key,
+                )
                 return [item["embedding"] for item in response.data]
             except ImportError as err:
                 raise EmbeddingError(
