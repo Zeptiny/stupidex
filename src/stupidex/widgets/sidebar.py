@@ -431,15 +431,18 @@ class Sidebar(Vertical):
 
         if done_entries:
             finished_label = f"Finished ({len(done)})"
+            # Done entries are passed as Collapsible children so they are part
+            # of its compose() — avoids a post-mount query_one("Contents")
+            # that races the DOM during teardown (NoMatches on a partially
+            # composed Collapsible).
             collapse = Collapsible(
+                *done_entries,
                 classes="finished-collapse",
                 title=finished_label,
                 collapsed=was_finished_collapsed,
             )
             collapse.can_focus = True
             await container.mount(collapse)
-            contents = collapse.query_one("Contents")
-            await contents.mount(*done_entries)
 
     def _format_entry(self, record: SubagentRecord) -> str:
         indicator = self._get_indicator(record.state)
@@ -563,14 +566,16 @@ class Sidebar(Vertical):
             await container.mount(*active_entries)
 
         if done_entries:
+            # See _refresh_subagent_display: children are passed to the
+            # Collapsible constructor rather than mounted via a post-mount
+            # query_one("Contents") to avoid the teardown NoMatches race.
             collapse = Collapsible(
+                *done_entries,
                 classes="finished-collapse",
                 title=f"Done ({len(done)})",
                 collapsed=was_finished_collapsed,
             )
             await container.mount(collapse)
-            contents = collapse.query_one("Contents")
-            await contents.mount(*done_entries)
 
     @staticmethod
     def _format_todo(task: TodoTask) -> str:
