@@ -420,7 +420,7 @@ A minimal example server is included for development and testing:
 python -m stupidex.mcp.example_server
 ```
 
-Exposes one tool (`echo`) and one resource (`info://stupidex`).
+Exposes one tool (`echo`) and one resource (`example://stupidex`).
 
 ## Linting
 
