@@ -130,6 +130,7 @@ class Stupidex(App):
         await self.refresh_mcp_servers()
 
     async def on_exit(self) -> None:
+        self._subagent_ui.stop()
         if hasattr(self, '_mcp_manager') and self._mcp_manager is not None:
             try:
                 await self._mcp_manager.shutdown()

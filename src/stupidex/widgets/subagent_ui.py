@@ -134,6 +134,18 @@ class SubagentUIManager:
             self._timer.stop()
             self._timer = None
 
+    def stop(self) -> None:
+        """Stop the sidebar refresh timer during app teardown.
+
+        Without this, a timer armed while subagents were running keeps firing
+        into the partially-dismantled DOM during ``App.on_exit``, where a
+        sidebar rebuild raised ``NoMatches`` on the freshly-mounted
+        Collapsible's ``Contents`` node. ``stop`` is idempotent.
+        """
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
     async def _tick_timer(self) -> None:
         await self.update_sidebar()
 
