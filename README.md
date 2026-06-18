@@ -263,6 +263,11 @@ Available tools for agents:
 | `list_skills` | List available skills |
 | `rag_search` | Semantic code search |
 | `rag_index` | Index status, reindex, clear |
+| `get_file_skeleton` | Structural outline of a file (definitions only) |
+| `get_function` | Extract specific function with imports and class context |
+| `find_symbol_references` | Find all definitions and references for a symbol name |
+| `replace_symbol` | Replace an entire symbol definition (including docstring and decorators) |
+| `rename_symbol` | Rename a symbol across all files in one call |
 | `todo_create` | Create a task |
 | `todo_update` | Update task status/details |
 | `todo_list` | List tasks filtered by status |
@@ -352,6 +357,55 @@ All RAG settings in `~/.stupidex/config.json`:
 | `rag_max_file_size` | `512000` | Skip files larger than this (bytes) |
 
 Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
+
+## AST Tools
+
+The project includes AST-aware tools for structural code operations. These tools use [tree-sitter](https://tree-sitter.github.io/) to parse source files into syntax trees, enabling precise symbol extraction, cross-file references, and code transformations that text-based tools cannot reliably perform.
+
+### Supported Languages
+
+v1 supports **Python**, **JavaScript**, **TypeScript**, and **TSX**. TSX reuses the TypeScript grammar and query file.
+
+### Quick Start
+
+```bash
+# Index the project for AST symbol lookup
+# In the command palette (Ctrl+P): /reindex-ast
+```
+
+Index-dependent tools (`find_symbol_references`, `rename_symbol`) trigger a full project scan on first call automatically. Index-independent tools (`get_file_skeleton`, `get_function`) parse files directly without requiring an index.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_file_skeleton` | Returns a structural outline of a file — definition lines only, with visual separators. Useful for understanding file structure without reading the entire file. |
+| `get_function` | Extracts a specific function by name, with resolved imports and class context. Reports "no changes" when the function body hasn't changed since last retrieval. |
+| `find_symbol_references` | Finds all definitions and references for a symbol name across the project. Returns file paths and line/column ranges. |
+| `replace_symbol` | Replaces an entire symbol definition using extended AST ranges (includes preceding comments, docstrings, decorators, and export keywords). Applies multiple replacements atomically. |
+| `rename_symbol` | Renames an identifier across all files using line/column positions from the symbol index. Edits are applied atomically per file. |
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/reindex-ast` | Force a full re-scan of the project for AST symbol indexing. Use when the index is stale or after bulk file changes. |
+
+### Configuration
+
+AST settings in `~/.stupidex/config.json`:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `ast_max_file_size` | `1048576` | Skip files larger than this (bytes, 1 MB) |
+
+Environment variable override: `STUPIDEX_AST_MAX_FILE_SIZE`.
+
+The AST index is stored in `.stupidex/ast/symbols.db` (excluded from git via `.gitignore`). The `ignored_dirs` config field is shared with RAG — both subsystems skip the same directories.
+
+### Future Languages
+
+The following languages are planned for future releases: Rust, Go, C/C++, C#, Ruby, Java, PHP, Swift, Kotlin.
 
 ## MCP (Model Context Protocol)
 
@@ -476,6 +530,7 @@ src/
       subagent.py              # subagent management tools
       skill.py                 # skill and list_skills tools
       rag.py                   # RAG index/search tool
+      ast.py                   # AST tools (skeleton, function, references, replace, rename)
       mcp_resource.py          # MCP resource read tool
     mcp/                       # MCP client
       __init__.py              # MCPManager, lifecycle, ContextVar accessor
@@ -486,6 +541,15 @@ src/
       embedder.py              # Embedding provider abstraction
       indexer.py               # Project indexing orchestrator
       store.py                 # SQLite + numpy vector store
+    ast/                       # AST tools subsystem
+      parser.py                # Tree-sitter lazy loader + query cache
+      store.py                 # AST symbol index (SQLite + WAL)
+      indexer.py               # Walk + parse + symbol extract + hash
+      symbols.py               # Symbol dataclass
+      queries/
+        python.scm             # S-expression query for Python
+        javascript.scm         # S-expression query for JavaScript
+        typescript.scm         # S-expression query for TypeScript (reused by TSX)
     widgets/
       message_widget.py        # Textual widgets for messages
       sidebar.py               # Right sidebar

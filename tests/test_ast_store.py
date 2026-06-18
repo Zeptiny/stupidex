@@ -1,6 +1,5 @@
 """Tests for AST symbol store."""
 
-import pytest
 
 from stupidex.ast.store import ASTStore
 from stupidex.ast.symbols import Symbol
