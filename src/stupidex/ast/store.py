@@ -186,6 +186,15 @@ class ASTStore:
         finally:
             conn.close()
 
+    def delete_by_file(self, file_path: str) -> None:
+        conn = self._get_conn()
+        try:
+            conn.execute("DELETE FROM symbols WHERE file_path = ?", (file_path,))
+            conn.execute("DELETE FROM files WHERE file_path = ?", (file_path,))
+            conn.commit()
+        finally:
+            conn.close()
+
     def register_post_write_callback(self, callback) -> None:
         self._post_write_callbacks.append(callback)
 
