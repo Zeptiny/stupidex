@@ -68,6 +68,41 @@ def _xml_attr(value: object) -> str:
     )
 
 
+def _extract_call_names(
+    node: tree_sitter.Node, content_bytes: bytes
+) -> list[str]:
+    """Walk *node*'s subtree and collect short names of call expressions."""
+    calls: list[str] = []
+    _walk_for_calls(node, calls, content_bytes)
+    seen: set[str] = set()
+    result: list[str] = []
+    for c in calls:
+        if c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
+
+def _walk_for_calls(
+    node: tree_sitter.Node, out: list[str], content_bytes: bytes
+) -> None:
+    if node.type in ("call", "call_expression"):
+        callee = node.child_by_field_name("function")
+        if callee is None and node.children:
+            callee = node.children[0]
+        if callee is not None:
+            name = content_bytes[callee.start_byte : callee.end_byte].decode(
+                "utf-8", errors="replace"
+            )
+            # Use the short name: last part after '.' for attribute/member.
+            if "." in name:
+                name = name.rsplit(".", 1)[-1]
+            if name:
+                out.append(name)
+    for child in node.children:
+        _walk_for_calls(child, out, content_bytes)
+
+
 def _cdata_text(value: str) -> str:
     return value.replace("]]>", "]]]]><![CDATA[>")
 
@@ -368,11 +403,23 @@ async def execute_get_file_skeleton(file_path: str) -> ExecutorResult:
         tree = parse_file(file_path, content)
         captures = run_query(tree, lang_name, query_text, content)
 
+        content_bytes = content.encode("utf-8")
         definitions = []
+        def_types = (
+            "function_definition",
+            "function_declaration",
+            "method_definition",
+            "class_definition",
+            "class_declaration",
+            "decorated_definition",
+        )
         for cap_name, results in captures.items():
             if cap_name.startswith("name.definition."):
                 for r in results:
-                    definitions.append((r.start_line, r.text))
+                    parent_node = r.node.parent
+                    if parent_node is not None and parent_node.type not in def_types:
+                        parent_node = r.node.parent
+                    definitions.append((r.start_line, r.text, parent_node))
 
         if not definitions:
             return ExecutorResult(
@@ -383,19 +430,39 @@ async def execute_get_file_skeleton(file_path: str) -> ExecutorResult:
 
         definitions.sort(key=lambda x: x[0])
 
-        lines = []
-        lines.append(f'<file_skeleton file="{_xml_attr(file_path)}" definitions="{len(definitions)}">')
+        lines_buf = []
+        lines_buf.append(
+            f'<file_skeleton file="{_xml_attr(file_path)}" definitions="{len(definitions)}">'
+        )
         prev_line = None
-        for line_num, name in definitions:
+        for line_num, name, parent_node in definitions:
             if prev_line is not None and line_num > prev_line + 1:
-                lines.append("  |----")
-            lines.append(f"  {line_num + 1:>4} │ {name}")
+                lines_buf.append("  |----")
+
+            line_count = ""
+            calls_str = ""
+            if parent_node is not None:
+                end_line_num = parent_node.end_point[0] + 1
+                line_count = end_line_num - (line_num + 1)
+                calls = _extract_call_names(parent_node, content_bytes)
+                # Exclude self-recursion from call list.
+                calls = [c for c in calls if c != name]
+                if calls:
+                    calls_str = f"  # Calls: [{', '.join(calls)}]"
+                lines_buf.append(
+                    f"  {line_num + 1:>4} │ {name}"
+                    f"{calls_str}"
+                    f"  # Lines: {line_count}"
+                )
+            else:
+                lines_buf.append(f"  {line_num + 1:>4} │ {name}")
+
             prev_line = line_num
-        lines.append("</file_skeleton>")
+        lines_buf.append("</file_skeleton>")
 
         return ExecutorResult(
             display=f"Skeleton of {file_path}: {len(definitions)} definitions",
-            content="\n".join(lines),
+            content="\n".join(lines_buf),
         )
 
     except ValueError as e:
@@ -494,17 +561,22 @@ async def execute_get_function(
                 current_hash = _fnv1a(func_text)
                 last_hash = _get_function_sent_hashes.get(hash_key)
 
+                start_line = func_node.start_point[0] + 1
+                end_line = func_node.end_point[0] + 1
+
                 if last_hash is not None and last_hash == current_hash:
                     found_functions.append(
                         f'<function name="{_xml_attr(target_name)}" '
-                        f'file="{_xml_attr(file_path)}">\n'
+                        f'file="{_xml_attr(file_path)}" '
+                        f'start_line="{start_line}" end_line="{end_line}">\n'
                         "No changes have been made since last retrieval.\n</function>"
                     )
                 else:
                     parts = []
                     parts.append(
                         f'<function name="{_xml_attr(target_name)}" '
-                        f'file="{_xml_attr(file_path)}">'
+                        f'file="{_xml_attr(file_path)}" '
+                        f'start_line="{start_line}" end_line="{end_line}">'
                     )
                     if imports_text:
                         parts.append("<imports>")

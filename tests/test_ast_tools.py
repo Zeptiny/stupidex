@@ -75,6 +75,31 @@ def class_project(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture()
+def calls_project(tmp_path, monkeypatch):
+    """Create a temp Python project with functions that call other functions."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pipeline.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "\n"
+        "def setup():\n"
+        "    os.makedirs('out')\n"
+        "    return Path('.')\n"
+        "\n"
+        "def run(data):\n"
+        "    result = process(data)\n"
+        "    return save(result)\n"
+        "\n"
+        "def process(data):\n"
+        "    return data.strip()\n"
+        "\n"
+        "def save(obj):\n"
+        "    return str(obj)\n"
+    )
+    return tmp_path
+
+
 def _populate_store(project_path: str, file_symbols: dict[str, list[Symbol]]) -> None:
     """Pre-populate the AST store with test data."""
     store = ASTStore(project_path)
@@ -135,6 +160,36 @@ async def test_get_file_skeleton_file_not_found(tmp_path, monkeypatch):
     assert "not found" in result.display.lower()
 
 
+@pytest.mark.asyncio
+async def test_get_file_skeleton_line_counts(py_project):
+    result = await execute_get_file_skeleton("sample.py")
+    assert "# Lines:" in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_file_skeleton_calls_metadata(calls_project):
+    result = await execute_get_file_skeleton("pipeline.py")
+    assert "# Calls:" in result.content
+    assert "run" in result.content
+    assert "setup" in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_file_skeleton_no_self_recursion_in_calls(calls_project):
+    """Self-recursive calls (a calling a) should not appear in the Calls list."""
+    monkeypatch_dir = calls_project
+    (monkeypatch_dir / "recurse.py").write_text(
+        "def foo():\n"
+        "    if True:\n"
+        "        foo()\n"
+    )
+    result = await execute_get_file_skeleton("recurse.py")
+    # The definition line for 'foo' should NOT have "Calls: [foo]"
+    for line in result.content.splitlines():
+        if "│ foo" in line:
+            assert "Calls: [foo]" not in line
+
+
 # ---------------------------------------------------------------------------
 # get_function
 # ---------------------------------------------------------------------------
@@ -160,7 +215,7 @@ async def test_get_function_with_imports(py_project):
 
 @pytest.mark.asyncio
 async def test_get_function_hash_match_no_changes(py_project):
-    _get_function_sent_hashes["sample.py:foo"] = _fnv1a("def foo():\n    return 1")
+    _get_function_sent_hashes["sample.py:foo:"] = _fnv1a("def foo():\n    return 1")
     result = await execute_get_function("sample.py", "foo")
     assert isinstance(result, ExecutorResult)
     assert "No changes" in result.content
@@ -206,6 +261,48 @@ async def test_get_function_class_context(class_project):
     assert isinstance(result, ExecutorResult)
     assert "greet" in result.content
     assert "Hello" in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_function_has_line_numbers(py_project):
+    result = await execute_get_function("sample.py", "foo")
+    assert isinstance(result, ExecutorResult)
+    assert 'start_line=' in result.content
+    assert 'end_line=' in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_function_line_numbers_values(py_project):
+    result = await execute_get_function("sample.py", "foo")
+    assert 'start_line="4"' in result.content  # 1-indexed: line 4 is `def foo():`
+    assert 'end_line="5"' in result.content    # 1-indexed: line 5 is `    return 1`
+
+
+@pytest.mark.asyncio
+async def test_get_function_line_numbers_not_found(py_project):
+    result = await execute_get_function("sample.py", "nonexistent")
+    assert isinstance(result, ExecutorResult)
+    # not_found functions should not have line numbers
+    assert 'start_line=' not in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_function_line_numbers_no_changes(py_project):
+    _get_function_sent_hashes["sample.py:foo:"] = _fnv1a("def foo():\n    return 1")
+    result = await execute_get_function("sample.py", "foo")
+    assert isinstance(result, ExecutorResult)
+    assert 'start_line=' in result.content
+    assert 'end_line=' in result.content
+
+
+@pytest.mark.asyncio
+async def test_get_function_multiple_functions_line_numbers(calls_project):
+    result = await execute_get_function("pipeline.py", "run, process")
+    assert isinstance(result, ExecutorResult)
+    assert 'start_line=' in result.content
+    assert 'end_line=' in result.content
+    # Both functions should have line numbers
+    assert result.content.count('start_line=') == 2
 
 
 # ---------------------------------------------------------------------------
