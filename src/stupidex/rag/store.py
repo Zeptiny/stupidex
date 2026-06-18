@@ -49,6 +49,7 @@ class StoreStatus:
     total_chunks: int
     total_files: int
     last_indexed: str | None
+    last_index_duration: float | None
 
 
 class RAGStore:
@@ -284,6 +285,7 @@ class RAGStore:
                 total_chunks=0,
                 total_files=0,
                 last_indexed=None,
+                last_index_duration=None,
             )
 
         conn = self._get_conn()
@@ -294,12 +296,29 @@ class RAGStore:
                 "SELECT value FROM meta WHERE key='last_indexed'"
             ).fetchone()
             last_indexed = row[0] if row else None
+            row2 = conn.execute(
+                "SELECT value FROM meta WHERE key='last_index_duration'"
+            ).fetchone()
+            duration = float(row2[0]) if row2 else None
 
             return StoreStatus(
                 total_chunks=chunk_count,
                 total_files=file_count,
                 last_indexed=last_indexed,
+                last_index_duration=duration,
             )
+        finally:
+            conn.close()
+
+    def record_index_duration(self, duration: float) -> None:
+        """Store the duration of the last full index operation."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_index_duration', ?)",
+                (str(duration),),
+            )
+            conn.commit()
         finally:
             conn.close()
 

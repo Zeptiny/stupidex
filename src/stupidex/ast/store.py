@@ -1,11 +1,22 @@
 import logging
 import sqlite3
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from stupidex.ast.symbols import Symbol
 from stupidex.config import AST_INDEX_DB, PROJECT_AST_DIR
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StoreStatus:
+    total_files: int
+    total_symbols: int
+    last_indexed: str | None
+    last_index_duration: float | None
+
 
 _DB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -201,3 +212,46 @@ class ASTStore:
     def clear(self) -> None:
         if self.db_path.exists():
             self.db_path.unlink()
+
+    def record_index(self, duration: float | None = None) -> None:
+        """Store the current time as last_indexed and optional duration."""
+        conn = self._get_conn()
+        try:
+            now = datetime.now(UTC).isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed', ?)",
+                (now,),
+            )
+            if duration is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_index_duration', ?)",
+                    (str(duration),),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def status(self) -> StoreStatus:
+        if not self.db_path.exists():
+            return StoreStatus(
+                total_files=0, total_symbols=0,
+                last_indexed=None, last_index_duration=None,
+            )
+        conn = self._get_conn()
+        try:
+            file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key='last_indexed'"
+            ).fetchone()
+            last_indexed = row[0] if row else None
+            row2 = conn.execute(
+                "SELECT value FROM meta WHERE key='last_index_duration'"
+            ).fetchone()
+            duration = float(row2[0]) if row2 else None
+            return StoreStatus(
+                total_files=file_count, total_symbols=symbol_count,
+                last_indexed=last_indexed, last_index_duration=duration,
+            )
+        finally:
+            conn.close()

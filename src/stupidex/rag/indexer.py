@@ -25,6 +25,12 @@ INCLUDE_EXTS = frozenset({
 
 SKIP_EXTS = frozenset({".pyc", ".pyo", ".pyd", ".so", ".dll", ".exe"})
 
+_indexing: bool = False
+
+
+def is_indexing() -> bool:
+    return _indexing
+
 
 @dataclass
 class IndexResult:
@@ -42,6 +48,7 @@ class IndexStatus:
     total_files: int = 0
     total_chunks: int = 0
     last_indexed: str | None = None
+    last_index_duration: float | None = None
 
 
 async def update_file(file_path: str, project_path: str | None = None) -> None:
@@ -109,6 +116,30 @@ async def index_project(
     Returns:
         IndexResult with stats about the run.
     """
+    global _indexing
+    if _indexing:
+        logger.warning("RAG indexing already in progress, skipping")
+        return IndexResult()
+    _indexing = True
+    try:
+        return await _index_project_impl(
+            project_path=project_path,
+            paths=paths,
+            force=force,
+            embedder=embedder,
+            progress_callback=progress_callback,
+        )
+    finally:
+        _indexing = False
+
+
+async def _index_project_impl(
+    project_path: str | None = None,
+    paths: list[str] | None = None,
+    force: bool = False,
+    embedder: Embedder | None = None,
+    progress_callback: Callable | None = None,
+) -> IndexResult:
     cfg = get_config()
     if project_path is None:
         project_path = str(Path.cwd())
@@ -243,6 +274,9 @@ async def index_project(
                 stats.files_deleted += 1
 
     stats.duration_seconds = asyncio.get_event_loop().time() - t0
+
+    await loop.run_in_executor(None, store.record_index_duration, stats.duration_seconds)
+
     logger.info(
         "Index complete: %d indexed, %d skipped, %d deleted, %d chunks in %.1fs",
         stats.files_indexed,
@@ -264,6 +298,7 @@ def get_status(project_path: str | None = None) -> IndexStatus:
         total_files=s.total_files,
         total_chunks=s.total_chunks,
         last_indexed=s.last_indexed,
+        last_index_duration=s.last_index_duration,
     )
 
 

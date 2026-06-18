@@ -1,13 +1,13 @@
-"""Tests for the `/reindex-ast` command (unit U6, requirement R12).
+"""Tests for the `/index-ast` command (unit U6, requirement R12).
 
 Mirrors the pattern in `tests/test_session_commands.py`: exercises the
 `execute_command` dispatch path with a mock `app`, verifying the worker
 is launched and notifications are sent.
 
 Scenarios from the plan:
-- Happy path: `/reindex-ast` appears in COMMANDS
+- Happy path: `/index-ast` appears in COMMANDS
 - Happy path: executing triggers index_project(force=True) and notifies
-- Edge case: substring filter picks up `/reindex-ast` when typing `/index`
+- Edge case: substring filter picks up `/index-ast` when typing `/index`
 - Error path: index_project exception -> error notification, no crash
 """
 
@@ -19,39 +19,41 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from stupidex.commands.session_commands import COMMANDS, execute_command
 
 _INDEX_PROJECT = "stupidex.ast.indexer.index_project"
+_IS_INDEXING = "stupidex.ast.indexer.is_indexing"
 
 
-class TestReindexAstCommandInCommands(unittest.TestCase):
-    """Scenario 1: /reindex-ast is registered in the COMMANDS dict."""
+class TestIndexAstCommandInCommands(unittest.TestCase):
+    """Scenario 1: /index-ast is registered in the COMMANDS dict."""
 
     def test_command_present(self):
-        self.assertIn("/reindex-ast", COMMANDS)
+        self.assertIn("/index-ast", COMMANDS)
 
     def test_command_description(self):
-        desc = COMMANDS["/reindex-ast"]
+        desc = COMMANDS["/index-ast"]
         self.assertIn("AST", desc)
         self.assertIn("symbol", desc.lower())
 
-    def test_index_substring_shows_reindex_ast(self):
-        """Edge case: 'index' is a substring of 'reindex-ast', so the
-        command picker will show /reindex-ast when typing '/index'.
+    def test_index_substring_shows_index_ast(self):
+        """Edge case: 'index' is a substring of 'index-ast', so the
+        command picker will show /index-ast when typing '/index'.
         This is an accepted UX limitation -- just verify the relationship."""
         index_cmds = [cmd for cmd in COMMANDS if "index" in cmd]
-        self.assertIn("/reindex-ast", index_cmds)
-        self.assertIn("/index", index_cmds)
+        self.assertIn("/index-ast", index_cmds)
+        self.assertIn("/index-rag", index_cmds)
 
 
-class TestReindexAstExecution(unittest.TestCase):
-    """Scenario 2 + 4: executing /reindex-ast calls index_project(force=True)
+class TestIndexAstExecution(unittest.TestCase):
+    """Scenario 2 + 4: executing /index-ast calls index_project(force=True)
     via app.run_worker and notifies on success/error."""
 
     def test_happy_path_notifies_and_runs_worker(self):
         """The initial notification fires and run_worker is called."""
         app = MagicMock()
         app.run_worker = MagicMock()
+        app.refresh_index_status = AsyncMock()
 
-        with patch(_INDEX_PROJECT):
-            asyncio.run(execute_command(app, "/reindex-ast"))
+        with patch(_INDEX_PROJECT), patch(_IS_INDEXING, return_value=False):
+            asyncio.run(execute_command(app, "/index-ast"))
 
         app.notify.assert_any_call(
             "Re-scanning project for AST symbols...",
@@ -69,9 +71,10 @@ class TestReindexAstExecution(unittest.TestCase):
 
         app = MagicMock()
         app.run_worker = capture_worker
+        app.refresh_index_status = AsyncMock()
 
-        with patch(_INDEX_PROJECT):
-            asyncio.run(execute_command(app, "/reindex-ast"))
+        with patch(_INDEX_PROJECT), patch(_IS_INDEXING, return_value=False):
+            asyncio.run(execute_command(app, "/index-ast"))
 
         self.assertIn("fn", captured_fn)
         self.assertTrue(inspect.iscoroutinefunction(captured_fn["fn"]))
@@ -86,10 +89,11 @@ class TestReindexAstExecution(unittest.TestCase):
 
         app = MagicMock()
         app.run_worker = capture_worker
+        app.refresh_index_status = AsyncMock()
 
-        with patch(_INDEX_PROJECT):
-            asyncio.run(execute_command(app, "/reindex-ast"))
-            asyncio.run(execute_command(app, "/reindex-ast"))
+        with patch(_INDEX_PROJECT), patch(_IS_INDEXING, return_value=False):
+            asyncio.run(execute_command(app, "/index-ast"))
+            asyncio.run(execute_command(app, "/index-ast"))
 
         self.assertEqual(len(captured_fns), 2)
         # Both are coroutine functions but are distinct objects.
@@ -106,14 +110,15 @@ class TestReindexAstExecution(unittest.TestCase):
 
         app = MagicMock()
         app.run_worker = capture_worker
+        app.refresh_index_status = AsyncMock()
 
         mock_index = AsyncMock(return_value=MagicMock(
             files_indexed=1, symbols_extracted=2,
             duration_seconds=0.1, files_skipped=0, files_deleted=0, errors=[],
         ))
 
-        with patch(_INDEX_PROJECT, mock_index):
-            asyncio.run(execute_command(app, "/reindex-ast"))
+        with patch(_INDEX_PROJECT, mock_index), patch(_IS_INDEXING, return_value=False):
+            asyncio.run(execute_command(app, "/index-ast"))
 
         asyncio.run(captured_fn["fn"]())
         mock_index.assert_called_with(force=True)

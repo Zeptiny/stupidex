@@ -25,6 +25,11 @@ _SKIP_DIRS = frozenset({
 })
 
 _session_initialized: bool = False
+_indexing: bool = False
+
+
+def is_indexing() -> bool:
+    return _indexing
 
 
 @dataclass
@@ -46,8 +51,13 @@ async def ensure_indexed(project_path: str | None = None) -> None:
     get_function) parse files directly and do not call this.
     """
     global _session_initialized
-    if not _session_initialized:
-        await index_project(project_path=project_path)
+    if _session_initialized:
+        return
+    if _indexing:
+        while _indexing and not _session_initialized:
+            await asyncio.sleep(0.1)
+        return
+    await index_project(project_path=project_path)
 
 
 async def update_file(file_path: str, project_path: str | None = None) -> None:
@@ -88,12 +98,33 @@ async def index_project(
     Args:
         project_path: Root directory of the project. Uses cwd if None.
         force: If True, re-parse all files regardless of hash. Used by
-            ``/reindex-ast`` command.
+            ``/index-ast`` command.
         progress_callback: Optional ``(file_path, done, total) -> None``.
 
     Returns:
         IndexResult with stats about the run.
     """
+    global _session_initialized, _indexing
+
+    if _indexing:
+        logger.warning("AST indexing already in progress, skipping")
+        return IndexResult()
+    _indexing = True
+    try:
+        return await _index_project_impl(
+            project_path=project_path,
+            force=force,
+            progress_callback=progress_callback,
+        )
+    finally:
+        _indexing = False
+
+
+async def _index_project_impl(
+    project_path: str | None = None,
+    force: bool = False,
+    progress_callback: Callable | None = None,
+) -> IndexResult:
     global _session_initialized
 
     cfg = get_config()
@@ -167,6 +198,9 @@ async def index_project(
 
     result.duration_seconds = loop.time() - t0
     _session_initialized = True
+
+    await loop.run_in_executor(None, store.record_index, result.duration_seconds)
+
     logger.info(
         "AST index complete: %d indexed, %d skipped, %d deleted, %d symbols in %.1fs",
         result.files_indexed,
