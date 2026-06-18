@@ -303,6 +303,74 @@ class RAGStore:
         finally:
             conn.close()
 
+    def upsert_file(
+        self,
+        file_path: str,
+        chunks: list[Chunk],
+        embeddings: list[list[float]],
+    ) -> None:
+        """Replace all chunks and embeddings for a single file.
+
+        Preserves chunks and vectors for all other files.
+        """
+        if len(chunks) != len(embeddings):
+            raise ValueError(
+                f"Chunks ({len(chunks)}) and embeddings ({len(embeddings)}) count mismatch"
+            )
+
+        old_ids = self._get_ordered_chunk_ids()
+        old_vectors = self._load_vectors()
+        id_to_vec: dict[int, list[float]] = {}
+        if old_vectors is not None and len(old_vectors) == len(old_ids):
+            id_to_vec = dict(zip(old_ids, old_vectors, strict=False))
+
+        conn = self._get_conn()
+        try:
+            conn.execute("DELETE FROM chunks WHERE file_path = ?", (file_path,))
+            conn.execute("DELETE FROM files WHERE file_path = ?", (file_path,))
+
+            if chunks:
+                chunk_data = [
+                    (c.file_path, c.start_line, c.end_line, c.content)
+                    for c in chunks
+                ]
+                conn.executemany(
+                    "INSERT INTO chunks (file_path, start_line, end_line, content) "
+                    "VALUES (?, ?, ?, ?)",
+                    chunk_data,
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', ?)",
+                    (file_path, len(chunks)),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', 0)",
+                    (file_path,),
+                )
+
+            now = datetime.now(UTC).isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed', ?)",
+                (now,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Rebuild vectors: keep old vectors for surviving chunks, append new ones.
+        new_ids = self._get_ordered_chunk_ids()
+        new_vectors: list[list[float]] = []
+        new_chunk_idx = 0
+        for cid in new_ids:
+            if cid in id_to_vec:
+                new_vectors.append(id_to_vec[cid])
+            elif new_chunk_idx < len(embeddings):
+                new_vectors.append(embeddings[new_chunk_idx])
+                new_chunk_idx += 1
+
+        self._save_vectors(new_vectors)
+
     def delete_by_file(self, file_path: str) -> None:
         old_ids = self._get_ordered_chunk_ids()
         vectors = self._load_vectors()

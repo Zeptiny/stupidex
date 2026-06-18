@@ -44,6 +44,52 @@ class IndexStatus:
     last_indexed: str | None = None
 
 
+async def update_file(file_path: str, project_path: str | None = None) -> None:
+    """Re-index a single file in the RAG store (used by post-write callbacks)."""
+    if project_path is None:
+        project_path = str(Path.cwd())
+    loop = asyncio.get_running_loop()
+
+    filepath = Path(file_path)
+    if not filepath.is_absolute():
+        filepath = Path(project_path) / file_path
+
+    try:
+        rel = str(filepath.relative_to(project_path))
+    except ValueError:
+        return
+
+    store = RAGStore(project_path)
+    store.init_db()
+
+    if not _should_include(filepath):
+        await loop.run_in_executor(None, store.delete_by_file, rel)
+        return
+
+    content, file_hash = await loop.run_in_executor(None, _read_and_hash, filepath)
+    if content is None:
+        await loop.run_in_executor(None, store.delete_by_file, rel)
+        return
+
+    cfg = get_config()
+    chunks = chunk_file(rel, content, cfg.rag_chunk_size, cfg.rag_chunk_overlap)
+    if not chunks:
+        await loop.run_in_executor(None, store.delete_by_file, rel)
+        return
+
+    try:
+        embedder = Embedder(model=cfg.rag_embedding_model or None)
+        texts = [c.content for c in chunks]
+        embeddings = await embedder.embed(texts)
+    except Exception as e:
+        logger.warning("RAG update_file embedding failed for %s: %s", rel, e)
+        return
+
+    await loop.run_in_executor(None, store.upsert_file, rel, chunks, embeddings)
+    if file_hash:
+        await loop.run_in_executor(None, store.update_file_hash, rel, file_hash)
+
+
 async def index_project(
     project_path: str | None = None,
     paths: list[str] | None = None,
