@@ -81,11 +81,7 @@ async def execute_rag_search(
         )
 
     try:
-        embedder = Embedder(
-            model=cfg.rag_embedding_model or None,
-            provider_api_type=cfg.provider_api_type,
-            embedding_provider=cfg.rag_embedding_provider,
-        )
+        embedder = Embedder(model=cfg.rag_embedding_model or None)
         query_embedding = await embedder.embed_single(query)
     except EmbeddingError as e:
         return ExecutorResult(
@@ -173,11 +169,7 @@ async def execute_rag_index(
 
     # action == "index"
     cfg = get_config()
-    embedder = Embedder(
-        model=cfg.rag_embedding_model or None,
-        provider_api_type=cfg.provider_api_type,
-        embedding_provider=cfg.rag_embedding_provider,
-    )
+    embedder = Embedder(model=cfg.rag_embedding_model or None)
 
     progress_info: list[str] = []
 

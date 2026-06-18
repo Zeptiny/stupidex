@@ -28,7 +28,7 @@ source .venv/bin/activate
 pip install -e . # Editable Mode, changes take effect immediately.
 ```
 
-Configure the default models and API route on `~/.stupidex/config.json`
+Configure providers, models, and API keys in `~/.stupidex/config.json`. See the [Providers](#providers) section for examples.
 
 ## Usage
 
@@ -36,11 +36,13 @@ Configure the default models and API route on `~/.stupidex/config.json`
 stupidex
 ```
 
-If you are using a third party provider you need to pass the API KEY via environment variables
+If your provider doesn't ship an API key in config, set the environment variable litellm expects (e.g. `OPENAI_API_KEY`):
 
 ```bash
 OPENAI_API_KEY="your key" stupidex
 ```
+
+Per-provider keys can also be configured inline or via a named env var — see [Providers](#providers).
 
 ## Keyboard Shortcuts
 
@@ -283,29 +285,29 @@ The agents will use the rag tool ad needed
 
 ### Embedding Providers
 
-Two embedding backends are supported:
+RAG embeddings use the same `alias/model` routing as chat models. Configure a single field — `rag_embedding_model` — with either a `fastembed/<model_id>` reference (local ONNX, no network) or a `<provider-alias>/<model>` reference (routes through the providers dict to `litellm.aembedding`).
 
-| Provider | How it works | Requires |
-|----------|-------------|----------|
-| `fastembed` (default) | Runs quantized models locally via ONNX Runtime | Included by default |
-| `openai` | Calls OpenAI-compatible API (local or remote) | `litellm`, API key |
+| Reference form | How it works | Requires |
+|----------------|-------------|----------|
+| `fastembed/<model_id>` (default) | Runs quantized models locally via ONNX Runtime | Included by default |
+| `<alias>/<model>` (e.g. `work-openai/text-embedding-3-small`) | Calls the provider's embedding API via litellm | Provider configured + API key |
 
 #### Using fastembed (default, local)
 
-fastembed is included by default — no extra install needed. The default model (`BAAI/bge-small-en-v1.5`, ~77 MB) is auto-downloaded on first use. No API key needed — fully offline.
+The shipping default is `fastembed/BAAI/bge-small-en-v1.5` (~77 MB, auto-downloaded on first use). No API key, no network after first run.
 
-To use a different model, configure in `~/.stupidex/config.json`:
+To use a different local model, set `rag_embedding_model` to `fastembed/<model_id>`:
 
 ```json
 {
-  "rag_embedding_model": "BAAI/bge-base-en-v1.5"
+  "rag_embedding_model": "fastembed/BAAI/bge-base-en-v1.5"
 }
 ```
 
-Or via environment variables:
+Or via environment variable:
 
 ```bash
-STUPIDEX_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" stupidex
+STUPIDEX_RAG_EMBEDDING_MODEL="fastembed/BAAI/bge-base-en-v1.5" stupidex
 ```
 
 **Available fastembed models:**
@@ -317,21 +319,13 @@ STUPIDEX_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" stupidex
 | `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~80 MB | General purpose |
 | `nomic-ai/nomic-embed-text-v1.5-Q` | 768 | ~550 MB | Multilingual |
 
-#### Using OpenAI-compatible APIs
+#### Using a provider-routed embedding model
 
-Works with any OpenAI-compatible endpoint — OpenAI, Ollama, vLLM, etc.
-
-```bash
-OPENAI_API_KEY="your-key" stupidex
-```
-
-Or in `~/.stupidex/config.json`:
+Any `alias/model` reference registered in your `providers` config works. For example, with a `work-openai` provider configured (see [Providers](#providers)):
 
 ```json
 {
-  "rag_embedding_provider": "openai",
-  "base_url": "http://localhost:11434/v1",
-  "rag_embedding_model": "nomic-embed-text"
+  "rag_embedding_model": "work-openai/text-embedding-3-small"
 }
 ```
 
@@ -341,8 +335,7 @@ All RAG settings in `~/.stupidex/config.json`:
 
 ```json
 {
-  "rag_embedding_provider": "fastembed",
-  "rag_embedding_model": "BAAI/bge-small-en-v1.5",
+  "rag_embedding_model": "fastembed/BAAI/bge-small-en-v1.5",
   "rag_chunk_size": 2000,
   "rag_chunk_overlap": 200,
   "rag_top_k": 5,
@@ -352,14 +345,13 @@ All RAG settings in `~/.stupidex/config.json`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `rag_embedding_provider` | `"fastembed"` | `"fastembed"` (local) or `"openai"` (API) |
-| `rag_embedding_model` | `""` | Model name (provider-specific default if empty) |
+| `rag_embedding_model` | `"fastembed/BAAI/bge-small-en-v1.5"` | `alias/model` reference (supports `fastembed/<id>` for local ONNX) |
 | `rag_chunk_size` | `2000` | Max characters per chunk |
 | `rag_chunk_overlap` | `200` | Overlap between consecutive chunks |
 | `rag_top_k` | `5` | Number of results to return |
 | `rag_max_file_size` | `512000` | Skip files larger than this (bytes) |
 
-Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_PROVIDER`, `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
+Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
 
 ## MCP (Model Context Protocol)
 
@@ -469,7 +461,7 @@ src/
       skill.py                 # Skill
     llm/
       client.py                # LLM streaming logic
-      models.py                # Model fetching
+      providers.py              # Provider resolution + model metadata hydration
       dynamic_system_prompt.py # Dynamic system prompt generation
       static_system_prompt.py  # Static system prompt provider
     screens/
@@ -499,22 +491,220 @@ src/
       sidebar.py               # Right sidebar
 ```
 
+## Providers
+
+Stupidex supports multiple LLM providers simultaneously. Each provider is an entry under the `providers` key in `~/.stupidex/config.json`, identified by an alias. Model references throughout the config use the `alias/model` format (e.g. `"default/mimo-v2.5"`) so the routing layer knows which provider to use for each call.
+
+### Provider Entry Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `base_url` | No | Endpoint URL. Omit for native providers (e.g. `anthropic`) where litellm supplies the URL. |
+| `litellm_provider` | No | litellm provider name (e.g. `"openai"`, `"anthropic"`, `"azure"`). Used to route the call and look up model metadata. |
+| `api_key` | No | Literal API key. Mutually exclusive with `api_key_env` (if both set, `api_key_env` is dropped). |
+| `api_key_env` | No | Name of an env var holding the API key (e.g. `"OPENAI_API_KEY"`). |
+| `models` | No | Dict of `{model_id: {override_fields}}`. Declares which models appear in the `/model` picker. Resolution still works for undeclared models. |
+
+If neither `api_key` nor `api_key_env` is set, litellm falls back to its own env detection (e.g. `OPENAI_API_KEY`).
+
+**Per-model metadata overrides** (optional, inside each model entry):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `max_input_tokens` | int | Override litellm's registry value for context window display. |
+| `max_output_tokens` | int | Override litellm's registry value for max output display. |
+| `supports_vision` | bool | Force vision badge on/off in the picker. |
+| `mode` | str | Force mode (`"chat"`, `"completion"`, `"embedding"`, etc.). |
+| `litellm_provider` | str | Override the provider-level `litellm_provider` for this model only (used for litellm lookups, not displayed). |
+
+Metadata is resolved by field-level merge: your override wins, litellm's registry fills gaps, text-only defaults cover the rest. Unknown models fall back gracefully to `supports_vision=false`, `mode="chat"`.
+
+### Default Config (first run)
+
+A fresh install seeds a single `default` provider so the app works without any config edits:
+
+```json
+{
+  "providers": {
+    "default": {
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "litellm_provider": "openai",
+      "models": {
+        "mimo-v2.5": {}
+      }
+    }
+  },
+  "default_model": "default/mimo-v2.5",
+  "tier_models": {
+    "tolo": "default/mimo-v2.5",
+    "tainha": "default/mimo-v2.5",
+    "papudo": "default/mimo-v2.5",
+    "papaca": "default/mimo-v2.5"
+  }
+}
+```
+
+### Examples
+
+**OpenAI with an inline API key:**
+
+```json
+{
+  "providers": {
+    "openai-prod": {
+      "litellm_provider": "openai",
+      "api_key": "sk-your-key-here",
+      "models": {
+        "gpt-4o": {},
+        "gpt-4o-mini": {}
+      }
+    }
+  },
+  "default_model": "openai-prod/gpt-4o"
+}
+```
+
+**OpenAI with an env-var reference (recommended — no secrets in config files):**
+
+```json
+{
+  "providers": {
+    "openai-prod": {
+      "litellm_provider": "openai",
+      "api_key_env": "OPENAI_API_KEY",
+      "models": {
+        "gpt-4o": {},
+        "gpt-4o-mini": {}
+      }
+    }
+  }
+}
+```
+
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+stupidex
+```
+
+**Local Ollama (no API key, OpenAI-compatible endpoint):**
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434/v1",
+      "litellm_provider": "openai",
+      "models": {
+        "llama3.1:70b": {"max_input_tokens": 131072, "supports_vision": false},
+        "qwen2.5-coder:32b": {"max_input_tokens": 32768}
+      }
+    }
+  },
+  "default_model": "ollama/llama3.1:70b"
+}
+```
+
+**Multiple providers (mix of cloud + local):**
+
+```json
+{
+  "providers": {
+    "openai-prod": {
+      "litellm_provider": "openai",
+      "api_key_env": "OPENAI_API_KEY",
+      "models": {
+        "gpt-4o": {"supports_vision": true, "max_output_tokens": 16384},
+        "gpt-4o-mini": {}
+      }
+    },
+    "ollama": {
+      "base_url": "http://localhost:11434/v1",
+      "litellm_provider": "openai",
+      "models": {
+        "llama3.1:70b": {"max_input_tokens": 131072}
+      }
+    }
+  },
+  "default_model": "openai-prod/gpt-4o",
+  "tier_models": {
+    "tolo": "ollama/llama3.1:70b",
+    "tainha": "ollama/llama3.1:70b",
+    "papudo": "openai-prod/gpt-4o-mini",
+    "papaca": "openai-prod/gpt-4o"
+  }
+}
+```
+
+**Project-level override (`.stupidex.json` in your project root):**
+
+Project config deep-merges with home config. Project providers with the same alias override the home entry; new aliases are added. This lets you add a single model to a provider without clobbering the rest:
+
+```json
+{
+  "providers": {
+    "openai-prod": {
+      "models": {
+        "gpt-4o": {"max_input_tokens": 32768}
+      }
+    }
+  }
+}
+```
+
+This merges into the home `openai-prod` provider — `gpt-4o` gets the override, `gpt-4o-mini` is preserved.
+
+### Model Picker
+
+Run `/model` (Ctrl+P → `/model`) to see all configured models across all providers. Each entry shows:
+
+- `alias/model_id` — the reference used internally
+- `[vision]` badge — if the model supports vision
+- `[text]` badge — if the model mode is `chat` or `completion`
+- `128k→16k` — token shorthand (input→output) when metadata is available
+
+**Hybrid discovery (R10).** When a provider entry omits the `models` dict (or leaves it empty), the picker falls back to fetching the provider's `GET /models` endpoint. Well-known models still get badges + token shorthand from litellm's registry; unknown ones appear with `[text]` only. Discovery is cached per-session per-alias; network failures yield an empty list (the picker degrades to "no models for this provider" instead of crashing).
+
+Set `STUPIDEX_DISABLE_MODEL_DISCOVERY=1` (or `true` / `yes`) to enforce strict configured-only behavior — useful for offline use or when you want to limit which models the agent can switch to.
+
+### RAG Embeddings
+
+RAG uses the same `alias/model` format via `rag_embedding_model`. The built-in `fastembed` pseudo-provider handles local ONNX embeddings — see the [RAG](#rag-retrieval-augmented-generation) section for details.
+
+### Reserved Aliases
+
+| Alias | Behavior |
+|-------|----------|
+| `fastembed` | Reserved for the built-in local ONNX embedding pseudo-provider. Cannot be used as a user-defined provider alias. |
+
+Provider aliases must match `[a-z0-9-]+` (no `/`, underscores, or uppercase).
+
+---
+
 ## Configuration
 
 **Location:** `~/.stupidex/config.json`
 
+See [Providers](#providers) for the full schema and examples. A minimal config:
+
 ```json
 {
-  "base_url": "https://opencode.ai/zen/go/v1",
-  "default_model": "mimo-v2.5",
-  "tier_models": {
-    "tolo": "mimo-v2.5",
-    "tainha": "mimo-v2.5",
-    "papudo": "mimo-v2.5",
-    "papaca": "mimo-v2.5"
+  "providers": {
+    "default": {
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "litellm_provider": "openai",
+      "models": {
+        "mimo-v2.5": {}
+      }
+    }
   },
-  "rag_embedding_provider": "fastembed",
-  "rag_embedding_model": "BAAI/bge-small-en-v1.5",
+  "default_model": "default/mimo-v2.5",
+  "tier_models": {
+    "tolo": "default/mimo-v2.5",
+    "tainha": "default/mimo-v2.5",
+    "papudo": "default/mimo-v2.5",
+    "papaca": "default/mimo-v2.5"
+  },
+  "rag_embedding_model": "fastembed/BAAI/bge-small-en-v1.5",
   "mcp_servers": {
     "context7": {
       "command": "npx",
@@ -524,7 +714,7 @@ src/
 }
 ```
 
-Project-level config: `.stupidex.json` (overrides home config).
+Project-level config: `.stupidex.json` (deep-merges with home config — project entries override same-name home entries, new entries are added).
 
 ## TODO - In priority order
 - Sandboxing for shell command execution, file operations, and project-level config/agent/skill overrides
@@ -535,7 +725,6 @@ Project-level config: `.stupidex.json` (overrides home config).
   - Error messages leak command strings and file paths in tool execution errors (exec.py)
 - Concurrency control for file locking
 - LSP
-- Provider selector
 - Approval / permission system
 - AGENTS.md handling
   - Also /init command for it
@@ -547,8 +736,7 @@ Project-level config: `.stupidex.json` (overrides home config).
 - BTW/Side agent (Ask a question without interrupting the main flow)
 
 ## Needs improvement
-- Support for Anthropic API
-- Model selector does not know the capabilities of the model (Possibly by getting them from models.dev + settings file for override/unknown capabilities?)
+- Support for Anthropic API (litellm already supports it; needs provider config + testing)
 - Bug: Automatically scrolling down after a message is finished
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool

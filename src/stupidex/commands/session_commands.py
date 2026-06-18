@@ -1,13 +1,23 @@
+import logging
 from functools import partial
 
 from textual.app import App
 from textual.command import DiscoveryHit, Hit, Hits, Matcher, Provider
 
-from stupidex.config import get_current_personality, get_current_theme, set_current_personality, set_current_theme
+from stupidex.config import (
+    Config,
+    get_config,
+    get_current_personality,
+    get_current_theme,
+    set_current_personality,
+    set_current_theme,
+)
 from stupidex.domain.todo import set_todo_store
-from stupidex.llm.models import list_models
+from stupidex.llm.providers import discover_provider_models, resolve_model_metadata
 from stupidex.personality import load_personalities
 from stupidex.screens.picker import OptionPicker, PickerItem
+
+log = logging.getLogger(__name__)
 
 COMMANDS = {
     "/new": "Start a new session",
@@ -20,6 +30,137 @@ COMMANDS = {
     "/rag status": "Show RAG index status",
     "/rag clear": "Clear the RAG index",
 }
+
+
+def _token_shorthand(tokens: int) -> str:
+    """Render an integer token count as an `Nk` shorthand (128000 -> '128k').
+
+    Values below 1000 are returned as a plain decimal (`500` -> `'500'`) so
+    the suffix does not misrepresent the magnitude.
+    """
+    if tokens >= 1000:
+        return f"{tokens // 1000}k"
+    return str(tokens)
+
+
+# Column widths for the /model picker's pseudo-table layout. Picked so the
+# widest realistic alias/model_id (e.g. `anthropic-prod/claude-3-opus`) fits
+# while keeping the picker container at ~70 columns (see main.tcss).
+_MODEL_COL_REF_WIDTH = 36
+_MODEL_COL_TOKEN_WIDTH = 6
+_MODEL_COL_VISION_WIDTH = 6
+
+# Header shown above the option list -- same column widths as the row labels
+# produced by `_format_model_label` so the columns line up visually.
+_MODEL_PICKER_HEADER = (
+    f"{'Model'.ljust(_MODEL_COL_REF_WIDTH)}  "
+    f"{'In'.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+    f"{'Out'.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+    f"{'Vision'.rjust(_MODEL_COL_VISION_WIDTH)}"
+)
+
+
+def _format_model_label(alias: str, model_id: str, metadata: dict) -> str:
+    """Render a tabular label for the `/model` picker.
+
+    Each label is a single padded row with four fixed-width columns so multiple
+    options align as a pseudo-table when listed together:
+
+        ```
+        work-openai/gpt-4o                          128k    16k     yes
+        anthropic-prod/claude-3-opus               200k     4k      no
+        custom/unknown-model                       n/a    n/a      n/a
+        ```
+
+    The `_MODEL_PICKER_HEADER` constant uses the same column widths for a
+    column-titles row placed above the option list (via `OptionPicker`'s
+    optional `header=` parameter).
+
+    * `max_input_tokens` / `max_output_tokens` -- rendered with `_token_shorthand`
+      when present (int), otherwise `n/a` (unknown).
+    * `supports_vision` -- `yes` if truthy, `no` otherwise.
+    * Model refs that exceed `_MODEL_COL_REF_WIDTH` are truncated with an ellipsis
+      so the columns stay aligned; the option `id` retains the full ref.
+    """
+    ref = f"{alias}/{model_id}"
+    if len(ref) > _MODEL_COL_REF_WIDTH:
+        ref = ref[: _MODEL_COL_REF_WIDTH - 1] + "\u2026"
+    ref_str = ref.ljust(_MODEL_COL_REF_WIDTH)
+
+    max_in = metadata.get("max_input_tokens")
+    max_out = metadata.get("max_output_tokens")
+    in_str = _token_shorthand(max_in) if isinstance(max_in, int) else "n/a"
+    out_str = _token_shorthand(max_out) if isinstance(max_out, int) else "n/a"
+
+    vision_str = "yes" if metadata.get("supports_vision") else "no"
+
+    return (
+        f"{ref_str}  "
+        f"{in_str.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+        f"{out_str.rjust(_MODEL_COL_TOKEN_WIDTH)}  "
+        f"{vision_str.rjust(_MODEL_COL_VISION_WIDTH)}"
+    )
+
+
+def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
+    """Build the picker-list for `/model` from configured providers + resolved metadata.
+
+    Iterates each configured provider's declared `models` dict (per U1),
+    hydrates capability metadata via `resolve_model_metadata` (per U2), and
+    builds a `PickerItem` per `(alias, model_id)` pair with the `id` set to
+    `f"{alias}/{model_id}"` -- the form `change_model` stores.
+
+    Never raises: malformed provider entries and metadata-resolution failures
+    are logged and skipped, keeping the rest of the list intact. The validator
+    (U1) should have rejected malformed entries already, so the try/except is
+    purely defensive.
+    """
+    items: list[PickerItem] = []
+    for alias, provider_entry in cfg.providers.items():
+        if not isinstance(provider_entry, dict):
+            log.warning(
+                "Skipping provider %r: entry must be a dict, got %s",
+                alias,
+                type(provider_entry).__name__,
+            )
+            continue
+        models = provider_entry.get("models", {})
+        if not isinstance(models, dict):
+            log.warning(
+                "Skipping provider %r: 'models' must be a dict, got %s",
+                alias,
+                type(models).__name__,
+            )
+            continue
+        # Hybrid fallback (R10): if no models are declared for this provider,
+        # discover them from the endpoint's GET /models. Well-known models
+        # still get badges + token shorthand from litellm's registry. Respects
+        # STUPIDEX_DISABLE_MODEL_DISCOVERY for strict configured-only behavior.
+        if not models:
+            try:
+                discovered = discover_provider_models(alias)
+            except Exception:  # noqa: BLE001 -- discovery is best-effort
+                discovered = []
+            if not discovered:
+                log.debug(
+                    "Skipping provider %r: no declared models and discovery yielded nothing",
+                    alias,
+                )
+                continue
+            models = {m: {} for m in discovered}
+        for model_id in models:
+            try:
+                metadata = resolve_model_metadata(alias, model_id)
+                label = _format_model_label(alias, model_id, metadata)
+                items.append(PickerItem(label=label, id=f"{alias}/{model_id}"))
+            except Exception:  # noqa: BLE001 -- defensive; resolver never raises by design
+                log.warning(
+                    "Skipping model %r for provider %r: metadata resolution failed",
+                    model_id,
+                    alias,
+                )
+                continue
+    return items
 
 
 async def execute_command(app: App, cmd: str) -> None:
@@ -53,18 +194,21 @@ async def execute_command(app: App, cmd: str) -> None:
 
             app.push_screen(OptionPicker(items), on_picked)
         case "/model":
-            models = await list_models()
-            if not models:
-                app.notify("Failed to fetch models", severity="error")
+            cfg = get_config()
+            items = _build_model_picker_items(cfg)
+            if not items:
+                app.notify(
+                    "No models configured. Add providers to your config.",
+                    severity="warning",
+                )
                 return
-            items = [PickerItem(label=m.id, id=m.id) for m in models]
 
             async def on_picked(result: str | None):
                 if result:
                     app.sessions.change_model(result)
                     await app.rerender_footer()
 
-            app.push_screen(OptionPicker(items), on_picked)
+            app.push_screen(OptionPicker(items, header=_MODEL_PICKER_HEADER), on_picked)
         case "/theme":
             from stupidex.themes import get_theme_registry
             registry = get_theme_registry()

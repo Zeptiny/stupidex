@@ -40,7 +40,7 @@ TabbedContent Tabs {
     dock: bottom;
     height: 1;
     margin-left: 1;
-    margin-right: 1;
+    margin-right: 31;
 }
 
 #spinner {
@@ -51,7 +51,8 @@ TabbedContent Tabs {
 
 #model {
     color: gray;
-    width: 16;
+    width: 1fr;
+    overflow: hidden;
 }
 
 #interrupt-hint {
@@ -176,11 +177,20 @@ OptionPicker {
 }
 
 #picker-container {
-    width: 60;
+    width: 70;
     max-height: 80%;
     background: $surface;
     border: tall $primary;
     padding: 1;
+}
+
+#picker-header {
+    color: $text-muted;
+    text-style: bold;
+    padding: 0 1;
+    margin-bottom: 1;
+    border-bottom: solid $primary;
+    width: 100%;
 }
 
 #picker-search {

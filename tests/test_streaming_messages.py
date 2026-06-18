@@ -1,11 +1,14 @@
 import asyncio
+import contextlib
+import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import litellm
 
+from stupidex.config import Config
 from stupidex.domain.message import (
     Message,
     MessageRole,
@@ -16,6 +19,7 @@ from stupidex.domain.message import (
 )
 from stupidex.llm import client as llm_client
 from stupidex.llm.client import classify_error
+from stupidex.llm.providers import ProviderResolutionError
 from stupidex.widgets import message_widget
 
 
@@ -738,6 +742,197 @@ class ClassifyErrorTest(unittest.TestCase):
         )
         title, detail = classify_error(exc)
         self.assertEqual(title, "Service Unavailable")
+
+    def test_provider_resolution_error_is_classified(self):
+        exc = ProviderResolutionError("Unknown provider alias 'nope'")
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Unknown Provider")
+        self.assertIn("alias", detail)
+
+    def test_provider_resolution_error_with_empty_message_uses_type_name(self):
+        exc = ProviderResolutionError("")
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Unknown Provider")
+        self.assertIn("ProviderResolutionError", detail)
+
+
+class StreamResponseProviderResolutionTest(unittest.IsolatedAsyncioTestCase):
+    """U3 -- stream_response resolves `alias/model` via resolve_model_ref
+    and passes resolved base_url + api_key through to litellm.acompletion."""
+
+    async def _drive_stream_response(self, *, model, providers, env=None):
+        """Invoke stream_response with mocked deps; return captured acompletion kwargs.
+
+        Patches litellm.acompletion to record kwargs and yield a single chunk with
+        usage that lets the loop exit cleanly (no tool calls -> early return).
+        """
+        cfg = Config(providers=providers)
+
+        captured: dict = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+
+            async def _stream():
+                yield chunk(content="hi", usage=Usage(1, 2, 3))
+
+            return _stream()
+
+        dummy_dynamic = Message(MessageRole.SYSTEM, "<dynamic/>", MessageType.TEXT)
+
+        env_patches = []
+        if env:
+            for k, v in env.items():
+                env_patches.append(patch.dict(os.environ, {k: v}, clear=False))
+
+        acompletion_mock = AsyncMock(side_effect=fake_acompletion)
+        with patch("stupidex.llm.client.get_config", return_value=cfg), \
+                patch("stupidex.llm.providers.get_config", return_value=cfg), \
+                patch("stupidex.llm.client.build_dynamic_system_prompt",
+                      new=AsyncMock(return_value=dummy_dynamic)), \
+                patch("stupidex.llm.client.get_tool_registry", return_value={}), \
+                patch("stupidex.llm.client.litellm.acompletion", new=acompletion_mock):
+            stack = contextlib.ExitStack()
+            for p in env_patches:
+                stack.enter_context(p)
+            with stack:
+                gen = llm_client.stream_response(
+                    messages=[],
+                    model=model,
+                    allowed_tools=[],
+                    system_prompt="",
+                )
+                async for _ in gen:
+                    pass
+
+        return captured
+
+    async def test_resolves_alias_model_and_passes_tuple_to_acompletion(self):
+        providers = {
+            "default": {
+                "base_url": "https://opencode.ai/zen/go/v1",
+                "litellm_provider": "openai",
+                "models": {"mimo-v2.5": {}},
+            }
+        }
+        captured = await self._drive_stream_response(
+            model="default/mimo-v2.5", providers=providers
+        )
+
+        self.assertEqual(captured["model"], "openai/mimo-v2.5")
+        self.assertEqual(captured["base_url"], "https://opencode.ai/zen/go/v1")
+        self.assertIsNone(captured["api_key"])
+
+    async def test_passes_literal_api_key(self):
+        providers = {
+            "default": {
+                "base_url": "https://example.test/v1",
+                "litellm_provider": "openai",
+                "api_key": "sk-test-123",
+                "models": {"mimo-v2.5": {}},
+            }
+        }
+        captured = await self._drive_stream_response(
+            model="default/mimo-v2.5", providers=providers
+        )
+
+        self.assertEqual(captured["model"], "openai/mimo-v2.5")
+        self.assertEqual(captured["base_url"], "https://example.test/v1")
+        self.assertEqual(captured["api_key"], "sk-test-123")
+
+    async def test_passes_api_key_env_value_when_set(self):
+        providers = {
+            "default": {
+                "base_url": "https://example.test/v1",
+                "litellm_provider": "openai",
+                "api_key_env": "STUPIDEX_TEST_OPENAI_KEY",
+                "models": {"mimo-v2.5": {}},
+            }
+        }
+        captured = await self._drive_stream_response(
+            model="default/mimo-v2.5",
+            providers=providers,
+            env={"STUPIDEX_TEST_OPENAI_KEY": "env-key-456"},
+        )
+
+        self.assertEqual(captured["api_key"], "env-key-456")
+
+    async def test_bare_model_id_when_litellm_provider_unset(self):
+        providers = {
+            "custom": {
+                "base_url": "https://example.test/v1",
+                "models": {"my-model-id": {}},
+            }
+        }
+        captured = await self._drive_stream_response(
+            model="custom/my-model-id", providers=providers
+        )
+
+        self.assertEqual(captured["model"], "my-model-id")
+        self.assertEqual(captured["base_url"], "https://example.test/v1")
+        self.assertIsNone(captured["api_key"])
+
+    async def test_routes_distinct_alias_to_correct_provider_covers_f3(self):
+        providers = {
+            "default": {
+                "base_url": "https://default.test/v1",
+                "litellm_provider": "openai",
+                "models": {"mimo-v2.5": {}},
+            },
+            "work": {
+                "base_url": "https://work.test/v1",
+                "litellm_provider": "openai",
+                "api_key": "sk-work-key",
+                "models": {"gpt-4o": {}},
+            },
+        }
+        captured_default = await self._drive_stream_response(
+            model="default/mimo-v2.5", providers=providers
+        )
+        captured_work = await self._drive_stream_response(
+            model="work/gpt-4o", providers=providers
+        )
+
+        self.assertEqual(captured_default["base_url"], "https://default.test/v1")
+        self.assertIsNone(captured_default["api_key"])
+        self.assertEqual(captured_default["model"], "openai/mimo-v2.5")
+
+        self.assertEqual(captured_work["base_url"], "https://work.test/v1")
+        self.assertEqual(captured_work["api_key"], "sk-work-key")
+        self.assertEqual(captured_work["model"], "openai/gpt-4o")
+
+    async def test_provider_resolution_failure_raises_before_a_completion(self):
+        """An unknown alias -> ProviderResolutionError surfaces from stream_response.
+
+        resolve_model_ref runs before the first litellm.acompletion call, so
+        acompletion must not be invoked at all.
+        """
+        cfg = Config(providers={"default": {
+            "base_url": "https://example.test/v1",
+            "litellm_provider": "openai",
+            "models": {"mimo-v2.5": {}},
+        }})
+
+        acompletion_mock = AsyncMock()
+
+        with patch("stupidex.llm.client.get_config", return_value=cfg), \
+                patch("stupidex.llm.providers.get_config", return_value=cfg), \
+                patch("stupidex.llm.client.build_dynamic_system_prompt",
+                      new=AsyncMock(return_value=Message(
+                          MessageRole.SYSTEM, "<dynamic/>", MessageType.TEXT))), \
+                patch("stupidex.llm.client.get_tool_registry", return_value={}), \
+                patch("stupidex.llm.client.litellm.acompletion", new=acompletion_mock):
+            gen = llm_client.stream_response(
+                messages=[],
+                model="typo-alias/mimo-v2.5",
+                allowed_tools=[],
+                system_prompt="",
+            )
+            with self.assertRaises(ProviderResolutionError):
+                async for _ in gen:
+                    pass
+
+        acompletion_mock.assert_not_called()
 
 
 if __name__ == "__main__":
