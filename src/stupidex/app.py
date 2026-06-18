@@ -489,10 +489,16 @@ class Stupidex(App):
     async def mount_all_messages(self) -> None:
         container = self.query_one("#output", ScrollableContainer)
         await container.remove_children()
-        for msg in self.messages:
-            widget = create_message_widget(msg)
-            if widget is not None:
-                await container.mount(widget)
+        if not self.sessions.active:
+            return
+        for chain in self.sessions.active.chains:
+            chain_container = ChainContainer(chain)
+            await container.mount(chain_container)
+            chain_container.freeze()
+            for msg in chain.messages:
+                widget = create_message_widget(msg, loaded=True)
+                if widget is not None:
+                    await chain_container.messages_area.mount(widget)
 
     async def rerender_all(self) -> None:
         if not self.sessions.active:
