@@ -1,458 +1,341 @@
-# stupidex
+# Stupidex
 
-## TODO do Trabalho Final
-- [x] Ao menos 2 agentes com papéis distintos e justificados
-  - Temos 25 agentes pré definidos (4 core + 10 reviewers + 5 doc-review + 3 researchers + 2 specialized + 1 PR resolver)
-- [x] LLM integrado - tomada de decisão, geração ou roteamento
-  - O projeto necessita de LLM para ser útil, com o principal tomando deciões e roteamento (Subagentes) e geração com principal ou subagentes (Código, exploração, etc.)
-- [x] Modelo local (Ollama) - não apenas API paga
-  - Ele funciona com modelos locais desde que foneçam API compatível com OpenAI (Anthropic planejada)
-- [x] MCP com ao menos 1 tool e 1 resource implementados
-  - MCP client com suporte a stdio e HTTP/SSE, Context7 incluso como padrão
-- [x] Pipeline RAG: ingestão -> Embedding -> busca -> resposta
-- [x] Vector store (ChromeDB/FAISS) com embedding reais
-- [x] Mínimo 3 tools disponíveis e funcionais para os agentes
-  - O projeto conta com 25 tools configuráveis por agente
-- [x] Interface CLI testável - fluxo demonstrável em terminal
-  - A interface é feita com Textual e o usuário tem acesso a todo o fluxo de todos os agentes
-- [x] Repositório GiHub público com código completo
-  - Você está vendo agora
-- [ ] README com todos os elementos exigidos no enunciado
+## TODO - Remover esta seção antes da entrega final
+### TODOs geral
+- Controle de concorrência para travamento de arquivos
+- LSP
+- Tratamento de AGENTS.md
+  - E também comando /init para ele
+  - Quando usar o read tool em qualquer arquivo com um AGENTS.md em seu diretório deve ser colocada as regras junto
+- Fila de mensagens para o usuário
+- Seleção de níveis de pensamento
+  - Isso é mais complexo pois não tem como saber os aceitos pelo provedor, nem se ele irá respeitar
+  - O usuário deve ser capaz de configurar por modelo as variações de pensamento
+  - Os agentes/subagentes devem ser capazes de aderirem um nível expecífico
+    - Possível adotando o modelo <provedor>/<modelo>/<nível_de_pensamento> (Se utilizar <provedor>/<modelo>:<nivel_dePensamento> terá conflito com openrouter e com "-" de separador pode confundir com o nome)
+    - Qual será o padrão? Por modelo? Global?
 
+### Melhoria no sistema de compound
+- OBS: Não mexer nele até ter uma ideia mais definida
+- Múltiplos tipos de agente principal (Geral, plano, etc.) que podem ser alternados durante a conversa
 
-## Setup
+### Ferramenta ask_question
+- Deve permitir múltiplas questões de múltipla escolha
+  - Cada uma contendo um título e descrição
+- Deve permitir o usuário sempre enviar uma resposta em texto livre
+- Deve permitir fazer múltiplas questões numa chamada
+  - Ex: 2 questões de múltiplas escolha com 4 respostas, mais um com duas, etc.
+- Sendo analizado: Permitir que os subagentes façam uso dessa ferramenta apra perguntar ao agente principal
+  - O agente principal deve ser capaz de saber imediatamente quando uma pergunta é feita (Atualizando o status + sair do wait_for_subagent se qualquer um tiver questão)
+  - Deve ser capaz de não responder quando soube da pergunta (Para pesquisas ou mandar para o usuário)
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e . # Editable Mode, changes take effect immediately.
-```
+### Sistema de aprovação / permissão
+- Ferramentas teriam um novo atributo, sendo permissão, além de vários níveis de permissões:
+  - Sempre perguntar
+  - Permitir tudo / yolo
+  - Decida por mim (Agente tolo decide dependendo da chamada)
+    - Claude Code tem esse sistema, ele pode ser analisado para melhorar o plano
+- Resolver caminhos fornecidos nas ferramentas para evitar modificar/ler arquivos fora do diretório de trabalho
+  - Mas isso ainda poderia ser evitado via comandos. Com sistema de permissão e o usuário aprovando todos os comandos, a responsabilidade fica com o usuário
+- Também já adicionar o reconhecimento de diretórios que um comando / ferramenta irá afetar
+  - Perguntar ao usuário se pode editar / visualziar arquivos fora do diretório atual
+    - Ignorado no yolo 
 
-Configure providers, models, and API keys in `~/.stupidex/config.json`. See the [Providers](#providers) section for examples.
+### Subagentes
+- Agente BTW/lateral (Fazer uma pergunta sem interromper o fluxo principal)
+  - Precisa ser analizado a melhor maneira de colocar na interface
+  - Apenas tools read only
+  - Multi turno? Ainda sendo analisado
+  - ütil para clarificações sem interromper o trabalho
+    - Ex: "Como a função x interage com systema Y?"
 
-## Usage
+### Precisa de melhoria
+- 24 blocos `except Exception` nus que engolem erros silenciosamente em app.py
+- Mensagens de erro vazam strings de comando e caminhos de arquivo em erros de execução de ferramentas (exec.py)
+- Correspondência difusa (fuzzy matching) na ferramenta edit
+  - Por exemplo, opencode tem 9 maneira de fuzzy matching
 
-```bash
-stupidex
-```
+### Bugs
+- Rolagem automática para baixo após o fim de uma mensagem do agente
+  - A conversa também não está indo automaticamente para baixo enquanto faz o streaming
+- Algo pode estar bloqueando/não paralelo - quando múltiplos subagentes são instanciados, a CPU usa apenas um núcleo
+- O tempo de indexação RAG e AST na barra lateral não é atualizado regularmente, ficando obsoleto
+- O agente parece repetir ações - será que ele está se confundindo com o que já fez?
 
-If your provider doesn't ship an API key in config, set the environment variable litellm expects (e.g. `OPENAI_API_KEY`):
+### Refatoração de configuração
+- Ainda precisa ser melhor analisada
+- Ser possível de fazer toda e qualquer configuração por meio da TUI
+  - Editar os agentes dos vários tiers
+  - Adicionar/deletar provedores
+  - Adicionar/editar/remover modelos e suas limitações
+  - Modificar o modelo padrão
+  - Servidores MCP
+  - etc....
 
-```bash
-OPENAI_API_KEY="your key" stupidex
-```
+### Considerações
+- Tornar a ferramenta read utilizável com diretórios?
+- Remover a ferramenta list_subagents?
+  - Já é includo no system prompt dinâmico o resultado dela
+- Remover a ferramenta list_skills?
+  - Já é includo no system prompt dinâmico o resultado dela
 
-Per-provider keys can also be configured inline or via a named env var — see [Providers](#providers).
+### Algumas regras básicas
+- Apenas imports absolutos
+- Estrutura orientada a domínio
+- Seguir a lintagem do ruff (por favor)
 
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+P` | Open command palette |
-| `Ctrl+S` | Submit input |
-| `Ctrl+C` | Clear input |
-| `Ctrl+B` | Toggle focus between input and sidebar |
-| `Escape` | Interrupt agent / subagents |
-| `↑` / `↓` | Navigate sidebar entries (when sidebar is focused) |
-| `Enter` / `Space` | Activate sidebar entry or toggle collapsible section |
-
-## Commands
-
-Session commands are available via the command palette (`Ctrl+P`):
-
-| Command | Description |
-|---------|-------------|
-| `/new` | Start a new session |
-| `/switch` | Switch to another session |
-| `/delete` | Delete a session |
-| `/model` | Change the model for the current session |
-| `/theme` | Switch the application theme |
-| `/personality` | Switch the agent personality |
-| `/index-rag` | Index the project for RAG semantic search |
-| `/index-ast` | Re-scan the project for AST symbol indexing |
-| `/rag status` | Show RAG index status |
-| `/rag clear` | Clear the RAG index |
-
-### Available Themes
-
-| Theme | Description |
-|-------|-------------|
-| `default` | Dark theme (Textual dark) |
-| `solarized-light` | Solarized light color scheme |
-| `bluey` | Blue-toned theme |
-| `windows_xp` | Windows XP-inspired theme |
-| `green_terminal` | Green monochrome terminal theme |
-
-## Agents
-
-Agents are defined as markdown files with YAML frontmatter. On first run, default agents are seeded to `~/.stupidex/agents/`.
-
-**Location:**
-- Home: `~/.stupidex/agents/<name>/AGENT.md`
-- Project: `.stupidex/agents/<name>/AGENT.md` (overrides home)
-
-**Format:**
-```markdown
----
-name: my-agent
-type: subagent
-tier: papudo
-description: What this agent does
-allowed_tools:
-  - read
-  - edit
-  - execute_command
-allowed_skills:
-  - '*'
 ---
 
-System prompt content here...
-```
+## Integrantes da Equipe
 
-**Required fields:** `name`, `type`, `tier`, `description`, `allowed_tools`.
-**Optional fields:** `allowed_skills` (defaults to `[]` — no skill access).
+| Nome | Matricula |
+|------|----|
+| Artur Ricieri Trentini Benedetti | 205125 |
+| Grégori Yago Kempf | 204034 |
+| João Vitor Giacomolli | 203721 |
+| Rodrigo Rigo | 204123 |
 
-**`allowed_skills` patterns:**
-- `*` — matches all skills
-- `work*` — matches skills starting with `work`
-- `code-review` — matches exact name
-- Multiple patterns are unioned: `["work", "debug"]` matches both
-
-**Built-in agents:**
-
-Core:
-| Agent | Type | Tier | Description |
-|-------|------|------|-------------|
-| `general` | internal | papudo | Main agent, handles direct conversation |
-| `explorer` | subagent | tolo | Read-only codebase exploration |
-| `implementer` | subagent | papudo | Writes and edits code |
-| `reviewer` | subagent | papaca | Code review for bugs and improvements |
-
-Specialized reviewers (used by `code-review` skill):
-| Agent | Type | Tier | Description |
-|-------|------|------|-------------|
-| `correctness-reviewer` | subagent | papaca | Reviews code for logic errors, edge cases, state management bugs |
-| `security-reviewer` | subagent | papaca | Reviews for exploitable vulnerabilities, input validation, auth issues |
-| `performance-reviewer` | subagent | papaca | Reviews for bottlenecks, N+1 queries, memory usage, scalability |
-| `maintainability-reviewer` | subagent | papudo | Reviews for premature abstraction, dead code, coupling, naming |
-| `testing-reviewer` | subagent | papudo | Reviews for test coverage gaps, weak assertions, brittle tests |
-| `adversarial-reviewer` | subagent | papaca | Constructs failure scenarios to break the implementation |
-| `reliability-reviewer` | subagent | papaca | Reviews error handling, retries, circuit breakers, timeouts |
-| `api-contract-reviewer` | subagent | papudo | Reviews API routes, request/response types, serialization |
-| `data-integrity-guardian` | subagent | papaca | Reviews migrations, data models, persistent data for safety |
-| `code-simplicity-reviewer` | subagent | papudo | Final pass for YAGNI violations and simplification opportunities |
-
-Research and analysis agents:
-| Agent | Type | Tier | Description |
-|-------|------|------|-------------|
-| `learnings-researcher` | subagent | tainha | Searches docs/solutions/ for applicable past learnings |
-| `web-researcher` | subagent | tainha | Codebase research via RAG search and semantic analysis |
-| `architecture-strategist` | subagent | papaca | Analyzes code changes for pattern compliance and design integrity |
-| `agent-native-reviewer` | subagent | papaca | Reviews for agent-native parity (every user action = agent tool) |
-| `spec-flow-analyzer` | subagent | papudo | Analyzes specs for user flow completeness and gap identification |
-
-Document review agents (used by `doc-review` skill):
-| Agent | Type | Tier | Description |
-|-------|------|------|-------------|
-| `adversarial-document-reviewer` | subagent | papaca | Challenges premises, surfaces unstated assumptions in docs |
-| `coherence-reviewer` | subagent | papudo | Reviews docs for internal consistency and contradictions |
-| `feasibility-reviewer` | subagent | papudo | Evaluates whether proposed approaches will survive reality |
-| `product-lens-reviewer` | subagent | papaca | Reviews docs as a senior product leader |
-| `scope-guardian-reviewer` | subagent | papudo | Reviews for scope alignment and unjustified complexity |
-| `pr-comment-resolver` | subagent | papudo | Evaluates and resolves PR review threads |
-
-### Agent Tiers
-
-Tiers control the intelligence/speed tradeoff for each agent. Lower tiers use faster, cheaper models; higher tiers use more capable models for complex reasoning.
-
-| Tier | Intelligence | Speed | Expected Use Cases |
-|------|--------------|-------|-------------------|
-| `tolo` | Low | Very Fast | Simple, mechanical tasks: file listing, basic searches, reading files, glob matching. No complex reasoning needed. |
-| `tainha` | Medium | Fast | Code exploration, grep analysis, understanding file structure, reading comprehension, summarizing findings. |
-| `papudo` | High | Standard | Implementation tasks, writing code, refactoring, multi-file changes, bug fixes, following code conventions. |
-| `papaca` | Very High | Slower | Architecture decisions, complex debugging, code review, design analysis, evaluating trade-offs, careful judgment. |
-
-Map tiers to models in `~/.stupidex/config.json` under `tier_models`. Assign cheaper models to low tiers and more capable models to high tiers to optimize cost and latency.
-
-## Skills
-
-Skills are reusable workflow templates that guide the agent through complex tasks. Defined as markdown files with YAML frontmatter.
-
-**Location:**
-- Home: `~/.stupidex/skills/<name>/SKILL.md`
-- Project: `.stupidex/skills/<name>/SKILL.md` (overrides home)
-
-**Format:**
-```markdown
----
-name: my-skill
-description: What this skill does and when to use it
 ---
 
-Skill instructions here...
+## Sobre o Projeto
+
+**Stupidex** é um agente de terminal com arquitetura multiagente, focado em engenharia de software assistida por IA. Ele opera diretamente no terminal do desenvolvedor como um copiloto capaz de explorar código, implementar funcionalidades, revisar alterações, executar comandos, gerenciar tarefas e documentar aprendizado - tudo por meio de uma interface TUI (Textual User Interface).
+
+---
+
+## Problema
+
+Desenvolvedores de software enfrentam alta carga cognitiva ao alternar entre múltiplas ferramentas, contextos e etapas do ciclo de desenvolvimento: planejar, codificar, revisar, testar, commitar, documentar. Cada etapa exige ferramentas e configurações diferentes, e o conhecimento adquirido na solução de um problema frequentemente se perde, precisando ser redescoberto em ocasiões futuras.
+
+A falta de um sistema integrado que una exploração de código, implementação, revisão, versionamento e documentação em um único fluxo coeso resulta em:
+- Retrabalho por falta de documentação de soluções passadas;
+- Dificuldade em manter qualidade consistente nas revisões de código;
+- Ciclos de feedback lentos entre codificação e revisão;
+- Perda de contexto ao alternar entre ferramentas.
+
+---
+
+## Objetivo da Solução
+
+Criar um assistente de terminal multiagente que integre todo o pipeline de engenharia de software em uma única interface:
+
+1. **Estratégia e planejamento** - definir direção do produto e quebrar tarefas em planos acionáveis
+2. **Implementação** - escrever e editar código com consciência do projeto
+3. **Revisão de código** - revisão estruturada com múltiplos agentes especializados (corretude, segurança, performance, manutenibilidade, testes)
+4. **Versionamento** - commit e pull request com mensagens descritivas
+5. **Compounding de conhecimento** - documentar problemas resolvidos para evitar redescobrimento
+
+Tudo isso com:
+- **Modelos locais** (Ollama) para operação offline
+- **RAG** integrado para busca semântica no código
+- **MCP** (Model Context Protocol) para ferramentas externas
+- **AST tools** para manipulação estrutural de código
+
+---
+
+## Arquitetura Multiagente
+
+O Stupidex implementa uma arquitetura **hierárquica de agentes**, onde um agente principal orquestra subagentes especializados. O fluxo segue um pipeline encadeado:
+
+```
+estratégia → ideação → brainstorm → plano → trabalho → revisão → commit/PR → documentação
 ```
 
-**Built-in skills:**
+### Funcionamento
 
-Core workflow:
-| Skill | Description | When to use |
-|-------|-------------|-------------|
-| `strategy` | Create/maintain STRATEGY.md (product direction) | "write our strategy", "what are we working on" |
-| `ideate` | Generate and critically evaluate grounded ideas | "give me ideas", "what should I improve", "surprise me" |
-| `brainstorm` | Explore requirements through dialogue, write requirements doc | "let's brainstorm", "what should we build", vague requests |
-| `doc-review` | Review requirements/plan docs with parallel persona agents | "review this doc", "improve this requirements doc" |
-| `plan` | Create structured implementation plans | "plan this", "how should we build", "break this down" |
-| `work` | Execute plans efficiently with incremental commits | "implement this", "build it", "execute the plan" |
-| `debug` | Find root causes and fix bugs systematically | "debug this", "why is this failing", "fix this bug" |
-| `code-review` | Structured review with tiered persona agents | "review this", before creating a PR |
-| `resolve-pr-feedback` | Evaluate and fix PR review feedback | "resolve PR feedback", "address review comments" |
-| `commit` | Create git commits with clear messages | "commit this", "save my changes" |
-| `commit-push-pr` | Commit, push, and open a PR | "ship this", "create a PR", "commit and PR" |
-| `compound` | Document solved problems to compound knowledge | "document this", "what did we learn", after fixing a bug |
-| `compound-refresh` | Refresh stale docs in docs/solutions/ | "refresh my learnings", "audit docs/solutions/" |
-| `simplify-code` | Refactor for clarity, reuse, and efficiency | "simplify this", "clean up", "refactor for clarity" |
-| `lfg` | Full autonomous pipeline (plan → work → review → commit → PR → CI watch) | "ship this end-to-end", "do everything", hands-off execution |
+1. **Agente Principal** (`general`, tier `papudo`) - recebe a requisição do usuário, decide o fluxo e delega tarefas
+2. **Subagentes Especializados** - executam tarefas específicas com ferramentas e skills limitadas ao seu escopo
+3. **Skills** - workflows reutilizáveis que guiam o agente através de tarefas complexas (ex: `code-review` dispara 6 revisores em paralelo)
+4. **Revisão** - agentes de revisão paralelos analisam o código produzido antes do commit
 
-## Workflow
-
-Skills chain into a compound engineering pipeline. Each step builds on the previous:
+### Pipeline Típico
 
 ```
-strategy → ideate → brainstorm → [doc-review] → plan → work → [debug] → code-review → [resolve-pr-feedback] → commit-push-pr → compound
+Usuário → General Agent → Plan → Implementer → Code Review (paralelo) → Commit → PR → Compound
 ```
 
-### Typical flows
+---
 
-**Feature development:**
-```
-brainstorm → plan → work → code-review → commit-push-pr → compound
-```
+## Papel de Cada Agente
 
-**Bug fix:**
-```
-debug → (fix) → code-review → compound
-```
+### Agentes Core
 
-**Code review:**
-```
-code-review → resolve-pr-feedback → compound
-```
+| Agente | Tier | Função |
+|--------|------|--------|
+| **general** | `papudo` | Agente principal. Recebe comandos do usuário, orquestra subagentes, decide próximos passos |
+| **explorer** | `tolo` | Exploração _read-only_ do código: leitura de arquivos, busca por padrões, entendimento da estrutura |
+| **implementer** | `papudo` | Escreve e edita código. Executa planos de implementação |
+| **reviewer** | `papaca` | Revisão geral de código: bugs, estilo, melhorias |
 
-**Full autonomous pipeline (`lfg`):**
-```
-plan → work → code-review → fix → test → commit-push-pr
-```
+### Revisores Especializados (usados pela skill `code-review`)
 
-### Knowledge Management
+| Agente | Tier | Função |
+|--------|------|--------|
+| **correctness-reviewer** | `papaca` | Erros lógicos, edge cases, bugs de estado |
+| **security-reviewer** | `papaca` | Vulnerabilidades, injeção, validação de entrada, autenticação |
+| **performance-reviewer** | `papaca` | Gargalos, N+1 queries, uso de memória, escalabilidade |
+| **maintainability-reviewer** | `papudo` | Abstrações prematuras, dead code, acoplamento, nomenclatura |
+| **testing-reviewer** | `papudo` | Cobertura de testes, asserts fracos, testes frágeis |
+| **adversarial-reviewer** | `papaca` | Cenários de falha para quebrar a implementação |
+| **reliability-reviewer** | `papaca` | Tratamento de erros, retries, circuit breakers, timeouts |
+| **api-contract-reviewer** | `papudo` | Rotas de API, tipos request/response, serialização |
+| **data-integrity-guardian** | `papaca` | Migrações, modelos de dados, segurança de dados persistentes |
+| **code-simplicity-reviewer** | `papudo` | Violações de YAGNI, oportunidades de simplificação |
 
-The compounding system documents solved problems so future work avoids re-discovering known solutions:
+### Agentes de Pesquisa e Análise
 
-- **`docs/solutions/`** — Structured learnings with YAML frontmatter, organized by category:
-  - `developer-experience/` — Dev setup, CI, tooling issues
-  - `integrations/` — Cross-platform bugs, target compatibility
-  - `workflow/` — Skill/agent design patterns, process improvements
-  - `skill-design/` — Plugin architecture patterns
-- **`CONCEPTS.md`** — Shared domain vocabulary that grounds all agents in the project's language
-- **`learnings-researcher` agent** — Searches docs/solutions/ before implementation to surface prior knowledge
-- **`compound` skill** — Documents new solutions after they're solved
-- **`compound-refresh` skill** — Audits and maintains existing learnings over time
+| Agente | Tier | Função |
+|--------|------|--------|
+| **learnings-researcher** | `tainha` | Busca em `docs/solutions/` por aprendizado anterior |
+| **web-researcher** | `tainha` | Pesquisa no código via RAG e análise semântica |
+| **architecture-strategist** | `papaca` | Análise de conformidade com padrões e integridade do design |
+| **agent-native-reviewer** | `papaca` | Verifica paridade agente-usuário (toda ação do usuário = tool do agente) |
+| **spec-flow-analyzer** | `papudo` | Análise de fluxos de usuário e identificação de lacunas |
 
-### Agent Delegation Pattern
+### Agentes de Revisão de Documentos (usados pela skill `doc-review`)
 
-The general agent delegates specialized work to subagents:
+| Agente | Tier | Função |
+|--------|------|--------|
+| **adversarial-document-reviewer** | `papaca` | Desafia premissas e pressupostos não declarados |
+| **coherence-reviewer** | `papudo` | Consistência interna do documento |
+| **feasibility-reviewer** | `papudo` | Viabilidade das abordagens propostas |
+| **product-lens-reviewer** | `papaca` | Revisão sob perspectiva de produto |
+| **scope-guardian-reviewer** | `papudo` | Alinhamento de escopo, complexidade injustificada |
+| **pr-comment-resolver** | `papudo` | Avalia e resolve threads de revisão de PR |
 
-1. **Research** — `explorer`, `learnings-researcher`, `web-researcher` gather context
-2. **Implementation** — `implementer` writes code guided by plans
-3. **Review** — `code-review` skill spawns parallel reviewer personas (correctness, security, performance, etc.)
-4. **Resolution** — `pr-comment-resolver` addresses feedback
-5. **Documentation** — `compound` skill captures the learning
+### System Tiers (níveis de inteligência/velocidade)
 
-Each agent only has access to its `allowed_tools` and `allowed_skills`, enforcing separation of concerns.
+| Tier | Inteligência | Velocidade | Uso |
+|------|--------------|------------|-----|
+| **tolo** | Baixa | Muito rápida | Tarefas mecânicas: listar arquivos, ler, buscar |
+| **tainha** | Média | Rápida | Exploração, grep, sumarização |
+| **papudo** | Alta | Normal | Implementação, refatoração, múltiplos arquivos |
+| **papaca** | Muito alta | Lenta | Arquitetura, debugging complexo, code review |
 
-## Tools
+Cada tier pode ser mapeada para modelos diferentes no `config.json` do usuário, permitindo otimizar custo e latência.
 
-Available tools for agents:
+---
 
-| Tool | Description |
-|------|-------------|
-| `read` | Read file contents |
-| `read_directory` | List directory contents |
-| `glob` | Find files by pattern |
-| `grep` | Search file contents |
-| `edit` | Edit files |
-| `write` | Write files |
-| `execute_command` | Run shell commands |
-| `delegate_to_subagent` | Spawn a subagent |
-| `wait_for_subagent` | Wait for subagent results |
-| `list_subagents` | List active subagents |
-| `interrupt_subagents` | Cancel running subagents |
-| `skill` | Load a skill |
-| `list_skills` | List available skills |
-| `rag_search` | Semantic code search |
-| `rag_index` | Index status, reindex, clear |
-| `get_file_skeleton` | Structural outline of a file (definitions only) |
-| `get_function` | Extract specific function with imports and class context |
-| `find_symbol_references` | Find all definitions and references for a symbol name |
-| `replace_symbol` | Replace an entire symbol definition (including docstring and decorators) |
-| `rename_symbol` | Rename a symbol across all files in one call |
-| `todo_create` | Create a task |
-| `todo_update` | Update task status/details |
-| `todo_list` | List tasks filtered by status |
-| `todo_delete` | Delete a task |
-| `read_mcp_resource` | Read a resource from an MCP server by URI |
-| `mcp_*` | Dynamically registered MCP tools (e.g., `mcp_context7_resolve-library-id`) |
+## Personalidades
 
-## RAG (Retrieval-Augmented Generation)
+O Stupidex possui um sistema de **personalidades** que alteram o tom, o estilo e o comportamento do agente principal. As personalidades são definidas em arquivos Markdown no diretório `personality/defaults/` e podem ser estendidas ou substituídas pelo usuário em `~/.config/stupidex/personalities/`.
 
-The project includes a built-in RAG pipeline for code-aware semantic search. It indexes your project, chunks files by language-aware rules, embeds them, and stores vectors locally using numpy + SQLite.
+A personalidade ativa é definida no `config.json` (campo `personality`) e é anexada ao final do *system prompt* do agente.
 
-### Quick Start
+### Personalidades Padrão
 
-```bash
-# Index the current project
-# In the command palette (Ctrl+P): /index-rag
-```
+| Personalidade | Descrição |
+|:---|:---|
+| **default** | Tom conciso, direto e amigável. Como um colega de equipe capaz passando o trabalho adiante. Sem bajulação. |
+| **meow** | Agente de codificação totalmente competente que por acaso é um gato. Vocabulário de miados (meow, purr, hiss, chirrup), comportamentos felinos entrelaçados na narrativa - derrubar código da mesa como um vaso, ronronar quando os testes passam, caçar bugs. Cada resposta abre e fecha com um miado. |
+| **pirate** | Marinheiro de água salgada que parou numa interface de terminal. Código é "tesouro", bugs são "marujos desorientados", compilações bem-sucedidas são "mares calmos". Fala com ginga pirata - "arr," "matey," "era uma vez numa jangada." Defende a tripulação (o usuário) com lealdade feroz. |
+| **socrates** | Filósofo da codificação socrática - não o Sócrates que irrita com debates, mas o inquisidor genuíno que se maravilha perante a complexidade e encontra clareza através do questionamento. Humilde, curioso, trata cada código como texto a ser interpretado. Pergunta "por que isso existe?" antes de "como isso funciona?". |
+| **stupid** | Encantadoramente sem noção, mas dando o melhor de si. Fala com entusiasmo confiante sobre coisas que claramente não entende totalmente. Usa palavras simples, se distrai facilmente, de vez em quando confunde termos técnicos. Ainda faz o trabalho - é burro, não inútil. |
+| **zen** | Mestre de codificação calmo e filosófico. Fala com sabedoria ponderada, como um sensei guiando um aluno. Usa metáforas da natureza e simplicidade. Código bagunçado é um jardim que precisa de cuidados, não um desastre. "A simplicidade é a sofisticação máxima." |
 
-The RAG index is also automatically updated when files are written or edited via the `write` and `edit` tools, so the index stays fresh without manual re-indexing.
+### Como Usar
 
-The sidebar displays the current RAG and AST index status, including last indexed time and duration. While indexing is in progress, it shows an "indexing..." indicator.
-
-The agents will use the rag tool ad needed
-
-### Embedding Providers
-
-RAG embeddings use the same `alias/model` routing as chat models. Configure a single field — `rag_embedding_model` — with either a `fastembed/<model_id>` reference (local ONNX, no network) or a `<provider-alias>/<model>` reference (routes through the providers dict to `litellm.aembedding`).
-
-| Reference form | How it works | Requires |
-|----------------|-------------|----------|
-| `fastembed/<model_id>` (default) | Runs quantized models locally via ONNX Runtime | Included by default |
-| `<alias>/<model>` (e.g. `work-openai/text-embedding-3-small`) | Calls the provider's embedding API via litellm | Provider configured + API key |
-
-#### Using fastembed (default, local)
-
-The shipping default is `fastembed/BAAI/bge-small-en-v1.5` (~77 MB, auto-downloaded on first use). No API key, no network after first run.
-
-To use a different local model, set `rag_embedding_model` to `fastembed/<model_id>`:
+No `config.json`, defina o campo `personality` com o nome da personalidade desejada:
 
 ```json
 {
-  "rag_embedding_model": "fastembed/BAAI/bge-base-en-v1.5"
+  "personality": "zen"
 }
 ```
 
-Or via environment variable:
+Para criar uma personalidade personalizada, adicione um arquivo `.md` em `~/.config/stupidex/personalities/` com o conteúdo desejado. O nome do arquivo (sem extensão) será o nome da personalidade.
 
-```bash
-STUPIDEX_RAG_EMBEDDING_MODEL="fastembed/BAAI/bge-base-en-v1.5" stupidex
-```
+---
 
-**Available fastembed models:**
+## Tools Disponíveis
 
-| Model | Dims | Size | Best for |
-|-------|------|------|----------|
-| `BAAI/bge-small-en-v1.5` (default) | 384 | ~77 MB | Fast, good quality |
-| `BAAI/bge-base-en-v1.5` | 768 | ~430 MB | Better quality |
-| `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~80 MB | General purpose |
-| `nomic-ai/nomic-embed-text-v1.5-Q` | 768 | ~550 MB | Multilingual |
+Os agentes têm acesso a ferramentas limitadas pelo seu `allowed_tools` no arquivo de definição do agente. Abaixo, a lista completa:
 
-#### Using a provider-routed embedding model
+### Ferramentas de Arquivo
 
-Any `alias/model` reference registered in your `providers` config works. For example, with a `work-openai` provider configured (see [Providers](#providers)):
+| Tool | Descrição |
+|------|-----------|
+| `read` | Ler conteúdo de arquivos |
+| `read_directory` | Listar conteúdo de diretórios (formato árvore) |
+| `glob` | Buscar arquivos por padrão glob |
+| `edit` | Editar arquivos por substituição de string exata |
+| `write` | Criar/sobrescrever arquivos (cria diretórios automaticamente) |
+| `get_file_skeleton` | Estrutura de definições do arquivo (classes, funções) |
+| `get_function` | Extrair função específica com imports e contexto da classe |
+| `find_symbol_references` | Encontrar definições e referências de um símbolo |
+| `replace_symbol` | Substituir definição completa de símbolo (inclui docstrings, decorators) |
+| `rename_symbol` | Renomear símbolo em todos os arquivos |
 
-```json
-{
-  "rag_embedding_model": "work-openai/text-embedding-3-small"
-}
-```
+### Ferramentas de Busca
 
-### RAG Configuration
+| Tool | Descrição |
+|------|-----------|
+| `grep` | Busca por regex no conteúdo dos arquivos |
+| `rag_search` | Busca semântica no código (RAG) |
+| `rag_index` | Verificar status, reindexar ou limpar índice RAG |
 
-All RAG settings in `~/.stupidex/config.json`:
+### Ferramentas de Subagente
 
-```json
-{
-  "rag_embedding_model": "fastembed/BAAI/bge-small-en-v1.5",
-  "rag_chunk_size": 2000,
-  "rag_chunk_overlap": 200,
-  "rag_top_k": 5,
-  "rag_max_file_size": 512000
-}
-```
+| Tool | Descrição |
+|------|-----------|
+| `delegate_to_subagent` | Delegar tarefa a um subagente com contexto isolado |
+| `wait_for_subagent` | Aguardar resultados de subagentes |
+| `list_subagents` | Listar subagentes ativos |
+| `interrupt_subagents` | Cancelar subagentes em execução |
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `rag_embedding_model` | `"fastembed/BAAI/bge-small-en-v1.5"` | `alias/model` reference (supports `fastembed/<id>` for local ONNX) |
-| `rag_chunk_size` | `2000` | Max characters per chunk |
-| `rag_chunk_overlap` | `200` | Overlap between consecutive chunks |
-| `rag_top_k` | `5` | Number of results to return |
-| `rag_max_file_size` | `512000` | Skip files larger than this (bytes) |
+### Ferramentas de Execução
 
-Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
+| Tool | Descrição |
+|------|-----------|
+| `execute_command` | Executar comandos shell |
+| `skill` | Carregar e executar uma skill |
+| `list_skills` | Listar skills disponíveis |
 
-## AST Tools
+### Ferramentas de Tarefas
 
-The project includes AST-aware tools for structural code operations. These tools use [tree-sitter](https://tree-sitter.github.io/) to parse source files into syntax trees, enabling precise symbol extraction, cross-file references, and code transformations that text-based tools cannot reliably perform.
+| Tool | Descrição |
+|------|-----------|
+| `todo_create` | Criar tarefa |
+| `todo_update` | Atualizar status/detalhes da tarefa |
+| `todo_list` | Listar tarefas filtradas por status |
+| `todo_delete` | Deletar tarefa |
 
-### Supported Languages
+### Ferramentas MCP
 
-v1 supports **Python**, **JavaScript**, **TypeScript**, and **TSX**. TSX reuses the TypeScript grammar and query file.
+| Tool | Descrição |
+|------|-----------|
+| `read_mcp_resource` | Ler recurso de um servidor MCP via URI |
+| `mcp_*` | Tools registradas dinamicamente por servidores MCP (ex: `mcp_context7_resolve-library-id`, `mcp_context7_query-docs`, `mcp_example_echo`) |
 
-### Quick Start
+### Web
 
-```bash
-# Index the project for AST symbol lookup
-# In the command palette (Ctrl+P): /index-ast
-```
+| Tool | Descrição |
+|------|-----------|
+| `web_fetch` | Buscar URL e extrair informações (modos summarize/raw) |
 
-Index-dependent tools (`find_symbol_references`, `rename_symbol`) trigger a full project scan on first call automatically. Index-independent tools (`get_file_skeleton`, `get_function`) parse files directly without requiring an index.
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `get_file_skeleton` | Returns a structural outline of a file — definition lines only, with visual separators. Useful for understanding file structure without reading the entire file. |
-| `get_function` | Extracts a specific function by name, with resolved imports and class context. Reports "no changes" when the function body hasn't changed since last retrieval. |
-| `find_symbol_references` | Finds all definitions and references for a symbol name across the project. Returns file paths and line/column ranges. |
-| `replace_symbol` | Replaces an entire symbol definition using extended AST ranges (includes preceding comments, docstrings, decorators, and export keywords). Applies multiple replacements atomically. |
-| `rename_symbol` | Renames an identifier across all files using line/column positions from the symbol index. Edits are applied atomically per file. |
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `/index-ast` | Force a full re-scan of the project for AST symbol indexing. Use when the index is stale or after bulk file changes. |
-
-### Configuration
-
-AST settings in `~/.stupidex/config.json`:
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `ast_max_file_size` | `1048576` | Skip files larger than this (bytes, 1 MB) |
-
-Environment variable override: `STUPIDEX_AST_MAX_FILE_SIZE`.
-
-The AST index is stored in `.stupidex/ast/symbols.db` (excluded from git via `.gitignore`). The `ignored_dirs` config field is shared with RAG — both subsystems skip the same directories.
-
-### Future Languages
-
-The following languages are planned for future releases: Rust, Go, C/C++, C#, Ruby, Java, PHP, Swift, Kotlin.
+---
 
 ## MCP (Model Context Protocol)
 
-The project includes a full MCP client for connecting to external tool servers. MCP servers are configured in `~/.stupidex/config.json` and started automatically on app launch.
+O **Model Context Protocol (MCP)** é um protocolo aberto que permite que agentes de IA se conectem a servidores externos de ferramentas e recursos. No Stupidex, o MCP é utilizado como **ponte entre os agentes e serviços externos**, expandindo as capacidades do sistema sem modificar o código-fonte dos agentes.
 
-### Default Servers
+### Como o MCP é usado no Stupidex
 
-**Context7** is included by default — it provides up-to-date, version-specific documentation for any library or framework. Requires `npx` (install [Node.js](https://nodejs.org/) if not available).
+1. **Gerenciamento de sessões MCP** - `MCPManager` gerencia o ciclo de vida completo: inicia servidores na inicialização do app, mantém sessões ativas e faz shutdown ao sair
+2. **Dois tipos de transporte**:
+   - **stdio** - servidor executado como subprocesso, comunicação via stdin/stdout
+   - **HTTP/SSE** - servidor remoto, comunicação via Server-Sent Events
+3. **Registro dinâmico de ferramentas** - ferramentas expostas por servidores MCP são automaticamente registradas no sistema de tools do Stupidex com prefixo `mcp_<server>_<tool>`
+4. **Leitura de recursos** - a tool `read_mcp_resource` permite que agentes leiam recursos expostos por servidores MCP (arquivos, schemas, etc.)
 
-**Example** is a minimal reference server for testing and learning. Agents can use `mcp_example_echo` to verify MCP connectivity.
+### Servidores Padrão
 
-Agents can use Context7 tools (`mcp_context7_resolve-library-id`, `mcp_context7_query-docs`) to fetch fresh docs during code generation and exploration.
+| Servidor | Descrição |
+|----------|-----------|
+| **context7** | Documentação atualizada e versionada de bibliotecas/frameworks via `@upstash/context7-mcp` |
+| **example** | Servidor de exemplo mínimo bundled (tool `echo` + resource `example://stupidex`) |
 
-### Configuration
-
-MCP servers are configured under `mcp_servers` in `~/.stupidex/config.json`:
+### Configuração
 
 ```json
 {
@@ -469,382 +352,505 @@ MCP servers are configured under `mcp_servers` in `~/.stupidex/config.json`:
 }
 ```
 
-**stdio servers** use `command` (string) + `args` (list, optional) + `env` (object, optional). **HTTP/SSE servers** use `url`.
+Servidores HTTP/SSE usam `url` no lugar de `command`/`args`.
 
-Project-level config (`.stupidex.json`) merges with home config — project entries override same-name home entries.
+---
 
-### Agent Access
+## RAG (Retrieval-Augmented Generation)
 
-Agents access MCP tools through `allowed_tools` glob patterns in their `AGENT.md`:
+### Estratégia
 
-```yaml
-allowed_tools:
-  - mcp_context7_*    # All Context7 tools
-  - mcp_*             # All MCP tools
+O Stupidex implementa um pipeline RAG completo para busca semântica no código do projeto. A estratégia segue o fluxo:
+
+```
+Projeto → Scanner → Chunker → Embedder → Vector Store → Query
 ```
 
-### Available Tools
+### Pipeline Detalhado
 
-Each MCP server's tools are registered as `mcp_<server_name>_<tool_name>`. Server names must match `[a-z0-9-]+`.
+1. **File Discovery** - varre o projeto respeitando `ignored_dirs`, inclui extensões de código fonte (`.py`, `.ts`, `.tsx`, `.js`, `.md`, `.yaml`, `.toml`, `.json`, etc.) e exclui binários (`.pyc`, `.so`, `.dll`)
+2. **Chunking inteligente** - arquivos são divididos em chunks por linhas, com quebra em linhas em branco (respeita limites naturais do código). Configurável via `rag_chunk_size` (default: 2000 caracteres) e `rag_chunk_overlap` (default: 200 caracteres)
+3. **Embedding** - cada chunk é convertido em vetor numérico via modelo de embedding
+4. **Armazenamento** - vetores são armazenados em disco com numpy + SQLite
+5. **Busca por similaridade** - na consulta, o texto do usuário é embedado com o mesmo modelo e busca-se os K vizinhos mais próximos por similaridade de cosseno
+6. **Resultados** - retorna trechos de código com caminho do arquivo, linhas e score de relevância
 
-The `read_mcp_resource` meta-tool lets agents read resources exposed by MCP servers (files, schemas, etc.) by URI.
+### Funcionalidades Extras
 
-### Bundled Example Server
+- **Indexação automática** - arquivos editados/criados via `edit`/`write` tools são automaticamente reindexados
+- **Sidebar com status** - o painel lateral exibe data e duração da última indexação
+- **Comandos** - `/index-rag` para reindexar, `/rag status` para ver status, `/rag clear` para limpar
 
-A minimal example server is included for development and testing:
+---
+
+## Origem e Natureza da Base de Conhecimento
+
+A base de conhecimento do RAG é **o próprio código-fonte do projeto do usuário**. Não há uma base externa pré-carregada - o sistema indexa dinamicamente qualquer projeto onde é executado.
+
+**Natureza da base:**
+- Código fonte nas linguagens suportadas (Python, TypeScript, JavaScript, TSX, etc.)
+- Arquivos de configuração (YAML, TOML, JSON)
+- Documentação (Markdown, TXT)
+- Scripts shell
+
+**Extensões incluídas:**
+```
+.py, .ts, .tsx, .js, .jsx, .md, .txt, .yaml, .yml, .toml, .json, .sql, .sh,
+.rs, .go, .java, .c, .cpp, .h, .hpp, .css, .html, .rb, .php, .swift, .kt
+```
+
+**Extensões ignoradas:** `.pyc`, `.pyo`, `.pyd`, `.so`, `.dll`, `.exe`
+
+**Diretórios ignorados (default):** `.git`, `.svn`, `node_modules`, `__pycache__`, `venv`, `.venv`, `env`, `.env`, `dist`, `build`, `.tox`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`
+
+---
+
+## Tecnologia de Embeddings e Armazenamento Vetorial
+
+### Embeddings
+
+O sistema usa **fastembed** (da Qdrant) como mecanismo de embedding local padrão:
+
+- **Modelo padrão:** `BAAI/bge-small-en-v1.5` - modelo BGE da BAAI (384 dimensões, ~77 MB)
+- **Execução:** ONNX Runtime - inferência local, sem necessidade de GPU ou API externa
+- **Download automático:** o modelo é baixado na primeira execução e cacheado localmente
+- **Alternativas suportadas:**
+  - `BAAI/bge-base-en-v1.5` (768 dims, ~430 MB, melhor qualidade)
+  - `sentence-transformers/all-MiniLM-L6-v2` (384 dims, ~80 MB)
+  - `nomic-ai/nomic-embed-text-v1.5-Q` (768 dims, ~550 MB, multilíngue)
+
+O sistema também suporta provedores de embedding remotos via API configurando `rag_embedding_model` com formato `provedor/model`.
+
+### Armazenamento Vetorial
+
+O armazenamento vetorial é **caseiro (custom)**, usando:
+
+| Componente | Tecnologia |
+|------------|-----------|
+| **Vetores** | `numpy` - arquivo `.npy` no disco (.stupidex/rag/vectors.npy) |
+| **Metadados** | `SQLite` - chunks, arquivos, status da indexação (.stupidex/rag/index.db) |
+| **Busca** | Similaridade de cosseno (produto escalar normalizado) - KNN simples em memória |
+
+**Localização do índice:** `.stupidex/rag/` dentro do diretório do projeto.
+
+Essa abordagem foi escolhida por:
+- Zero dependências externas (sem ChromaDB, FAISS, Weaviate, Pinecone)
+- Leve e rápido para projetos de pequeno/médio porte
+- Portátil - o índice pode ser recriado a qualquer momento
+
+---
+
+## Modelo Local Utilizado
+
+### Provedor Padrão (primeira execução)
+
+Na primeira execução, o Stupidex configura automaticamente um provedor que se conecta ao **OpenCode.ai** (API compatível com OpenAI), isso foi feito pois por padrão estavamos usando ele para testes e melhorias sem necessitar rodar um modelo local, com o modelo escolhido padrão sendo o MiMo V2.5:
+
+```json
+{
+  "providers": {
+    "default": {
+      "base_url": "https://opencode.ai/zen/go/v1",
+      "litellm_provider": "openai",
+      "models": {
+        "mimo-v2.5": {}
+      }
+    }
+  },
+  "default_model": "default/mimo-v2.5"
+}
+```
+
+### Modelo Local
+
+Entretanto, MiMo é [extremamente pesado](https://huggingface.co/unsloth/MiMo-V2.5-GGUF), necessitando de 620GB de VRAM para rodar em 16 bits ou 192GB em Q4.
+
+Para modelo local mais recomendado para as tarefas desse projeto, sendo programação, recomendamos e testamos o **Qwen 3.6 35B A3B**, um modelo que necessita de no mínimo 17.7GB para rodar (Sendo VRAM + RAM) em Q4.
+
+Imortante: Dependendo do seu hardware e o meio de rodar modelos locais decidido não será possível rodar múltiplos modelos simultaneos, assim todos os tiers tendo o mesmo modelo e não fazerem diferença.
+
+Para execução local, por exemplo, fazendo o uso do Ollama para esse modelo a configuração seria a seguinte:
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434/v1",
+      "litellm_provider": "openai",
+      "models": {
+        "qwen3.6:35b-a3b": {"max_input_tokens": 262144}
+      }
+    }
+  },
+  "default_model": "ollama/qwen3.6:35b-a3b",
+  "tier_models": {
+    "tolo": "ollama/qwen3.6:35b-a3b",
+    "tainha": "ollama/qwen3.6:35b-a3b",
+    "papudo": "ollama/qwen3.6:35b-a3b",
+    "papaca": "ollama/qwen3.6:35b-a3b"
+  }
+}
+```
+
+### Como Executar o Modelo Local
+
+Ollama, LM Studio e Unsloth Studio tem IDs diferentes para o mesmo modelo, altere a sua configuração com o ID correto para cada um.
+
+#### Opção 1: Ollama
 
 ```bash
-python -m stupidex.mcp.example_server
+# Instale o Ollama
+# curl -fsSL https://ollama.com/install.sh | sh
+
+# Baixe o Qwen3.6 35B-A3B
+ollama pull qwen3.6:35b-a3b
+
+# Inicie o servidor Ollama
+ollama serve
 ```
 
-Exposes one tool (`echo`) and one resource (`example://stupidex`).
+#### Opção 2: Unsloth Studio
 
-## Linting
-
-The project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
-Configuration is in `pyproject.toml`:
-
-- **Target**: Python 3.11
-- **Line length**: 120
-- **Rules**: `E`, `F`, `I`, `N`, `W`, `UP`, `B`, `SIM` (with `E501` and `SIM105` ignored)
-
-Run locally:
+[Unsloth Studio](https://unsloth.ai/docs/models/qwen3.5) é uma UI web open-source para rodar modelos localmente. Suporta download e execução de GGUFs com llama.cpp, tool calling com auto-recuperação e busca web.
 
 ```bash
-ruff check src/        # lint
-ruff check src/ --fix  # auto-fix
+# Instale o Unsloth
+# curl -fsSL https://unsloth.ai/install.sh | sh
+
+# Inicie o Unsloth Studio
+unsloth studio -H 0.0.0.0 -p 8888
+
+# Abra http://localhost:8888 no navegador e busque por "Qwen3.6" para baixar e rodar
 ```
 
-Linting runs automatically on push/PR to `main` via GitHub Actions (`.github/workflows/lint.yml`).
+#### Opção 3: LM Studio
 
-**VSCode**: Install the [Ruff extension](https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff), the `.vscode/settings.json` is already configured for format-on-save and auto-fix on save.
+[LM Studio](https://lmstudio.ai/models/qwen/qwen3.6-35b-a3b) oferece uma interface gráfica para download e execução de GGUFs com suporte a toggle de thinking/non-thinking.
 
-## Development
+1. Baixe o [LM Studio](https://lmstudio.ai/download)
+2. Na busca de modelos, procure por `unsloth/qwen3.6` e baixe o GGUF desejado
+3. Configure os parâmetros recomendados:
+   - **Thinking mode (codificação):** temperatura=0.6, top_p=0.95, top_k=20, min_p=0.0
+   - **Non-thinking mode:** temperatura=0.7, top_p=0.8, top_k=20, min_p=0.0
+4. Carregue o modelo e ative o toggle de thinking se necessário
 
-The project uses the `src` layout:
+
+O Stupidex usa o **litellm** como camada de abstração, que se comunica com APIs compatíveis com OpenAI. Qualquer modelo servido via Ollama, Unsloth Studio ou LM Studio pode ser usado sem código adicional.
+
+---
+
+## Dependências do Projeto
+
+### Produção
+
+| Dependência |Finalidade |
+|-------------|------------|
+| `textual` | Interface TUI (Textual User Interface) no terminal |
+| `litellm` | Abstração de provedores LLM (OpenAI, Anthropic, Ollama, etc.) |
+| `httpx` | Requisições HTTP assíncronas |
+| `html2text` | Conversão de HTML para Markdown (web_fetch) |
+| `aiofiles` | Operações de arquivo assíncronas |
+| `numpy` | Armazenamento e busca vetorial (similaridade de cosseno) |
+| `fastembed` | Embeddings locais via ONNX Runtime (RAG) |
+| `mcp` | Model Context Protocol - cliente para servidores de ferramentas externas |
+| `tree-sitter` | Parser AST para análise estrutural de código |
+| `tree-sitter-language-pack` | Gramáticas tree-sitter para Python, JavaScript, TypeScript, TSX |
+
+### Desenvolvimento
+
+| Dependência | Finalidade |
+|-------------|------------|
+| `ruff` | Linter e formatador |
+| `pytest` | Testes |
+| `pytest-asyncio` | Suporte a testes assíncronos |
+
+### Requisitos de Sistema
+
+- **Python 3.11+**
+- **Ollama** (opcional, para modelos locais) - [ollama.com](https://ollama.com/)
+- **Node.js/npx** (opcional, para servidor MCP Context7) - [nodejs.org](https://nodejs.org/)
+
+---
+
+## Instalação e Execução
+
+### 1. Clone o Repositório
+
+```bash
+git clone https://github.com/Zeptiny/stupidex.git
+cd stupidex
+```
+
+### 2. Crie e Ative um Ambiente Virtual
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Linux/Mac
+# .venv\Scripts\activate    # Windows
+```
+
+### 3. Instale o Pacote (Modo Editable)
+
+```bash
+pip install -e .
+```
+
+Isso instala todas as dependências e cria o comando `stupidex`.
+
+### 4. Configure os Provedores LLM
+
+Execute `stupidex` uma vez para criar os arquivos de configuração e transferir os agentes, personalidades e skills.
+Depois edite `~/.stupidex/config.json` para configurar os seus provedores.
+
+**Exemplo com Ollama (local):**
+```json
+{
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434/v1",
+      "litellm_provider": "openai",
+      "models": {
+        "qwen3.6:35b-a3b": {"max_input_tokens": 262144}
+      }
+    }
+  },
+  "default_model": "ollama/qwen3.6:35b-a3b",
+  "tier_models": {
+    "tolo": "ollama/qwen3.6:35b-a3b",
+    "tainha": "ollama/qwen3.6:35b-a3b",
+    "papudo": "ollama/qwen3.6:35b-a3b",
+    "papaca": "ollama/qwen3.6:35b-a3b"
+  }
+}
+```
+
+**Exemplo com OpenAI:**
+```json
+{
+  "providers": {
+    "openai": {
+      "litellm_provider": "openai",
+      "api_key_env": "OPENAI_API_KEY",
+      "models": {
+        "gpt-5.5": {},
+        "gpt-5.4": {},
+        "gpt-5.4-mini": {},
+        "gpt-5.4-nano": {}
+      }
+    }
+  },
+  "default_model": "openai/gpt-5.5",
+  "tier_models": {
+    "tolo": "openai/gpt-5.4-nano",
+    "tainha": "openai/gpt-5.4-mini",
+    "papudo": "openai/gpt-5.4",
+    "papaca": "openai/gpt-5.5"
+  }
+}
+```
+
+### 5. (Opcional) Configure o Modelo Local (Ollama)
+
+```bash
+# Instale o Ollama
+# curl -fsSL https://ollama.com/install.sh | sh
+
+# Baixe o Qwen3.6 35B-A3B
+ollama pull qwen3.6:35b-a3b
+
+# Inicie o servidor Ollama
+ollama serve
+```
+
+### 6. Execute o Stupidex
+
+```bash
+stupidex
+```
+
+Ou definindo a chave da API como variável de ambiente:
+
+```bash
+OPENAI_API_KEY="sua-chave-aqui" stupidex
+```
+
+### Linting
+
+```bash
+ruff check src/          # Verificar lint
+ruff check src/ --fix    # Auto-corrigir
+```
+
+---
+
+## Exemplos de Uso pelo Terminal
+
+### Iniciar Sessão
+
+```bash
+stupidex
+```
+
+Isso abre a interface TUI com:
+- Painel de mensagens (esquerda)
+- Sidebar com informações se contexto, subagents, MCP configurados, Todos, status de AST e RAG e o diretório atual.
+- Input de texto para comandos
+
+### Comandos da Paleta (Ctrl+P)
+
+| Comando | Descrição |
+|---------|-----------|
+| `/new` | Nova sessão |
+| `/sessions` | Alternar entre sessões |
+| `/raname` | Renomear sessão atual |
+| `/delete` | Deletar sessão |
+| `/model` | Trocar modelo da sessão atual |
+| `/theme` | Trocar tema da aplicação |
+| `/personality` | Trocar personalidade do agente |
+| `/index-rag` | Indexar o projeto para busca semântica |
+| `/index-ast` | Re-escanear projeto para índice AST |
+| `/rag status` | Status do índice RAG |
+| `/rag clear` | Limpar índice RAG |
+
+### Atalhos de Teclado
+
+| Atalho | Ação |
+|--------|------|
+| `Ctrl+P` | Abrir paleta de comandos |
+| `Ctrl+S` | Enviar input |
+| `Ctrl+C` | Limpar input |
+| `Ctrl+B` | Alternar foco entre input e sidebar |
+| `Escape` | Interromper agente/subagentes |
+| `↑` / `↓` | Navegar na sidebar (quando focada) |
+| `Enter` / `Space` | Ativar entrada ou expandir seção colapsável |
+
+### Exemplo de Uso: Indexar Projeto e Buscar Código
+
+1. Abra o Stupidex: `stupidex`
+2. Pressione `Ctrl+P`, digite `/index-rag` e pressione Enter
+3. Aguarde a indexação (o sidebar mostra o progresso)
+4. Na conversa, pergunte algo como:
+   ```
+   "Encontre onde o MCPManager é inicializado, faça uso do RAG"
+   ```
+
+### Exemplo de Uso: Code Review
+
+1. Após fazer alterações no código, peça:
+   ```
+   "Revise as mudanças que eu fiz"
+   ```
+2. O agente carrega a skill `code-review`, que dispara revisores em paralelo
+3. Os resultados aparecem consolidados na interface
+
+### Exemplo de Uso: Implementar Funcionalidade
+
+```
+"Me ajude a fazer o brainstorm de uma tool de cálculo de distância entre dois pontos no arquivo tools/math.py"
+```
+
+O agente ajuda no brainstorm, planeja, implementa e pode revisar o código.
+
+### Temas Disponíveis
+
+Troque com `/theme` (Ctrl+P → `/theme`):
+
+| Tema | Descrição |
+|------|-----------|
+| `default` | Escuro (Textual dark) |
+| `solarized-light` | Solarized light |
+| `bluey` | Azulado |
+| `windows_xp` | Inspirado no Windows XP |
+| `green_terminal` | Terminal monocromático verde |
+
+---
+
+## Estrutura do Projeto
 
 ```
 pyproject.toml
 src/
   stupidex/
-    main.py                    # entry point
+    main.py                    # Entry point
     app.py                     # Textual App class, UI lifecycle
-    main.tcss                  # styles
-    utils.py                   # Shared utilities (frontmatter parsing, directory tree)
-    agents/                    # Agent system
-      __init__.py              # Agent registry and loading
-      manager.py               # Subagent Manager
-      defaults/                # Default agent definitions
-    skills/                    # Skill system
-      __init__.py              # Skill registry and loading
-      defaults/                # Default skill definitions
-    domain/                    # Core domain models
-      message.py               # Message, MessageRole, MessageType, Usage
+    config.py                  # Gerenciamento de configuração
+    utils.py                   # Utilitários (frontmatter, directory tree)
+    storage.py                 # Persistência de sessões
+    agents/                    # Sistema de agentes
+      __init__.py              # Registro e carregamento
+      manager.py               # Gerenciador de subagentes
+      defaults/                # Definições padrão dos agentes
+    skills/                    # Sistema de skills
+      __init__.py              # Registro e carregamento
+      defaults/                # Definições padrão das skills
+    domain/                    # Modelos de domínio
+      agent.py                 # Agent, AgentTypes, ModelTier
+      message.py               # Message, MessageRole, Usage
       session.py               # Session, SessionManager
       tool.py                  # Tool, ExecutorResult
-      agent.py                 # Agent, AgentTypes, ModelTier
       skill.py                 # Skill
-    llm/
-      client.py                # LLM streaming logic
-      providers.py              # Provider resolution + model metadata hydration
-      dynamic_system_prompt.py # Dynamic system prompt generation
-      static_system_prompt.py  # Static system prompt provider
-    screens/
-      session_picker.py        # session selection screen
-      model_picker.py          # model selection screen
-    commands/
-      session_commands.py      # commands provider
-    tools/                     # Tool implementations
+      chain.py                 # Chain (sequência de ações)
+      todo.py                  # Sistema de tarefas
+    llm/                       # Integração LLM
+      client.py                # Streaming e chamadas
+      providers.py             # Resolução e metadata
+      dynamic_system_prompt.py # Prompt dinâmico
+      static_system_prompt.py  # Prompt estático
+    rag/                       # Pipeline RAG
+      chunker.py               # Chunking inteligente
+      embedder.py              # Abstração de embeddings
+      indexer.py               # Orquestrador de indexação
+      store.py                 # SQLite + numpy vector store
+    ast/                       # Ferramentas AST
+      parser.py                # Tree-sitter lazy loader
+      store.py                 # Índice de símbolos (SQLite)
+      indexer.py               # Walk + parse + extração
+      symbols.py               # Dataclass Symbol
+      queries/                 # Queries tree-sitter por linguagem
+    mcp/                       # Cliente MCP
+      __init__.py              # MCPManager, lifecycle
+      schema.py                # Conversão de schemas
+      example_server.py        # Servidor exemplo bundled
+    tools/                     # Implementação das tools
       file_manipulation.py     # read, write, edit, glob, read_directory
       search.py                # grep
       exec.py                  # execute_command
-      subagent.py              # subagent management tools
-      skill.py                 # skill and list_skills tools
-      rag.py                   # RAG index/search tool
-      ast.py                   # AST tools (skeleton, function, references, replace, rename)
-      mcp_resource.py          # MCP resource read tool
-    mcp/                       # MCP client
-      __init__.py              # MCPManager, lifecycle, ContextVar accessor
-      schema.py                # MCP tool schema conversion
-      example_server.py        # Bundled example MCP server
-    rag/                       # RAG pipeline
-      chunker.py               # Language-aware file chunking
-      embedder.py              # Embedding provider abstraction
-      indexer.py               # Project indexing orchestrator
-      store.py                 # SQLite + numpy vector store
-    ast/                       # AST tools subsystem
-      parser.py                # Tree-sitter lazy loader + query cache
-      store.py                 # AST symbol index (SQLite + WAL)
-      indexer.py               # Walk + parse + symbol extract + hash
-      symbols.py               # Symbol dataclass
-      queries/
-        python.scm             # S-expression query for Python
-        javascript.scm         # S-expression query for JavaScript
-        typescript.scm         # S-expression query for TypeScript (reused by TSX)
-    widgets/
-      message_widget.py        # Textual widgets for messages
-      sidebar.py               # Right sidebar
+      subagent.py              # delegate_to_subagent etc.
+      skill.py                 # skill, list_skills
+      rag.py                   # rag_search, rag_index
+      ast.py                   # get_file_skeleton etc.
+      mcp_resource.py          # read_mcp_resource
+      todo.py                  # todo_create etc.
+      web_fetch.py             # web_fetch
+    screens/                   # Telas TUI
+      picker.py                # Seletor genérico
+      input_modal.py           # Modal de input
+    widgets/                   # Widgets TUI
+      message_widget.py        # Widgets de mensagem
+      sidebar.py               # Sidebar direita
+      command_picker.py        # Picker de comandos
+      subagent_ui.py           # UI de subagentes
+    themes/                    # Sistema de temas
+      __init__.py
+      registry.py              # Registro de temas
+    personality/               # Personalidades
+      __init__.py
+      defaults/
+tests/                         # Testes
 ```
-
-## Providers
-
-Stupidex supports multiple LLM providers simultaneously. Each provider is an entry under the `providers` key in `~/.stupidex/config.json`, identified by an alias. Model references throughout the config use the `alias/model` format (e.g. `"default/mimo-v2.5"`) so the routing layer knows which provider to use for each call.
-
-### Provider Entry Fields
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `base_url` | No | Endpoint URL. Omit for native providers (e.g. `anthropic`) where litellm supplies the URL. |
-| `litellm_provider` | No | litellm provider name (e.g. `"openai"`, `"anthropic"`, `"azure"`). Used to route the call and look up model metadata. |
-| `api_key` | No | Literal API key. Mutually exclusive with `api_key_env` (if both set, `api_key_env` is dropped). |
-| `api_key_env` | No | Name of an env var holding the API key (e.g. `"OPENAI_API_KEY"`). |
-| `models` | No | Dict of `{model_id: {override_fields}}`. Declares which models appear in the `/model` picker. Resolution still works for undeclared models. |
-
-If neither `api_key` nor `api_key_env` is set, litellm falls back to its own env detection (e.g. `OPENAI_API_KEY`).
-
-**Per-model metadata overrides** (optional, inside each model entry):
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `max_input_tokens` | int | Override litellm's registry value for context window display. |
-| `max_output_tokens` | int | Override litellm's registry value for max output display. |
-| `supports_vision` | bool | Force vision badge on/off in the picker. |
-| `mode` | str | Force mode (`"chat"`, `"completion"`, `"embedding"`, etc.). |
-| `litellm_provider` | str | Override the provider-level `litellm_provider` for this model only (used for litellm lookups, not displayed). |
-
-Metadata is resolved by field-level merge: your override wins, litellm's registry fills gaps, text-only defaults cover the rest. Unknown models fall back gracefully to `supports_vision=false`, `mode="chat"`.
-
-### Default Config (first run)
-
-A fresh install seeds a single `default` provider so the app works without any config edits:
-
-```json
-{
-  "providers": {
-    "default": {
-      "base_url": "https://opencode.ai/zen/go/v1",
-      "litellm_provider": "openai",
-      "models": {
-        "mimo-v2.5": {}
-      }
-    }
-  },
-  "default_model": "default/mimo-v2.5",
-  "tier_models": {
-    "tolo": "default/mimo-v2.5",
-    "tainha": "default/mimo-v2.5",
-    "papudo": "default/mimo-v2.5",
-    "papaca": "default/mimo-v2.5"
-  }
-}
-```
-
-### Examples
-
-**OpenAI with an inline API key:**
-
-```json
-{
-  "providers": {
-    "openai-prod": {
-      "litellm_provider": "openai",
-      "api_key": "sk-your-key-here",
-      "models": {
-        "gpt-4o": {},
-        "gpt-4o-mini": {}
-      }
-    }
-  },
-  "default_model": "openai-prod/gpt-4o"
-}
-```
-
-**OpenAI with an env-var reference (recommended — no secrets in config files):**
-
-```json
-{
-  "providers": {
-    "openai-prod": {
-      "litellm_provider": "openai",
-      "api_key_env": "OPENAI_API_KEY",
-      "models": {
-        "gpt-4o": {},
-        "gpt-4o-mini": {}
-      }
-    }
-  }
-}
-```
-
-```bash
-export OPENAI_API_KEY="sk-your-key-here"
-stupidex
-```
-
-**Local Ollama (no API key, OpenAI-compatible endpoint):**
-
-```json
-{
-  "providers": {
-    "ollama": {
-      "base_url": "http://localhost:11434/v1",
-      "litellm_provider": "openai",
-      "models": {
-        "llama3.1:70b": {"max_input_tokens": 131072, "supports_vision": false},
-        "qwen2.5-coder:32b": {"max_input_tokens": 32768}
-      }
-    }
-  },
-  "default_model": "ollama/llama3.1:70b"
-}
-```
-
-**Multiple providers (mix of cloud + local):**
-
-```json
-{
-  "providers": {
-    "openai-prod": {
-      "litellm_provider": "openai",
-      "api_key_env": "OPENAI_API_KEY",
-      "models": {
-        "gpt-4o": {"supports_vision": true, "max_output_tokens": 16384},
-        "gpt-4o-mini": {}
-      }
-    },
-    "ollama": {
-      "base_url": "http://localhost:11434/v1",
-      "litellm_provider": "openai",
-      "models": {
-        "llama3.1:70b": {"max_input_tokens": 131072}
-      }
-    }
-  },
-  "default_model": "openai-prod/gpt-4o",
-  "tier_models": {
-    "tolo": "ollama/llama3.1:70b",
-    "tainha": "ollama/llama3.1:70b",
-    "papudo": "openai-prod/gpt-4o-mini",
-    "papaca": "openai-prod/gpt-4o"
-  }
-}
-```
-
-**Project-level override (`.stupidex.json` in your project root):**
-
-Project config deep-merges with home config. Project providers with the same alias override the home entry; new aliases are added. This lets you add a single model to a provider without clobbering the rest:
-
-```json
-{
-  "providers": {
-    "openai-prod": {
-      "models": {
-        "gpt-4o": {"max_input_tokens": 32768}
-      }
-    }
-  }
-}
-```
-
-This merges into the home `openai-prod` provider — `gpt-4o` gets the override, `gpt-4o-mini` is preserved.
-
-### Model Picker
-
-Run `/model` (Ctrl+P → `/model`) to see all configured models across all providers. Each entry shows:
-
-- `alias/model_id` — the reference used internally
-- `[vision]` badge — if the model supports vision
-- `[text]` badge — if the model mode is `chat` or `completion`
-- `128k→16k` — token shorthand (input→output) when metadata is available
-
-**Hybrid discovery (R10).** When a provider entry omits the `models` dict (or leaves it empty), the picker falls back to fetching the provider's `GET /models` endpoint. Well-known models still get badges + token shorthand from litellm's registry; unknown ones appear with `[text]` only. Discovery is cached per-session per-alias; network failures yield an empty list (the picker degrades to "no models for this provider" instead of crashing).
-
-Set `STUPIDEX_DISABLE_MODEL_DISCOVERY=1` (or `true` / `yes`) to enforce strict configured-only behavior — useful for offline use or when you want to limit which models the agent can switch to.
-
-### RAG Embeddings
-
-RAG uses the same `alias/model` format via `rag_embedding_model`. The built-in `fastembed` pseudo-provider handles local ONNX embeddings — see the [RAG](#rag-retrieval-augmented-generation) section for details.
-
-### Reserved Aliases
-
-| Alias | Behavior |
-|-------|----------|
-| `fastembed` | Reserved for the built-in local ONNX embedding pseudo-provider. Cannot be used as a user-defined provider alias. |
-
-Provider aliases must match `[a-z0-9-]+` (no `/`, underscores, or uppercase).
 
 ---
 
-## Configuration
+## Gerenciamento de Conhecimento
 
-**Location:** `~/.stupidex/config.json`
+O Stupidex inclui um sistema de **compounding de conhecimento** para evitar que problemas resolvidos sejam redescobertos:
 
-See [Providers](#providers) for the full schema and examples. A minimal config:
-
-```json
-{
-  "providers": {
-    "default": {
-      "base_url": "https://opencode.ai/zen/go/v1",
-      "litellm_provider": "openai",
-      "models": {
-        "mimo-v2.5": {}
-      }
-    }
-  },
-  "default_model": "default/mimo-v2.5",
-  "tier_models": {
-    "tolo": "default/mimo-v2.5",
-    "tainha": "default/mimo-v2.5",
-    "papudo": "default/mimo-v2.5",
-    "papaca": "default/mimo-v2.5"
-  },
-  "rag_embedding_model": "fastembed/BAAI/bge-small-en-v1.5",
-  "mcp_servers": {
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
-    }
-  }
-}
-```
-
-Project-level config: `.stupidex.json` (deep-merges with home config — project entries override same-name home entries, new entries are added).
-
-## TODO - In priority order
-- Sandboxing for shell command execution, file operations, and project-level config/agent/skill overrides
-  - Arbitrary shell command execution with no sandboxing or allowlist (exec.py)
-  - Unrestricted file read/write/edit to arbitrary paths including sensitive system files (file_manipulation.py)
-  - 24 bare `except Exception` blocks that silently swallow errors across app.py
-  - `write` tool creates arbitrary directory trees with `mkdir(parents=True)` (file_manipulation.py)
-  - Error messages leak command strings and file paths in tool execution errors (exec.py)
-- Concurrency control for file locking
-- LSP
-- Approval / permission system
-- AGENTS.md handling
-  - Also /init command for it
-- ask_question tool
-
-## Subagents
-- BTW/Side agent (Ask a question without interrupting the main flow)
-
-## Needs improvement
-- Bug: Automatically scrolling down after a message is finished
-- Multiple main agent types (General, plan, etc.) that can be switched during the conversation
-- Fuzzy matching on edit tool
-- Resolve supplied path in tool to avoid modifying/reading files out of the workspace
-  - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
-- Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
-- Message queue for the user
-- Bug: Sidebar rag and ast indexed time are not updated regularly, going stale
-- Bug: The agent seems to repeat actions, is it getting confused by what he has done?
-
-# Considerations
-- Make the read tool usable with directories?
-- Remove the list_subagents tool?
-- Remove the list_skills tool?
-
-# Some ground rules
-- Absolute imports only
-- Domain driven structure
-- Follow ruff linting (Please)
+- **`docs/solutions/`** - Aprendizados estruturados com YAML frontmatter, organizados por categoria:
+  - `developer-experience/` - Setup, CI, ferramentas
+  - `integrations/` - Compatibilidade entre plataformas
+  - `workflow/` - Padrões de design de agentes/skills
+  - `skill-design/` - Padrões de arquitetura de plugins
+- **`CONCEPTS.md`** - Vocabulário de domínio compartilhado entre agentes
+- **`learnings-researcher`** - Agente especializado em buscar soluções anteriores
+- **`compound`** - Skill para documentar novas soluções
+- **`compound-refresh`** - Skill para manter e atualizar documentação existente
