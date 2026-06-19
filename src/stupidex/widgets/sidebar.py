@@ -138,11 +138,8 @@ class Sidebar(Vertical):
         text-style: bold;
     }
 
-    Sidebar #subagent-entries {
-        height: auto;
-        padding: 0 0;
-    }
-
+    Sidebar #subagent-entries,
+    Sidebar #mcp-entries,
     Sidebar #todo-entries {
         height: auto;
         padding: 0 0;
@@ -199,6 +196,10 @@ class Sidebar(Vertical):
         color: $text-muted;
         text-style: dim;
     }
+
+    Sidebar #sidebar-spacer {
+        height: 1fr;
+    }
     """
 
     _prompt_tokens: int = 0
@@ -223,12 +224,13 @@ class Sidebar(Vertical):
         yield Vertical(id="subagent-entries")
         yield Static("MCP Servers", id="sidebar-mcp-label")
         yield Vertical(id="mcp-entries")
-        yield Static("RAG", id="sidebar-rag-label")
-        yield Static("", id="rag-status")
-        yield Static("AST", id="sidebar-ast-label")
-        yield Static("", id="ast-status")
         yield Static("Todos", id="sidebar-todos-label")
         yield Vertical(id="todo-entries")
+        yield Static(id="sidebar-spacer")
+        yield Static("AST", id="sidebar-ast-label")
+        yield Static("", id="ast-status")
+        yield Static("RAG", id="sidebar-rag-label")
+        yield Static("", id="rag-status")
         yield Static(self._get_working_dir(), id="working-directory")
 
     def _get_working_dir(self) -> str:
