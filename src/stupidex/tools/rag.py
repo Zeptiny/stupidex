@@ -11,6 +11,12 @@ from stupidex.rag.store import RAGStore
 
 logger = logging.getLogger(__name__)
 
+# Register the RAG indexer's update_file so edit/write tools keep the RAG store in sync.
+from stupidex.rag.indexer import update_file as _rag_update_file  # noqa: E402
+from stupidex.tools.ast import post_write_callbacks  # noqa: E402
+
+post_write_callbacks.append(_rag_update_file)
+
 rag_search_tool = Tool(
     name="rag_search",
     description="Search codebase semantically. Returns code snippets ranked by semantic relevance. Use when grep/glob are insufficient for finding concepts by meaning rather than exact text.",

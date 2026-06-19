@@ -25,6 +25,11 @@ allowed_tools:
   - todo_list
   - todo_update
   - todo_delete
+  - get_file_skeleton
+  - get_function
+  - find_symbol_references
+  - replace_symbol
+  - rename_symbol
 allowed_skills:
   - '*'
 ---

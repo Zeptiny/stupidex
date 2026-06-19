@@ -12,7 +12,7 @@
 - [x] Pipeline RAG: ingestão -> Embedding -> busca -> resposta
 - [x] Vector store (ChromeDB/FAISS) com embedding reais
 - [x] Mínimo 3 tools disponíveis e funcionais para os agentes
-  - O projeto conta com 19 tools configuráveis por agente
+  - O projeto conta com 25 tools configuráveis por agente
 - [x] Interface CLI testável - fluxo demonstrável em terminal
   - A interface é feita com Textual e o usuário tem acesso a todo o fluxo de todos os agentes
 - [x] Repositório GiHub público com código completo
@@ -55,6 +55,33 @@ Per-provider keys can also be configured inline or via a named env var — see [
 | `Escape` | Interrupt agent / subagents |
 | `↑` / `↓` | Navigate sidebar entries (when sidebar is focused) |
 | `Enter` / `Space` | Activate sidebar entry or toggle collapsible section |
+
+## Commands
+
+Session commands are available via the command palette (`Ctrl+P`):
+
+| Command | Description |
+|---------|-------------|
+| `/new` | Start a new session |
+| `/switch` | Switch to another session |
+| `/delete` | Delete a session |
+| `/model` | Change the model for the current session |
+| `/theme` | Switch the application theme |
+| `/personality` | Switch the agent personality |
+| `/index-rag` | Index the project for RAG semantic search |
+| `/index-ast` | Re-scan the project for AST symbol indexing |
+| `/rag status` | Show RAG index status |
+| `/rag clear` | Clear the RAG index |
+
+### Available Themes
+
+| Theme | Description |
+|-------|-------------|
+| `default` | Dark theme (Textual dark) |
+| `solarized-light` | Solarized light color scheme |
+| `bluey` | Blue-toned theme |
+| `windows_xp` | Windows XP-inspired theme |
+| `green_terminal` | Green monochrome terminal theme |
 
 ## Agents
 
@@ -263,6 +290,11 @@ Available tools for agents:
 | `list_skills` | List available skills |
 | `rag_search` | Semantic code search |
 | `rag_index` | Index status, reindex, clear |
+| `get_file_skeleton` | Structural outline of a file (definitions only) |
+| `get_function` | Extract specific function with imports and class context |
+| `find_symbol_references` | Find all definitions and references for a symbol name |
+| `replace_symbol` | Replace an entire symbol definition (including docstring and decorators) |
+| `rename_symbol` | Rename a symbol across all files in one call |
 | `todo_create` | Create a task |
 | `todo_update` | Update task status/details |
 | `todo_list` | List tasks filtered by status |
@@ -278,8 +310,12 @@ The project includes a built-in RAG pipeline for code-aware semantic search. It 
 
 ```bash
 # Index the current project
-# In the command palette (Ctrl+P): /index
+# In the command palette (Ctrl+P): /index-rag
 ```
+
+The RAG index is also automatically updated when files are written or edited via the `write` and `edit` tools, so the index stays fresh without manual re-indexing.
+
+The sidebar displays the current RAG and AST index status, including last indexed time and duration. While indexing is in progress, it shows an "indexing..." indicator.
 
 The agents will use the rag tool ad needed
 
@@ -352,6 +388,55 @@ All RAG settings in `~/.stupidex/config.json`:
 | `rag_max_file_size` | `512000` | Skip files larger than this (bytes) |
 
 Environment variable overrides: `STUPIDEX_RAG_EMBEDDING_MODEL`, `STUPIDEX_RAG_CHUNK_SIZE`, `STUPIDEX_RAG_CHUNK_OVERLAP`, `STUPIDEX_RAG_TOP_K`, `STUPIDEX_RAG_MAX_FILE_SIZE`.
+
+## AST Tools
+
+The project includes AST-aware tools for structural code operations. These tools use [tree-sitter](https://tree-sitter.github.io/) to parse source files into syntax trees, enabling precise symbol extraction, cross-file references, and code transformations that text-based tools cannot reliably perform.
+
+### Supported Languages
+
+v1 supports **Python**, **JavaScript**, **TypeScript**, and **TSX**. TSX reuses the TypeScript grammar and query file.
+
+### Quick Start
+
+```bash
+# Index the project for AST symbol lookup
+# In the command palette (Ctrl+P): /index-ast
+```
+
+Index-dependent tools (`find_symbol_references`, `rename_symbol`) trigger a full project scan on first call automatically. Index-independent tools (`get_file_skeleton`, `get_function`) parse files directly without requiring an index.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_file_skeleton` | Returns a structural outline of a file — definition lines only, with visual separators. Useful for understanding file structure without reading the entire file. |
+| `get_function` | Extracts a specific function by name, with resolved imports and class context. Reports "no changes" when the function body hasn't changed since last retrieval. |
+| `find_symbol_references` | Finds all definitions and references for a symbol name across the project. Returns file paths and line/column ranges. |
+| `replace_symbol` | Replaces an entire symbol definition using extended AST ranges (includes preceding comments, docstrings, decorators, and export keywords). Applies multiple replacements atomically. |
+| `rename_symbol` | Renames an identifier across all files using line/column positions from the symbol index. Edits are applied atomically per file. |
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/index-ast` | Force a full re-scan of the project for AST symbol indexing. Use when the index is stale or after bulk file changes. |
+
+### Configuration
+
+AST settings in `~/.stupidex/config.json`:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `ast_max_file_size` | `1048576` | Skip files larger than this (bytes, 1 MB) |
+
+Environment variable override: `STUPIDEX_AST_MAX_FILE_SIZE`.
+
+The AST index is stored in `.stupidex/ast/symbols.db` (excluded from git via `.gitignore`). The `ignored_dirs` config field is shared with RAG — both subsystems skip the same directories.
+
+### Future Languages
+
+The following languages are planned for future releases: Rust, Go, C/C++, C#, Ruby, Java, PHP, Swift, Kotlin.
 
 ## MCP (Model Context Protocol)
 
@@ -476,6 +561,7 @@ src/
       subagent.py              # subagent management tools
       skill.py                 # skill and list_skills tools
       rag.py                   # RAG index/search tool
+      ast.py                   # AST tools (skeleton, function, references, replace, rename)
       mcp_resource.py          # MCP resource read tool
     mcp/                       # MCP client
       __init__.py              # MCPManager, lifecycle, ContextVar accessor
@@ -486,6 +572,15 @@ src/
       embedder.py              # Embedding provider abstraction
       indexer.py               # Project indexing orchestrator
       store.py                 # SQLite + numpy vector store
+    ast/                       # AST tools subsystem
+      parser.py                # Tree-sitter lazy loader + query cache
+      store.py                 # AST symbol index (SQLite + WAL)
+      indexer.py               # Walk + parse + symbol extract + hash
+      symbols.py               # Symbol dataclass
+      queries/
+        python.scm             # S-expression query for Python
+        javascript.scm         # S-expression query for JavaScript
+        typescript.scm         # S-expression query for TypeScript (reused by TSX)
     widgets/
       message_widget.py        # Textual widgets for messages
       sidebar.py               # Right sidebar
@@ -736,7 +831,6 @@ Project-level config: `.stupidex.json` (deep-merges with home config — project
 - BTW/Side agent (Ask a question without interrupting the main flow)
 
 ## Needs improvement
-- Support for Anthropic API (litellm already supports it; needs provider config + testing)
 - Bug: Automatically scrolling down after a message is finished
 - Multiple main agent types (General, plan, etc.) that can be switched during the conversation
 - Fuzzy matching on edit tool
@@ -744,7 +838,6 @@ Project-level config: `.stupidex.json` (deep-merges with home config — project
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Message queue for the user
-- /index hangs the app
 
 # Considerations
 - Make the read tool usable with directories?

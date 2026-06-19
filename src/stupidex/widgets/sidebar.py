@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import UTC, datetime
 
 from textual.containers import Vertical
 from textual.message import Message
@@ -9,6 +10,27 @@ from stupidex.agents.manager import SUBAGENT_INDICATORS, SubagentRecord, Subagen
 from stupidex.domain.todo import TERMINAL_STATUSES, TodoStatus, TodoTask
 
 _TOKEN_THROTTLE_INTERVAL = 0.5
+
+
+def _relative_time(iso_timestamp: str) -> str:
+    """Convert an ISO timestamp to a relative 'X ago' string."""
+    try:
+        dt = datetime.fromisoformat(iso_timestamp)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
+        delta = (now - dt).total_seconds()
+        if delta < 0:
+            return "just now"
+        if delta < 60:
+            return f"{int(delta)}s ago"
+        if delta < 3600:
+            return f"{int(delta / 60)}m ago"
+        if delta < 86400:
+            return f"{int(delta / 3600)}h ago"
+        return f"{int(delta / 86400)}d ago"
+    except (ValueError, TypeError):
+        return "unknown"
 
 
 class SidebarSubagentSelected(Message):
@@ -68,10 +90,20 @@ class Sidebar(Vertical):
     Sidebar #sidebar-tokens-label,
     Sidebar #sidebar-subagents-label,
     Sidebar #sidebar-todos-label,
-    Sidebar #sidebar-mcp-label {
+    Sidebar #sidebar-mcp-label,
+    Sidebar #sidebar-rag-label,
+    Sidebar #sidebar-ast-label {
         color: $text-muted;
         text-style: bold;
         padding: 0 1;
+    }
+
+    Sidebar #rag-status,
+    Sidebar #ast-status {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        color: $text-muted;
     }
 
     Sidebar #token-info {
@@ -106,11 +138,8 @@ class Sidebar(Vertical):
         text-style: bold;
     }
 
-    Sidebar #subagent-entries {
-        height: auto;
-        padding: 0 0;
-    }
-
+    Sidebar #subagent-entries,
+    Sidebar #mcp-entries,
     Sidebar #todo-entries {
         height: auto;
         padding: 0 0;
@@ -162,11 +191,14 @@ class Sidebar(Vertical):
     }
 
     Sidebar #working-directory {
-        dock: bottom;
         width: 100%;
-        padding: 1;
+        padding: 1 1 0 1;
         color: $text-muted;
         text-style: dim;
+    }
+
+    Sidebar #sidebar-spacer {
+        height: 1fr;
     }
     """
 
@@ -194,6 +226,11 @@ class Sidebar(Vertical):
         yield Vertical(id="mcp-entries")
         yield Static("Todos", id="sidebar-todos-label")
         yield Vertical(id="todo-entries")
+        yield Static(id="sidebar-spacer")
+        yield Static("AST", id="sidebar-ast-label")
+        yield Static("", id="ast-status")
+        yield Static("RAG", id="sidebar-rag-label")
+        yield Static("", id="rag-status")
         yield Static(self._get_working_dir(), id="working-directory")
 
     def _get_working_dir(self) -> str:
@@ -605,3 +642,34 @@ class Sidebar(Vertical):
 
         text = f" {indicator} {title}"
         return f"[{color}]{text}[/{color}]"
+
+    async def update_index_status(
+        self,
+        rag_last: str | None,
+        rag_duration: float | None,
+        ast_last: str | None,
+        ast_duration: float | None,
+        rag_indexing: bool = False,
+        ast_indexing: bool = False,
+    ) -> None:
+        try:
+            rag_widget = self.query_one("#rag-status", Static)
+            ast_widget = self.query_one("#ast-status", Static)
+        except Exception:
+            return
+
+        rag_widget.update(self._format_index_line(rag_last, rag_duration, rag_indexing))
+        ast_widget.update(self._format_index_line(ast_last, ast_duration, ast_indexing))
+
+    @staticmethod
+    def _format_index_line(last_indexed: str | None, duration: float | None, indexing: bool = False) -> str:
+        if indexing:
+            return "[yellow]indexing...[/yellow]"
+        if not last_indexed:
+            return "[dim]never indexed[/dim]"
+
+        ago = _relative_time(last_indexed)
+        parts = [f"[dim]{ago}[/dim]"]
+        if duration is not None:
+            parts.append(f"[dim]({duration:.1f}s)[/dim]")
+        return " ".join(parts)

@@ -128,8 +128,9 @@ class Stupidex(App):
         else:
             set_mcp_manager(None)
         await self.refresh_mcp_servers()
+        await self.refresh_index_status()
 
-    async def on_exit(self) -> None:
+    async def on_unmount(self) -> None:
         self._subagent_ui.stop()
         if hasattr(self, '_mcp_manager') and self._mcp_manager is not None:
             try:
@@ -604,5 +605,27 @@ class Stupidex(App):
                 cfg = get_config()
                 statuses = {name: {"status": "off", "tool_count": 0} for name in cfg.mcp_servers}
                 await sidebar.update_mcp_servers(statuses)
+        except Exception:
+            pass
+
+    async def refresh_index_status(self) -> None:
+        try:
+            from pathlib import Path
+
+            from stupidex.ast.indexer import is_indexing as ast_is_indexing
+            from stupidex.ast.store import ASTStore
+            from stupidex.rag.indexer import get_status as get_rag_status
+            from stupidex.rag.indexer import is_indexing as rag_is_indexing
+            sidebar = self.query_one("#sidebar", Sidebar)
+            project_path = str(Path.cwd())
+            rag = get_rag_status(project_path)
+            ast_store = ASTStore(project_path)
+            ast = ast_store.status()
+            await sidebar.update_index_status(
+                rag.last_indexed, rag.last_index_duration,
+                ast.last_indexed, ast.last_index_duration,
+                rag_indexing=rag_is_indexing(),
+                ast_indexing=ast_is_indexing(),
+            )
         except Exception:
             pass

@@ -1,6 +1,7 @@
 import asyncio
 import difflib
 import glob as glob_module
+import logging
 import os
 from pathlib import Path
 
@@ -8,7 +9,10 @@ import aiofiles
 
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
+from stupidex.tools.ast import post_write_callbacks
 from stupidex.utils import directory_tree
+
+logger = logging.getLogger(__name__)
 
 read_tool = Tool(
     name="read",
@@ -214,6 +218,12 @@ async def execute_edit_tool(
         )
         diff_text = "\n".join(_normalize_diff_lines(diff))
 
+        for cb in post_write_callbacks:
+            try:
+                await cb(file_path)
+            except Exception as e:
+                logger.warning("Post-write callback failed for %s: %s", file_path, e)
+
         display = f"Edited {file_path}"
         added = 0
         removed = 0
@@ -373,6 +383,12 @@ async def execute_write_tool(file_path: str, content: str) -> ExecutorResult:
 
         async with aiofiles.open(path, "w", encoding="utf-8") as f:
             await f.write(content)
+
+        for cb in post_write_callbacks:
+            try:
+                await cb(file_path)
+            except Exception as e:
+                logger.warning("Post-write callback failed for %s: %s", file_path, e)
 
         lines = content.splitlines()
         return ExecutorResult(
