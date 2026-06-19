@@ -181,11 +181,10 @@ async def _stream_task(
                 return
             last_thinking_yield = time.monotonic()
             thinking_dirty = False
-            stripped = thinking.strip()
-            if stripped:
+            if thinking.strip():
                 await msg_q.put(Message(
                     role=MessageRole.ASSISTANT,
-                    content=stripped,
+                    content=thinking,
                     type=MessageType.THINKING,
                 ))
 
@@ -200,11 +199,10 @@ async def _stream_task(
                 if now - last_thinking_yield >= _YIELD_THROTTLE:
                     last_thinking_yield = now
                     thinking_dirty = False
-                    stripped = thinking.strip()
-                    if stripped:
+                    if thinking.strip():
                         await msg_q.put(Message(
                             role=MessageRole.ASSISTANT,
-                            content=stripped,
+                            content=thinking,
                             type=MessageType.THINKING,
                         ))
                 else:

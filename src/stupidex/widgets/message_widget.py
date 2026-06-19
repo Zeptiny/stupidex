@@ -225,6 +225,8 @@ class ThinkingMessageWidget(Static):
         self._start_time: float = time.monotonic()
         self._loaded = loaded
         self._stored_duration: float | None = msg.metadata.get("thinking_duration")
+        self._content_widget: Static | None = None
+        self._collapsible: Collapsible | None = None
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
@@ -232,20 +234,20 @@ class ThinkingMessageWidget(Static):
             title = f"Thought: {Chain.format_elapsed(self._stored_duration)}" if self._stored_duration is not None else "Thought"
         else:
             title = "Thinking..."
-        yield Collapsible(
-            Static(self.msg.content, classes="thinking-content"),
+        self._content_widget = Static(self.msg.content if self._loaded else "", classes="thinking-content")
+        self._collapsible = Collapsible(
+            self._content_widget,
             title=title,
             collapsed=True,
             classes="thinking-collapse",
         )
+        yield self._collapsible
 
     def update_content(self, content: str) -> None:
         self.msg.content = content
-        try:
-            collapsible = self.query_one(Collapsible)
-        except Exception:
+        if self._collapsible is None:
             return
-        if collapsible.collapsed:
+        if self._collapsible.collapsed:
             return
         now = time.monotonic()
         if now - self._last_render_time >= _THROTTLE_INTERVAL:
@@ -257,11 +259,9 @@ class ThinkingMessageWidget(Static):
             self.set_timer(remaining, self._flush_update)
 
     def _do_update(self) -> None:
-        try:
-            content_widget = self.query_one(".thinking-content", Static)
-            content_widget.update(self.msg.content)
-        except Exception:
-            pass
+        if self._content_widget is None:
+            return
+        self._content_widget.update(self.msg.content)
 
     def _flush_update(self) -> None:
         self._flush_scheduled = False
@@ -280,11 +280,8 @@ class ThinkingMessageWidget(Static):
         elapsed = time.monotonic() - self._start_time
         self.msg.metadata["thinking_duration"] = elapsed
         label = Chain.format_elapsed(elapsed)
-        try:
-            collapsible = self.query_one(Collapsible)
-            collapsible.title = f"Thought: {label}"
-        except Exception:
-            pass
+        if self._collapsible is not None:
+            self._collapsible.title = f"Thought: {label}"
 
     def on_collapsible_toggle(self, event) -> None:
         if not event.collapsed:
@@ -292,8 +289,16 @@ class ThinkingMessageWidget(Static):
 
 
 class AssistantMessageWidget(MessageWidget):
+    def __init__(self, msg: Message, **kwargs):
+        self._cached_content: str | None = None
+        self._cached_renderable: Markdown | None = None
+        super().__init__(msg, **kwargs)
+
     def _build_renderable(self):
-        return Markdown(self.msg.content)
+        if self.msg.content != self._cached_content:
+            self._cached_content = self.msg.content
+            self._cached_renderable = Markdown(self.msg.content)
+        return self._cached_renderable
 
 
 class ChainFooterWidget(Static):
