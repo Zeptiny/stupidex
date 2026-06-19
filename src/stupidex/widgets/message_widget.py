@@ -223,23 +223,25 @@ class ThinkingMessageWidget(Static):
         self._last_render_time: float = 0
         self._flush_scheduled: bool = False
         self._start_time: float = time.monotonic()
+        self._content_widget: Static | None = None
+        self._collapsible: Collapsible | None = None
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        yield Collapsible(
-            Static(self.msg.content, classes="thinking-content"),
+        self._content_widget = Static("", classes="thinking-content")
+        self._collapsible = Collapsible(
+            self._content_widget,
             title="Thinking...",
             collapsed=True,
             classes="thinking-collapse",
         )
+        yield self._collapsible
 
     def update_content(self, content: str) -> None:
         self.msg.content = content
-        try:
-            collapsible = self.query_one(Collapsible)
-        except Exception:
+        if self._collapsible is None:
             return
-        if collapsible.collapsed:
+        if self._collapsible.collapsed:
             return
         now = time.monotonic()
         if now - self._last_render_time >= _THROTTLE_INTERVAL:
@@ -251,11 +253,9 @@ class ThinkingMessageWidget(Static):
             self.set_timer(remaining, self._flush_update)
 
     def _do_update(self) -> None:
-        try:
-            content_widget = self.query_one(".thinking-content", Static)
-            content_widget.update(self.msg.content)
-        except Exception:
-            pass
+        if self._content_widget is None:
+            return
+        self._content_widget.update(self.msg.content)
 
     def _flush_update(self) -> None:
         self._flush_scheduled = False
@@ -280,11 +280,8 @@ class ThinkingMessageWidget(Static):
             minutes = int(elapsed // 60)
             seconds = elapsed % 60
             label = f"{minutes}m {seconds:.0f}s"
-        try:
-            collapsible = self.query_one(Collapsible)
-            collapsible.title = f"Thought: {label}"
-        except Exception:
-            pass
+        if self._collapsible is not None:
+            self._collapsible.title = f"Thought: {label}"
 
     def on_collapsible_toggle(self, event) -> None:
         if not event.collapsed:
@@ -292,8 +289,16 @@ class ThinkingMessageWidget(Static):
 
 
 class AssistantMessageWidget(MessageWidget):
+    def __init__(self, msg: Message, **kwargs):
+        self._cached_content: str | None = None
+        self._cached_renderable: Markdown | None = None
+        super().__init__(msg, **kwargs)
+
     def _build_renderable(self):
-        return Markdown(self.msg.content)
+        if self.msg.content != self._cached_content:
+            self._cached_content = self.msg.content
+            self._cached_renderable = Markdown(self.msg.content)
+        return self._cached_renderable
 
 
 class ChainFooterWidget(Static):
