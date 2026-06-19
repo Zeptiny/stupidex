@@ -823,8 +823,6 @@ Project-level config: `.stupidex.json` (deep-merges with home config — project
 - Approval / permission system
 - AGENTS.md handling
   - Also /init command for it
-- Session saving to disk
-- Web fetch tool or MCP
 - ask_question tool
 
 ## Subagents
@@ -838,6 +836,8 @@ Project-level config: `.stupidex.json` (deep-merges with home config — project
   - But this could still be avoided via commands, however, with permission system and the user approving all commands then its on the user
 - Bug: Something may be blocking/non parallel, when multiple subagents are spawned the CPU only uses one core
 - Message queue for the user
+- Bug: Sidebar rag and ast indexed time are not updated regularly, going stale
+- Bug: The agent seems to repeat actions, is it getting confused by what he has done?
 
 # Considerations
 - Make the read tool usable with directories?
