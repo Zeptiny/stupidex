@@ -64,7 +64,7 @@
 
 ### Refatoração de configuração
 - Ainda precisa ser melhor analisada
-- Ser possível de fazer toda e qualquer configuração poor meio da TUI
+- Ser possível de fazer toda e qualquer configuração por meio da TUI
   - Editar os agentes dos vários tiers
   - Adicionar/deletar provedores
   - Adicionar/editar/remover modelos e suas limitações
@@ -464,7 +464,9 @@ Na primeira execução, o Stupidex configura automaticamente um provedor que se 
 ### Modelo Local
 
 Entretanto, MiMo é [extremamente pesado](https://huggingface.co/unsloth/MiMo-V2.5-GGUF), necessitando de 620GB de VRAM para rodar em 16 bits ou 192GB em Q4.
+
 Para modelo local mais recomendado para as tarefas desse projeto, sendo programação, recomendamos e testamos o **Qwen 3.6 35B A3B**, um modelo que necessita de no mínimo 17.7GB para rodar (Sendo VRAM + RAM) em Q4.
+
 Imortante: Dependendo do seu hardware e o meio de rodar modelos locais decidido não será possível rodar múltiplos modelos simultaneos, assim todos os tiers tendo o mesmo modelo e não fazerem diferença.
 
 Para execução local, por exemplo, fazendo o uso do Ollama para esse modelo a configuração seria a seguinte:
@@ -492,7 +494,7 @@ Para execução local, por exemplo, fazendo o uso do Ollama para esse modelo a c
 
 ### Como Executar o Modelo Local
 
-Ollama, LM Studio e Unsloth Studio tem IDs diferentes para o mesmo modelo, altere a sua configuração com o ID correto ara cada um.
+Ollama, LM Studio e Unsloth Studio tem IDs diferentes para o mesmo modelo, altere a sua configuração com o ID correto para cada um.
 
 #### Opção 1: Ollama
 
