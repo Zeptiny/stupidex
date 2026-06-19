@@ -251,12 +251,16 @@ def _atomic_write(file_path: str, content: str) -> None:
         raise
 
 
-async def _trigger_post_write_callbacks(file_path: str) -> None:
+async def _trigger_post_write_callbacks(file_path: str) -> list[str]:
+    """Run all post-write callbacks and return a list of failure messages."""
+    failures: list[str] = []
     for cb in post_write_callbacks:
         try:
             await cb(file_path)
         except Exception as e:
             logger.warning("Post-write callback failed for %s: %s", file_path, e)
+            failures.append(f"{cb.__name__}: {e}")
+    return failures
 
 
 # ---------------------------------------------------------------------------
@@ -863,10 +867,14 @@ async def execute_replace_symbol(
         diff_text = _generate_diff(content, new_content, file_path)
         added, removed = _count_diff_changes(diff_text)
 
-        await _trigger_post_write_callbacks(file_path)
+        cb_failures = await _trigger_post_write_callbacks(file_path)
+
+        msg = f"Replaced '{name}' in {file_path} (+{added} -{removed})"
+        if cb_failures:
+            msg += f" [warnings: {len(cb_failures)} callback(s) failed]"
 
         return ExecutorResult(
-            display=f"Replaced '{name}' in {file_path} (+{added} -{removed})",
+            display=msg,
             content=_format_edit_result(
                 file_path,
                 success=True,
@@ -874,6 +882,7 @@ async def execute_replace_symbol(
                 added=added,
                 removed=removed,
                 diff_text=diff_text,
+                message="; ".join(cb_failures) if cb_failures else None,
             ),
         )
 
@@ -950,15 +959,18 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
         # Phase 1: compute all new contents without writing.
         # Each entry: (rel_path, abs_path, old_content, new_content, replacements)
         planned: list[tuple[str, str, str, str, int]] = []
+        failed_files: list[str] = []
 
         for rel_path, file_symbols in by_file.items():
             abs_path = str(Path(project_path) / rel_path)
             if not Path(abs_path).exists():
+                failed_files.append(rel_path)
                 continue
 
             try:
                 content = Path(abs_path).read_text(encoding="utf-8", errors="replace")
             except Exception:
+                failed_files.append(rel_path)
                 continue
 
             lines = content.split("\n")
@@ -1013,7 +1025,6 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
         total_added = 0
         total_removed = 0
         edit_results = []
-        failed_files: list[str] = []
 
         for rel_path, abs_path, content, new_content, file_replacements in planned:
             try:
@@ -1034,7 +1045,14 @@ async def execute_rename_symbol(name: str, new_name: str) -> ExecutorResult:
             total_added += added
             total_removed += removed
 
-            await _trigger_post_write_callbacks(rel_path)
+            cb_failures = await _trigger_post_write_callbacks(rel_path)
+            if cb_failures:
+                failed_files.append(rel_path)
+                logger.warning(
+                    "rename_symbol callback failures for %s: %s",
+                    rel_path,
+                    "; ".join(cb_failures),
+                )
 
             edit_results.append(
                 f'<edit_result path="{_xml_attr(rel_path)}" success="true" '

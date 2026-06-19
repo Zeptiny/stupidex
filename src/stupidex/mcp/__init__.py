@@ -103,6 +103,10 @@ class MCPManager:
             except TimeoutError:
                 runner.cancel()
                 logger.warning("MCP shutdown timed out after %.1fs, cancelling runner", timeout)
+                try:
+                    await runner
+                except asyncio.CancelledError:
+                    pass
             except Exception:
                 logger.warning("MCP runner task ended with an error", exc_info=True)
         self._runner = None

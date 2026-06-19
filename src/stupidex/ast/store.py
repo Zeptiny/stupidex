@@ -1,4 +1,5 @@
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -8,6 +9,15 @@ from stupidex.ast.symbols import Symbol
 from stupidex.config import AST_INDEX_DB, PROJECT_AST_DIR
 
 logger = logging.getLogger(__name__)
+
+_CORRUPTION_PATTERNS = re.compile(
+    r"malformed|not a database|disk image|header mismatch|is encrypted",
+    re.IGNORECASE,
+)
+
+
+def _is_corruption_error(exc: sqlite3.DatabaseError) -> bool:
+    return bool(_CORRUPTION_PATTERNS.search(str(exc)))
 
 
 @dataclass
@@ -69,6 +79,8 @@ class ASTStore:
             conn.commit()
             conn.close()
         except sqlite3.DatabaseError as e:
+            if not _is_corruption_error(e):
+                raise
             logger.error("Corrupted symbols.db, rebuilding: %s", e)
             if self.db_path.exists():
                 self.db_path.unlink()
@@ -89,6 +101,10 @@ class ASTStore:
             conn.execute("SELECT 1 FROM files LIMIT 1")
             return conn
         except sqlite3.DatabaseError as e:
+            if not _is_corruption_error(e):
+                if conn is not None:
+                    conn.close()
+                raise
             logger.error("Corrupted symbols.db, rebuilding: %s", e)
             if conn is not None:
                 conn.close()

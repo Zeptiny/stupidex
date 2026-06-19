@@ -665,12 +665,11 @@ async def test_first_find_refs_triggers_scan(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "mod.py").write_text("def helper():\n    pass\nhelper()\n")
 
-    from stupidex.ast.indexer import index_project
+    result = await execute_find_symbol_references("helper")
 
-    await index_project(project_path=str(tmp_path))
-
+    assert isinstance(result, ExecutorResult)
+    assert "helper" in result.content
     store = ASTStore(str(tmp_path))
-    store.init_db()
     syms = store.get_symbols_by_name("helper", "both")
     assert len(syms) >= 2
 
