@@ -12,6 +12,7 @@ from stupidex.config import (
     set_current_personality,
     set_current_theme,
 )
+from stupidex.domain.session import set_current_session_id
 from stupidex.domain.todo import set_todo_store
 from stupidex.llm.providers import discover_provider_models, resolve_model_metadata
 from stupidex.personality import load_personalities
@@ -27,7 +28,8 @@ COMMANDS = {
     "/model": "Change the model for the current session",
     "/theme": "Switch the application theme",
     "/personality": "Switch the agent personality",
-    "/index": "Index the project for RAG semantic search",
+    "/index-rag": "Index the project for RAG semantic search",
+    "/index-ast": "Re-scan the project for AST symbol indexing",
     "/rag status": "Show RAG index status",
     "/rag clear": "Clear the RAG index",
 }
@@ -169,6 +171,7 @@ async def execute_command(app: App, cmd: str) -> None:
         case "/new":
             app.sessions.create()
             set_todo_store(app.sessions.active.todo_store)
+            set_current_session_id(app.sessions.active.id)
             await app.rerender_all()
         case "/model":
             cfg = get_config()
@@ -199,6 +202,7 @@ async def execute_command(app: App, cmd: str) -> None:
                     session = app.sessions.load(result)
                     if session:
                         set_todo_store(session.todo_store)
+                        set_current_session_id(session.id)
                         await app.rerender_all()
                     else:
                         app.notify("Failed to load session", severity="error")
@@ -220,9 +224,11 @@ async def execute_command(app: App, cmd: str) -> None:
                     if deleted:
                         app.notify("Session deleted.", severity="information")
                         if not app.sessions.active:
+                            set_current_session_id(None)
                             app.sessions.create()
                             set_todo_store(app.sessions.active.todo_store)
                             await app.rerender_all()
+                        set_current_session_id(app.sessions.active.id)
                     else:
                         app.notify("Failed to delete session.", severity="error")
 
@@ -274,28 +280,72 @@ async def execute_command(app: App, cmd: str) -> None:
                     set_current_personality(result)
 
             app.push_screen(OptionPicker(items), on_personality_picked)
-        case "/index":
+        case "/index-rag":
             from stupidex.rag.indexer import index_project
+            from stupidex.rag.indexer import is_indexing as rag_is_indexing
+
+            if rag_is_indexing():
+                app.notify("RAG indexing already in progress.", severity="warning")
+                return
 
             app.notify("Indexing project for RAG...", severity="information")
-            try:
-                result = await index_project()
-                msg = (
-                    f"Indexed {result.files_indexed} files "
-                    f"({result.chunks_created} chunks) in {result.duration_seconds:.1f}s. "
-                    f"Skipped: {result.files_skipped}, Deleted: {result.files_deleted}"
-                )
-                if result.errors:
-                    msg += f" Errors: {len(result.errors)}"
-                app.notify(msg, severity="information" if not result.errors else "warning")
-            except Exception as e:
-                app.notify(f"Indexing failed: {e}", severity="error")
+
+            async def _run_rag_index():
+                try:
+                    result = await index_project()
+                    msg = (
+                        f"Indexed {result.files_indexed} files "
+                        f"({result.chunks_created} chunks) in {result.duration_seconds:.1f}s. "
+                        f"Skipped: {result.files_skipped}, Deleted: {result.files_deleted}"
+                    )
+                    if result.errors:
+                        msg += f" Errors: {len(result.errors)}"
+                    app.notify(msg, severity="information" if not result.errors else "warning")
+                except Exception as e:
+                    app.notify(f"Indexing failed: {e}", severity="error")
+                finally:
+                    await app.refresh_index_status()
+
+            app.run_worker(_run_rag_index)
+            await app.refresh_index_status()
+        case "/index-ast":
+            from stupidex.ast.indexer import index_project as ast_index_project
+            from stupidex.ast.indexer import is_indexing as ast_is_indexing
+
+            if ast_is_indexing():
+                app.notify("AST indexing already in progress.", severity="warning")
+                return
+
+            app.notify("Re-scanning project for AST symbols...", severity="information")
+
+            async def _run_reindex_ast():
+                try:
+                    result = await ast_index_project(force=True)
+                    msg = (
+                        f"AST indexed {result.files_indexed} files "
+                        f"({result.symbols_extracted} symbols) in "
+                        f"{result.duration_seconds:.1f}s. "
+                        f"Skipped: {result.files_skipped}, Deleted: {result.files_deleted}"
+                    )
+                    if result.errors:
+                        msg += f" Errors: {len(result.errors)}"
+                    app.notify(
+                        msg,
+                        severity="information" if not result.errors else "warning",
+                    )
+                except Exception as e:
+                    app.notify(f"AST re-index failed: {e}", severity="error")
+                finally:
+                    await app.refresh_index_status()
+
+            app.run_worker(_run_reindex_ast)
+            await app.refresh_index_status()
         case "/rag status":
             from stupidex.rag.indexer import get_status
 
             status = get_status()
             if status.last_indexed is None and status.total_chunks == 0:
-                app.notify("No RAG index exists. Run /index to create one.", severity="information")
+                app.notify("No RAG index exists. Run /index-rag to create one.", severity="information")
             else:
                 app.notify(
                     f"RAG: {status.total_files} files, {status.total_chunks} chunks, "
@@ -307,6 +357,7 @@ async def execute_command(app: App, cmd: str) -> None:
 
             clear_index()
             app.notify("RAG index cleared.", severity="information")
+            await app.refresh_index_status()
 
 
 class SessionCommands(Provider):

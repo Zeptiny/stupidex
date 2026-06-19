@@ -11,6 +11,7 @@ allowed_tools:
   - edit
   - write
   - execute_command
+  - web_fetch
   - delegate_to_subagent
   - wait_for_subagent
   - list_subagents
@@ -25,6 +26,11 @@ allowed_tools:
   - todo_list
   - todo_update
   - todo_delete
+  - get_file_skeleton
+  - get_function
+  - find_symbol_references
+  - replace_symbol
+  - rename_symbol
 allowed_skills:
   - '*'
 ---

@@ -24,6 +24,8 @@ PROJECT_SKILLS_DIR = ".stupidex/skills"
 PROJECT_RAG_DIR = ".stupidex/rag"
 RAG_VECTORS_FILE = "vectors.npy"
 RAG_INDEX_DB = "index.db"
+PROJECT_AST_DIR = ".stupidex/ast"
+AST_INDEX_DB = "symbols.db"
 ENV_PREFIX = "STUPIDEX_"
 
 
@@ -74,6 +76,7 @@ class Config:
     rag_chunk_overlap: int = 200
     rag_top_k: int = 5
     rag_max_file_size: int = 512000
+    ast_max_file_size: int = 1_048_576
     mcp_servers: dict[str, dict] = field(
         default_factory=lambda: {
             "context7": {
@@ -111,6 +114,7 @@ _ENV_MAP = {
     "STUPIDEX_RAG_CHUNK_OVERLAP": "rag_chunk_overlap",
     "STUPIDEX_RAG_TOP_K": "rag_top_k",
     "STUPIDEX_RAG_MAX_FILE_SIZE": "rag_max_file_size",
+    "STUPIDEX_AST_MAX_FILE_SIZE": "ast_max_file_size",
 }
 
 
@@ -284,6 +288,8 @@ def _validate_config(cfg: Config) -> Config:
         values["rag_top_k"] = defaults.rag_top_k
     if not isinstance(values["rag_max_file_size"], int) or values["rag_max_file_size"] <= 0:
         values["rag_max_file_size"] = defaults.rag_max_file_size
+    if not isinstance(values["ast_max_file_size"], int) or isinstance(values["ast_max_file_size"], bool) or values["ast_max_file_size"] <= 0:
+        values["ast_max_file_size"] = defaults.ast_max_file_size
 
     mcp_servers = values.get("mcp_servers", {})
     if not isinstance(mcp_servers, dict):

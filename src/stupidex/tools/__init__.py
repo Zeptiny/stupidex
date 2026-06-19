@@ -1,3 +1,15 @@
+from stupidex.tools.ast import (
+    execute_find_symbol_references,
+    execute_get_file_skeleton,
+    execute_get_function,
+    execute_rename_symbol,
+    execute_replace_symbol,
+    find_symbol_references_tool,
+    get_file_skeleton_tool,
+    get_function_tool,
+    rename_symbol_tool,
+    replace_symbol_tool,
+)
 from stupidex.tools.exec import execute_command, execute_command_tool
 from stupidex.tools.file_manipulation import (
     edit_tool,
@@ -45,6 +57,7 @@ from stupidex.tools.todo import (
     todo_list_tool,
     todo_update_tool,
 )
+from stupidex.tools.web_fetch import execute_web_fetch, web_fetch_tool
 
 _TOOL_REGISTRY: dict[str, dict] | None = None
 
@@ -67,6 +80,7 @@ def get_tool_registry() -> dict[str, dict]:
         "todo_list": {"tool": todo_list_tool, "executor": execute_todo_list},
         "todo_delete": {"tool": todo_delete_tool, "executor": execute_todo_delete},
         "execute_command": {"tool": execute_command_tool, "executor": execute_command},
+        "web_fetch": {"tool": web_fetch_tool, "executor": execute_web_fetch},
         "delegate_to_subagent": {"tool": build_delegate_tool(), "executor": execute_delegate_to_subagent},
         "wait_for_subagent": {"tool": wait_for_subagent, "executor": execute_wait_for_subagent},
         "list_subagents": {"tool": list_subagents, "executor": execute_list_subagents},
@@ -74,6 +88,11 @@ def get_tool_registry() -> dict[str, dict]:
         "skill": {"tool": build_skill_tool(), "executor": execute_skill},
         "list_skills": {"tool": build_list_skills_tool(), "executor": execute_list_skills},
         "read_mcp_resource": {"tool": read_mcp_resource_tool, "executor": execute_read_mcp_resource},
+        "get_file_skeleton": {"tool": get_file_skeleton_tool, "executor": execute_get_file_skeleton},
+        "get_function": {"tool": get_function_tool, "executor": execute_get_function},
+        "find_symbol_references": {"tool": find_symbol_references_tool, "executor": execute_find_symbol_references},
+        "replace_symbol": {"tool": replace_symbol_tool, "executor": execute_replace_symbol},
+        "rename_symbol": {"tool": rename_symbol_tool, "executor": execute_rename_symbol},
     }
     return _TOOL_REGISTRY
 

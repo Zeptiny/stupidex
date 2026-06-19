@@ -10,6 +10,9 @@ allowed_tools:
   - grep
   - execute_command
   - mcp_context7_*
+  - get_file_skeleton
+  - get_function
+  - find_symbol_references
 allowed_skills: []
 ---
 

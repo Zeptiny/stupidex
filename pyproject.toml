@@ -10,10 +10,13 @@ dependencies = [
     "textual",
     "litellm",
     "httpx",
+    "html2text",
     "aiofiles",
     "numpy",
     "fastembed",
     "mcp>=1.0",
+    "tree-sitter",
+    "tree-sitter-language-pack",
 ]
 
 [project.scripts]
@@ -30,3 +33,6 @@ src = ["src"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
 ignore = ["E501", "SIM105"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

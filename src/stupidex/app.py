@@ -11,7 +11,7 @@ from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
-from stupidex.domain.session import Session, SessionManager
+from stupidex.domain.session import Session, SessionManager, set_current_session_id
 from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
 from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
@@ -102,6 +102,7 @@ class Stupidex(App):
     async def on_mount(self) -> None:
         self.sessions.create()
         set_todo_store(self.sessions.active.todo_store)
+        set_current_session_id(self.sessions.active.id)
         set_todo_refresh_callback(self.refresh_todos)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
@@ -144,8 +145,9 @@ class Stupidex(App):
         except Exception:
             log.warning("MCP startup failed", exc_info=True)
         await self.refresh_mcp_servers()
+        await self.refresh_index_status()
 
-    async def on_exit(self) -> None:
+    async def on_unmount(self) -> None:
         self._subagent_ui.stop()
         if hasattr(self, '_mcp_manager') and self._mcp_manager is not None:
             try:
@@ -154,6 +156,7 @@ class Stupidex(App):
                 pass
         from stupidex.mcp import set_mcp_manager
         set_mcp_manager(None)
+        set_current_session_id(None)
 
     def _is_streaming(self) -> bool:
         return self._active_worker is not None and not self._active_worker.is_finished
@@ -620,5 +623,27 @@ class Stupidex(App):
                 cfg = get_config()
                 statuses = {name: {"status": "off", "tool_count": 0} for name in cfg.mcp_servers}
                 await sidebar.update_mcp_servers(statuses)
+        except Exception:
+            pass
+
+    async def refresh_index_status(self) -> None:
+        try:
+            from pathlib import Path
+
+            from stupidex.ast.indexer import is_indexing as ast_is_indexing
+            from stupidex.ast.store import ASTStore
+            from stupidex.rag.indexer import get_status as get_rag_status
+            from stupidex.rag.indexer import is_indexing as rag_is_indexing
+            sidebar = self.query_one("#sidebar", Sidebar)
+            project_path = str(Path.cwd())
+            rag = get_rag_status(project_path)
+            ast_store = ASTStore(project_path)
+            ast = ast_store.status()
+            await sidebar.update_index_status(
+                rag.last_indexed, rag.last_index_duration,
+                ast.last_indexed, ast.last_index_duration,
+                rag_indexing=rag_is_indexing(),
+                ast_indexing=ast_is_indexing(),
+            )
         except Exception:
             pass

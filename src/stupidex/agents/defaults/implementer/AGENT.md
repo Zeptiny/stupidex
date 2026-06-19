@@ -12,6 +12,11 @@ allowed_tools:
   - write
   - execute_command
   - mcp_context7_*
+  - get_file_skeleton
+  - get_function
+  - find_symbol_references
+  - replace_symbol
+  - rename_symbol
 allowed_skills:
   - work
   - plan
