@@ -101,6 +101,8 @@
 
 **Stupidex** é um agente de terminal com arquitetura multiagente, focado em engenharia de software assistida por IA. Ele opera diretamente no terminal do desenvolvedor como um copiloto capaz de explorar código, implementar funcionalidades, revisar alterações, executar comandos, gerenciar tarefas e documentar aprendizado - tudo por meio de uma interface TUI (Textual User Interface).
 
+![Example Image](example_image.png)
+
 ---
 
 ## Problema
