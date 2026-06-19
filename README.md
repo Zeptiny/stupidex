@@ -12,7 +12,7 @@
 - [x] Pipeline RAG: ingestão -> Embedding -> busca -> resposta
 - [x] Vector store (ChromeDB/FAISS) com embedding reais
 - [x] Mínimo 3 tools disponíveis e funcionais para os agentes
-  - O projeto conta com 19 tools configuráveis por agente
+  - O projeto conta com 25 tools configuráveis por agente
 - [x] Interface CLI testável - fluxo demonstrável em terminal
   - A interface é feita com Textual e o usuário tem acesso a todo o fluxo de todos os agentes
 - [x] Repositório GiHub público com código completo
@@ -55,6 +55,33 @@ Per-provider keys can also be configured inline or via a named env var — see [
 | `Escape` | Interrupt agent / subagents |
 | `↑` / `↓` | Navigate sidebar entries (when sidebar is focused) |
 | `Enter` / `Space` | Activate sidebar entry or toggle collapsible section |
+
+## Commands
+
+Session commands are available via the command palette (`Ctrl+P`):
+
+| Command | Description |
+|---------|-------------|
+| `/new` | Start a new session |
+| `/switch` | Switch to another session |
+| `/delete` | Delete a session |
+| `/model` | Change the model for the current session |
+| `/theme` | Switch the application theme |
+| `/personality` | Switch the agent personality |
+| `/index-rag` | Index the project for RAG semantic search |
+| `/index-ast` | Re-scan the project for AST symbol indexing |
+| `/rag status` | Show RAG index status |
+| `/rag clear` | Clear the RAG index |
+
+### Available Themes
+
+| Theme | Description |
+|-------|-------------|
+| `default` | Dark theme (Textual dark) |
+| `solarized-light` | Solarized light color scheme |
+| `bluey` | Blue-toned theme |
+| `windows_xp` | Windows XP-inspired theme |
+| `green_terminal` | Green monochrome terminal theme |
 
 ## Agents
 
@@ -283,8 +310,12 @@ The project includes a built-in RAG pipeline for code-aware semantic search. It 
 
 ```bash
 # Index the current project
-# In the command palette (Ctrl+P): /index
+# In the command palette (Ctrl+P): /index-rag
 ```
+
+The RAG index is also automatically updated when files are written or edited via the `write` and `edit` tools, so the index stays fresh without manual re-indexing.
+
+The sidebar displays the current RAG and AST index status, including last indexed time and duration. While indexing is in progress, it shows an "indexing..." indicator.
 
 The agents will use the rag tool ad needed
 
@@ -370,7 +401,7 @@ v1 supports **Python**, **JavaScript**, **TypeScript**, and **TSX**. TSX reuses 
 
 ```bash
 # Index the project for AST symbol lookup
-# In the command palette (Ctrl+P): /reindex-ast
+# In the command palette (Ctrl+P): /index-ast
 ```
 
 Index-dependent tools (`find_symbol_references`, `rename_symbol`) trigger a full project scan on first call automatically. Index-independent tools (`get_file_skeleton`, `get_function`) parse files directly without requiring an index.
@@ -389,7 +420,7 @@ Index-dependent tools (`find_symbol_references`, `rename_symbol`) trigger a full
 
 | Command | Description |
 |---------|-------------|
-| `/reindex-ast` | Force a full re-scan of the project for AST symbol indexing. Use when the index is stale or after bulk file changes. |
+| `/index-ast` | Force a full re-scan of the project for AST symbol indexing. Use when the index is stale or after bulk file changes. |
 
 ### Configuration
 
