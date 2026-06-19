@@ -122,7 +122,7 @@ class SubagentUIManager:
             return
 
         async with self._sidebar_lock:
-            while True:
+            for _ in range(2):
                 self._sidebar_refresh_pending = False
                 try:
                     sidebar = self.app.query_one("#sidebar", Sidebar)

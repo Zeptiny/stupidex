@@ -95,7 +95,7 @@ async def test_web_fetch_raw_large_content_writes_session_cache(tmp_path, monkey
     monkeypatch.setattr("stupidex.tools.web_fetch.HOME_CONFIG_DIR", tmp_path / ".stupidex")
     monkeypatch.setattr(
         "stupidex.tools.web_fetch._fetch_response",
-        AsyncMock(return_value=_response(text="x" * 10001, content_type="text/plain")),
+        AsyncMock(return_value=_response(url="https://docs.python.org/3/library/http.html", text="x" * 10001, content_type="text/plain")),
     )
 
     try:
@@ -175,11 +175,13 @@ async def test_web_fetch_validation_errors_do_not_fetch(monkeypatch):
     invalid_mode = await execute_web_fetch("https://example.com", "query", mode="full")
     invalid_scheme = await execute_web_fetch("file:///etc/passwd", "query")
     empty_query = await execute_web_fetch("https://example.com", "")
+    creds_url = await execute_web_fetch("https://user:pass@example.com", "query")
 
     assert "<web_fetch_error" in empty_url.content
     assert "<web_fetch_error" in invalid_mode.content
     assert "<web_fetch_error" in invalid_scheme.content
     assert "<web_fetch_error" in empty_query.content
+    assert "<web_fetch_error" in creds_url.content
     fetch.assert_not_awaited()
 
 

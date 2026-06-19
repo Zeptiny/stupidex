@@ -227,8 +227,8 @@ async def execute_command(app: App, cmd: str) -> None:
                             set_current_session_id(None)
                             app.sessions.create()
                             set_todo_store(app.sessions.active.todo_store)
-                            set_current_session_id(app.sessions.active.id)
                             await app.rerender_all()
+                        set_current_session_id(app.sessions.active.id)
                     else:
                         app.notify("Failed to delete session.", severity="error")
 

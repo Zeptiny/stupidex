@@ -99,6 +99,8 @@ def _validate_url(url: str) -> str | None:
         return "url must use http or https."
     if not parsed.netloc:
         return "url must include a host."
+    if parsed.username or parsed.password:
+        return "url must not contain embedded credentials."
     return None
 
 
@@ -329,6 +331,7 @@ async def execute_web_fetch(url: str, query: str, mode: str = "summarize") -> Ex
 
     try:
         response = await _fetch_response(url)
+        final_url = str(response.url)
         content, title, content_type = _response_content(response)
     except httpx.TimeoutException:
         return _error_result("Fetch timed out", "Request timed out after 30 seconds.", url=url, mode=mode)
@@ -350,5 +353,5 @@ async def execute_web_fetch(url: str, query: str, mode: str = "summarize") -> Ex
         return _error_result("Fetch failed", str(e) or type(e).__name__, url=url, mode=mode)
 
     if mode == "raw":
-        return _raw_result(url, title, content_type, content)
-    return await _summarize_result(url, title, content_type, content, query)
+        return _raw_result(final_url, title, content_type, content)
+    return await _summarize_result(final_url, title, content_type, content, query)
