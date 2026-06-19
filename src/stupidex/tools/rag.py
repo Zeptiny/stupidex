@@ -72,7 +72,7 @@ async def execute_rag_search(
     store = RAGStore(project_path)
 
     if top_k is None:
-        top_k = cfg.rag_top_k
+        top_k = cfg.rag.top_k
     if top_k <= 0:
         return ExecutorResult(
             display="Invalid top_k",
@@ -87,7 +87,7 @@ async def execute_rag_search(
         )
 
     try:
-        embedder = Embedder(model=cfg.rag_embedding_model or None)
+        embedder = Embedder(model=cfg.rag.embedding_model or None)
         query_embedding = await embedder.embed_single(query)
     except EmbeddingError as e:
         return ExecutorResult(
@@ -175,7 +175,7 @@ async def execute_rag_index(
 
     # action == "index"
     cfg = get_config()
-    embedder = Embedder(model=cfg.rag_embedding_model or None)
+    embedder = Embedder(model=cfg.rag.embedding_model or None)
 
     progress_info: list[str] = []
 

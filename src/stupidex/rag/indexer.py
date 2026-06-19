@@ -79,13 +79,13 @@ async def update_file(file_path: str, project_path: str | None = None) -> None:
         return
 
     cfg = get_config()
-    chunks = chunk_file(rel, content, cfg.rag_chunk_size, cfg.rag_chunk_overlap)
+    chunks = chunk_file(rel, content, cfg.rag.chunk_size, cfg.rag.chunk_overlap)
     if not chunks:
         await loop.run_in_executor(None, store.delete_by_file, rel)
         return
 
     try:
-        embedder = Embedder(model=cfg.rag_embedding_model or None)
+        embedder = Embedder(model=cfg.rag.embedding_model or None)
         texts = [c.content for c in chunks]
         embeddings = await embedder.embed(texts)
     except Exception as e:
@@ -158,7 +158,7 @@ async def _index_project_impl(
         store.init_db()
         await loop.run_in_executor(None, _flush_store, store, [], [])
         if embedder is None:
-            embedder = Embedder(model=cfg.rag_embedding_model or None)
+            embedder = Embedder(model=cfg.rag.embedding_model or None)
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
         return stats
 
@@ -166,7 +166,7 @@ async def _index_project_impl(
     store.init_db()
 
     if embedder is None:
-        embedder = Embedder(model=cfg.rag_embedding_model or None)
+        embedder = Embedder(model=cfg.rag.embedding_model or None)
 
     existing_hashes: dict[str, str] = {}
     if not force:
@@ -229,7 +229,7 @@ async def _index_project_impl(
                 continue
 
             # chunk
-            chunks = chunk_file(rel, content, cfg.rag_chunk_size, cfg.rag_chunk_overlap)
+            chunks = chunk_file(rel, content, cfg.rag.chunk_size, cfg.rag.chunk_overlap)
             if not chunks:
                 if not force and existing_hashes.get(rel):
                     await loop.run_in_executor(None, store.delete_by_file, rel)
@@ -389,7 +389,7 @@ def _read_and_hash(filepath: Path) -> tuple[str | None, str | None]:
     cfg = get_config()
     try:
         size = filepath.stat().st_size
-        if size > cfg.rag_max_file_size:
+        if size > cfg.rag.max_file_size:
             logger.debug("Skipping %s (%d bytes > limit)", filepath, size)
             return None, None
         if size == 0:

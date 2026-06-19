@@ -1,0 +1,582 @@
+"""Tests for the SettingsScreen modal, NewProviderForm, and NewMCPServerForm."""
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from stupidex.config import (
+    Config,
+    ConfigManager,
+    RAGConfig,
+    _convert_from_dict,
+    validate_config,
+)
+from stupidex.screens.settings import NewMCPServerForm, NewProviderForm, SettingsScreen
+
+# ── _convert_from_dict ───────────────────────────────────────────────────────
+
+
+class TestConvertFromDict:
+    def test_flat_rag_fields_are_nested(self):
+        data = {
+            "rag_chunk_size": 1000,
+            "rag_chunk_overlap": 100,
+            "rag_top_k": 10,
+            "rag_max_file_size": 99999,
+            "rag_embedding_model": "test/model",
+            "default_model": "default/test",
+        }
+        result = _convert_from_dict(data)
+        assert result["rag"]["chunk_size"] == 1000
+        assert result["rag"]["chunk_overlap"] == 100
+        assert result["rag"]["top_k"] == 10
+        assert result["rag"]["max_file_size"] == 99999
+        assert result["rag"]["embedding_model"] == "test/model"
+        assert result["default_model"] == "default/test"
+
+    def test_nested_rag_preserved_flat_removed(self):
+        data = {
+            "rag": {"chunk_size": 500, "embedding_model": "new/model"},
+            "rag_chunk_size": 999,  # should be removed
+        }
+        result = _convert_from_dict(data)
+        assert result["rag"]["chunk_size"] == 500
+        assert result["rag"]["embedding_model"] == "new/model"
+        assert "rag_chunk_size" not in result
+
+    def test_no_rag_data_leaves_absent(self):
+        result = _convert_from_dict({"default_model": "test/model"})
+        assert "rag" not in result
+
+    def test_empty_dict_has_no_rag(self):
+        result = _convert_from_dict({})
+        assert "rag" not in result
+
+    def test_flat_none_values_handled(self):
+        data = {"rag_chunk_size": None, "default_model": "test/model"}
+        result = _convert_from_dict(data)
+        assert "rag" not in result  # None stripped, no rag keys left
+        assert result["default_model"] == "test/model"
+
+
+# ── validate_config (new RAG edge cases) ─────────────────────────────────────
+
+
+class TestValidateConfigRAGEdgeCases:
+    def test_rag_chunk_overlap_negative_is_error(self):
+        cfg = Config(rag=RAGConfig(chunk_overlap=-5))
+        errors = validate_config(cfg)
+        assert any("chunk_overlap" in e for e in errors)
+
+    def test_rag_embedding_model_empty_string_is_error(self):
+        cfg = Config(rag=RAGConfig(embedding_model=""))
+        errors = validate_config(cfg)
+        assert any("embedding_model" in e for e in errors)
+
+    def test_rag_not_an_object_is_error(self):
+        cfg = Config(rag="not-a-ragconfig")  # type: ignore[assignment]
+        errors = validate_config(cfg)
+        assert any("rag" in e for e in errors)
+
+    def test_rag_top_k_zero_is_error(self):
+        cfg = Config(rag=RAGConfig(top_k=0))
+        errors = validate_config(cfg)
+        assert any("rag.top_k" in e for e in errors)
+
+    def test_all_rag_fields_valid_returns_no_errors(self):
+        cfg = Config(rag=RAGConfig(chunk_size=500, chunk_overlap=50, top_k=3, max_file_size=100000))
+        errors = validate_config(cfg)
+        assert errors == []
+
+
+# ── validate_config (tier_models edge cases) ─────────────────────────────────
+
+
+class TestValidateConfigTierModels:
+    def test_tier_models_not_a_dict_is_error(self):
+        cfg = Config(tier_models="invalid")  # type: ignore[assignment]
+        errors = validate_config(cfg)
+        assert any("tier_models" in e for e in errors)
+
+    def test_tier_models_empty_key_is_error(self):
+        cfg = Config(tier_models={"": "model"})
+        errors = validate_config(cfg)
+        assert any("tier_models" in e for e in errors)
+
+    def test_tier_models_empty_value_is_error(self):
+        cfg = Config(tier_models={"tolo": ""})
+        errors = validate_config(cfg)
+        assert any("tier_models.tolo" in e for e in errors)
+
+
+# ── validate_config (mcp_servers edge cases) ─────────────────────────────────
+
+
+class TestValidateConfigMCPEdgeCases:
+    def test_mcp_servers_not_a_dict_is_error(self):
+        cfg = Config(mcp_servers="invalid")  # type: ignore[assignment]
+        errors = validate_config(cfg)
+        assert any("mcp_servers" in e for e in errors)
+
+    def test_mcp_servers_bad_name_is_error(self):
+        cfg = Config(mcp_servers={"bad name/": {"command": "x"}})
+        errors = validate_config(cfg)
+        assert any("bad name" in e for e in errors)
+
+    def test_mcp_servers_args_not_a_list(self):
+        cfg = Config(mcp_servers={"srv": {"command": "x", "args": "not-a-list"}})
+        errors = validate_config(cfg)
+        assert any("srv.args" in e for e in errors)
+
+    def test_mcp_servers_env_not_a_dict(self):
+        cfg = Config(mcp_servers={"srv": {"command": "x", "env": "not-a-dict"}})
+        errors = validate_config(cfg)
+        assert any("srv.env" in e for e in errors)
+
+
+# ── validate_config (theme, personality) ─────────────────────────────────────
+
+
+class TestValidateConfigGeneral:
+    def test_empty_theme_is_error(self):
+        cfg = Config(theme="")
+        errors = validate_config(cfg)
+        assert any("theme" in e for e in errors)
+
+    def test_empty_personality_is_error(self):
+        cfg = Config(personality="")
+        errors = validate_config(cfg)
+        assert any("personality" in e for e in errors)
+
+    def test_non_negative_read_line_limit_is_valid(self):
+        cfg = Config(read_line_limit=1)
+        errors = validate_config(cfg)
+        assert errors == []
+
+
+# ── SettingsScreen pure-logic tests ──────────────────────────────────────────
+
+
+class TestSettingsScreenCollectModifiedConfig:
+    """Tests for _collect_modified_config using mocked widget tree."""
+
+    def _make_mock_input(self, value: str):
+        m = MagicMock()
+        m.value = value
+        return m
+
+    def test_tier_models_read_from_inputs(self):
+        screen = SettingsScreen(Config())
+        screen.query_one = MagicMock()
+
+        def qo(selector: str, _cls=None):
+            mapping = {
+                "#tier-tolo": self._make_mock_input("provider-a/model-x"),
+                "#tier-tainha": self._make_mock_input("provider-a/model-y"),
+                "#tier-papudo": self._make_mock_input(""),
+                "#tier-papaca": self._make_mock_input("provider-b/model-z"),
+            }
+            return mapping.get(selector, self._make_mock_input(""))
+
+        screen.query_one = qo
+        cfg = screen._collect_modified_config()
+        assert cfg.tier_models["tolo"] == "provider-a/model-x"
+        assert cfg.tier_models["tainha"] == "provider-a/model-y"
+        assert cfg.tier_models["papudo"] == cfg.default_model  # empty → default
+        assert cfg.tier_models["papaca"] == "provider-b/model-z"
+
+    def test_rag_fields_read_from_inputs(self):
+        screen = SettingsScreen(Config())
+        screen.query_one = MagicMock()
+
+        def qo(selector: str, _cls=None):
+            mapping = {
+                "#rag-chunk_size": self._make_mock_input("500"),
+                "#rag-chunk_overlap": self._make_mock_input("50"),
+                "#rag-top_k": self._make_mock_input("3"),
+                "#rag-max_file_size": self._make_mock_input("100000"),
+                "#rag-embedding_model": self._make_mock_input("custom/embed-model"),
+            }
+            return mapping.get(selector, self._make_mock_input(""))
+
+        screen.query_one = qo
+        cfg = screen._collect_modified_config()
+        assert cfg.rag.chunk_size == 500
+        assert cfg.rag.chunk_overlap == 50
+        assert cfg.rag.top_k == 3
+        assert cfg.rag.max_file_size == 100000
+        assert cfg.rag.embedding_model == "custom/embed-model"
+
+    def test_general_fields_read_from_inputs(self):
+        screen = SettingsScreen(Config())
+        screen.query_one = MagicMock()
+
+        def qo(selector: str, _cls=None):
+            mapping = {
+                "#gen-default_model": self._make_mock_input("alias/new-model"),
+                "#gen-command_timeout": self._make_mock_input("60"),
+                "#gen-read_line_limit": self._make_mock_input("500"),
+                "#gen-grep_max_results": self._make_mock_input("200"),
+                "#gen-directory_tree_depth": self._make_mock_input("3"),
+                "#gen-ast_max_file_size": self._make_mock_input("999999"),
+                "#gen-theme": self._make_mock_input("dark"),
+                "#gen-personality": self._make_mock_input("helpful"),
+            }
+            return mapping.get(selector, self._make_mock_input(""))
+
+        screen.query_one = qo
+        cfg = screen._collect_modified_config()
+        assert cfg.default_model == "alias/new-model"
+        assert cfg.command_timeout == 60
+        assert cfg.read_line_limit == 500
+        assert cfg.grep_max_results == 200
+        assert cfg.directory_tree_depth == 3
+        assert cfg.ast_max_file_size == 999999
+        assert cfg.theme == "dark"
+        assert cfg.personality == "helpful"
+
+    def test_empty_general_fields_leave_defaults(self):
+        """If user clears a field, the original config value is preserved."""
+        orig = Config()
+        screen = SettingsScreen(orig)
+        screen.query_one = MagicMock()
+
+        def qo(selector: str, _cls=None):
+            return self._make_mock_input("")
+
+        screen.query_one = qo
+        cfg = screen._collect_modified_config()
+        assert cfg.default_model == orig.default_model
+        assert cfg.theme == orig.theme
+        assert cfg.personality == orig.personality
+
+
+class TestSettingsScreenDoSave:
+    def test_do_save_validates_and_dismisses(self):
+        """On successful validation, dismisses with the config."""
+        cfg = Config()
+        screen = SettingsScreen(cfg)
+        screen.dismiss = MagicMock()
+
+        # Mock _collect_modified_config to return a clean config
+        with patch.object(screen, "_collect_modified_config", return_value=cfg), \
+             patch("stupidex.screens.settings.validate_config", return_value=[]):
+            screen._do_save()
+
+        screen.dismiss.assert_called_once_with(cfg)
+
+    def test_do_save_shows_errors_on_invalid(self):
+        """On validation failure, writes errors to the error widget, does not dismiss."""
+        cfg = Config()
+        screen = SettingsScreen(cfg)
+        screen.dismiss = MagicMock()
+        err_widget = MagicMock()
+        screen.query_one = MagicMock(return_value=err_widget)
+
+        with patch.object(screen, "_collect_modified_config", return_value=cfg), \
+             patch("stupidex.screens.settings.validate_config", return_value=["bad field"]):
+            screen._do_save()
+
+        screen.dismiss.assert_not_called()
+        err_widget.update.assert_called_once()
+        assert "bad field" in err_widget.update.call_args[0][0]
+
+    def test_escape_dismisses_with_none(self):
+        screen = SettingsScreen(Config())
+        screen.dismiss = MagicMock()
+        screen.key_escape()
+        screen.dismiss.assert_called_once_with(None)
+
+
+class TestSettingsScreenRenderKeyedList:
+    def test_render_keyed_list_mounts_items(self):
+        screen = SettingsScreen(Config())
+        container = MagicMock()
+        items = [("alias-a", "http://a.com — model1, model2"), ("alias-b", "http://b.com — model3")]
+        screen._render_keyed_list(container, items, "prov")
+        assert screen._items_cache == items
+        # Each item results in 2 mounts (the item container + the "Add" button row)
+        # Actually each item results in: Static(label) + Static(detail) + Horizontal(actions)
+        # mount count = 3 per item
+        assert container.mount.call_count >= 2
+
+
+# ── NewProviderForm tests ────────────────────────────────────────────────────
+
+
+class TestNewProviderForm:
+    def _make_form(self, field_values: dict[str, str]) -> NewProviderForm:
+        form = NewProviderForm("Test Form")
+        form.query_one = MagicMock()
+
+        def qo(selector: str, _cls=None):
+            m = MagicMock()
+            m.value = field_values.get(selector, "")
+            return m
+
+        form.query_one = qo
+        return form
+
+    def test_alias_required(self):
+        form = self._make_form({"#pf-alias": ""})
+        error_static = MagicMock()
+        form.query_one = MagicMock(side_effect=lambda sid, _cls=None: (
+            error_static if "#provider-form-error" in sid
+            else MagicMock(value="")
+        ))
+        form.dismiss = MagicMock()
+        form._do_save()
+        error_static.update.assert_called_once()
+        form.dismiss.assert_not_called()
+
+    def test_alias_with_slash_rejected(self):
+        form = self._make_form({"#pf-alias": "bad/alias"})
+        error_static = MagicMock()
+        form.query_one = MagicMock(side_effect=lambda sid, _cls=None: (
+            error_static if "#provider-form-error" in sid
+            else MagicMock(value="bad/alias")
+        ))
+        form.dismiss = MagicMock()
+        form._do_save()
+        error_static.update.assert_called_once()
+        assert "/" in error_static.update.call_args[0][0]
+        form.dismiss.assert_not_called()
+
+    def test_valid_provider_saves_without_extra_fields(self):
+        """Minimal valid provider: alias only, no optional fields."""
+        def qo(selector: str, _cls=None):
+            return MagicMock(value={
+                "#pf-alias": "my-provider",
+                "#pf-base-url": "",
+                "#pf-api-key": "",
+                "#pf-api-key-env": "",
+                "#pf-litellm-provider": "",
+                "#pf-models": "",
+            }.get(selector, ""))
+
+        form = NewProviderForm("Test")
+        form.query_one = qo
+        form.dismiss = MagicMock()
+        form._do_save()
+        result = form.dismiss.call_args[0][0]
+        assert result["_alias"] == "my-provider"
+        assert "base_url" not in result
+        assert "api_key" not in result
+        assert "models" not in result
+
+    def test_valid_provider_with_all_fields(self):
+        def qo(selector: str, _cls=None):
+            return MagicMock(value={
+                "#pf-alias": "my-provider",
+                "#pf-base-url": "https://api.example.com/v1",
+                "#pf-api-key": "sk-secret",
+                "#pf-api-key-env": "",
+                "#pf-litellm-provider": "openai",
+                "#pf-models": "gpt-4o, gpt-4o-mini",
+            }.get(selector, ""))
+
+        form = NewProviderForm("Test")
+        form.query_one = qo
+        form.dismiss = MagicMock()
+        form._do_save()
+        result = form.dismiss.call_args[0][0]
+        assert result["_alias"] == "my-provider"
+        assert result["base_url"] == "https://api.example.com/v1"
+        assert result["api_key"] == "sk-secret"
+        assert result["litellm_provider"] == "openai"
+        assert set(result["models"].keys()) == {"gpt-4o", "gpt-4o-mini"}
+
+
+# ── NewMCPServerForm tests ────────────────────────────────────────────────────
+
+
+class TestNewMCPServerForm:
+    def _make_form(self, field_values: dict[str, str]) -> NewMCPServerForm:
+        form = NewMCPServerForm("Test MCP Form")
+        form.query_one = MagicMock()
+
+        def qo(selector: str, _cls=None):
+            m = MagicMock()
+            m.value = field_values.get(selector, "")
+            return m
+
+        form.query_one = qo
+        return form
+
+    def test_name_required(self):
+        form = self._make_form({"#mf-name": ""})
+        error_static = MagicMock()
+        form.query_one = MagicMock(side_effect=lambda sid, _cls=None: (
+            error_static if "#mcp-form-error" in sid
+            else MagicMock(value="")
+        ))
+        form.dismiss = MagicMock()
+        form._do_save()
+        error_static.update.assert_called_once()
+        form.dismiss.assert_not_called()
+
+    def test_command_or_url_required(self):
+        form = self._make_form({"#mf-name": "myserver", "#mf-command": "", "#mf-url": ""})
+        error_static = MagicMock()
+        form.query_one = MagicMock(side_effect=lambda sid, _cls=None: (
+            error_static if "#mcp-form-error" in sid
+            else MagicMock(value={
+                "#mf-name": "myserver",
+                "#mf-command": "",
+                "#mf-args": "",
+                "#mf-url": "",
+            }.get(sid, ""))
+        ))
+        form.dismiss = MagicMock()
+        form._do_save()
+        error_static.update.assert_called_once()
+        form.dismiss.assert_not_called()
+
+    def test_valid_url_server(self):
+        form = self._make_form({"#mf-name": "myserver", "#mf-command": "", "#mf-args": "", "#mf-url": "http://localhost:3000/sse"})
+        form.dismiss = MagicMock()
+        form._do_save()
+        result = form.dismiss.call_args[0][0]
+        assert result["_name"] == "myserver"
+        assert result["url"] == "http://localhost:3000/sse"
+
+    def test_valid_command_server(self):
+        form = self._make_form({"#mf-name": "myserver", "#mf-command": "node", "#mf-args": "server.js, --port, 3000", "#mf-url": ""})
+        form.dismiss = MagicMock()
+        form._do_save()
+        result = form.dismiss.call_args[0][0]
+        assert result["_name"] == "myserver"
+        assert result["command"] == "node"
+        assert result["args"] == ["server.js", "--port", "3000"]
+
+    def test_command_without_args(self):
+        form = self._make_form({"#mf-name": "myserver", "#mf-command": "python", "#mf-args": "", "#mf-url": ""})
+        form.dismiss = MagicMock()
+        form._do_save()
+        result = form.dismiss.call_args[0][0]
+        assert result["command"] == "python"
+        assert result["args"] == []
+
+
+# ── ConfigManager save / load with settings screen flow ──────────────────────
+
+
+class TestConfigManagerSettingsFlow:
+    """Integration-style tests for the save flow ConfigManager is part of."""
+
+    def test_settings_screen_returns_modified_config(self):
+        """Verify that validate_config accepts a config modified via _collect_modified_config."""
+        orig = Config()
+        screen = SettingsScreen(orig)
+        screen.query_one = MagicMock()
+
+        def qo(selector: str, _cls=None):
+            m = MagicMock()
+            mapping = {
+                "#tier-tolo": "custom/tolo-model",
+                "#tier-tainha": "custom/tainha-model",
+                "#tier-papudo": "custom/papudo-model",
+                "#tier-papaca": "custom/papaca-model",
+                "#rag-chunk_size": "3000",
+                "#rag-chunk_overlap": "300",
+                "#rag-top_k": "8",
+                "#rag-max_file_size": "99999",
+                "#rag-embedding_model": "test/embed",
+                "#gen-default_model": "custom/default-model",
+                "#gen-command_timeout": "45",
+                "#gen-read_line_limit": "800",
+                "#gen-grep_max_results": "150",
+                "#gen-directory_tree_depth": "5",
+                "#gen-ast_max_file_size": "500000",
+                "#gen-theme": "dracula",
+                "#gen-personality": "concise",
+            }
+            m.value = mapping.get(selector, "")
+            return m
+
+        screen.query_one = qo
+        modified = screen._collect_modified_config()
+
+        # Should pass validation
+        errors = validate_config(modified)
+        assert errors == [], f"Validation failed: {errors}"
+
+        # Verify key changes took effect
+        assert modified.tier_models["tolo"] == "custom/tolo-model"
+        assert modified.rag.chunk_size == 3000
+        assert modified.default_model == "custom/default-model"
+        assert modified.theme == "dracula"
+        assert modified.personality == "concise"
+
+    def test_save_roundtrip_with_temporary_file(self):
+        """Simulate the full save flow: modify config, save to file, reload."""
+        with tempfile.TemporaryDirectory() as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+            home_path = tmpdir / "config.json"
+
+            with (
+                patch("stupidex.config.HOME_CONFIG_DIR", tmpdir),
+                patch("stupidex.config.HOME_CONFIG_PATH", home_path),
+                patch("stupidex.config.HOME_AGENTS_DIR", tmpdir / "agents"),
+                patch("stupidex.config.HOME_SKILLS_DIR", tmpdir / "skills"),
+                patch("stupidex.config.PROJECT_CONFIG_NAME", "nonexistent-project-config.json"),
+                patch("stupidex.agents.seed_agents_dir"),
+                patch("stupidex.agents.load_agents"),
+                patch("stupidex.skills.seed_skills_dir"),
+                patch("stupidex.skills.load_skills"),
+                patch("stupidex.personality.load_personalities"),
+            ):
+                ConfigManager.reset()
+                ConfigManager.ensure_home_config()
+                ConfigManager.reset()
+                cfg = ConfigManager.load()
+                assert cfg.theme == "default"
+
+                # Simulate SettingsScreen save by modifying config
+                cfg.theme = "dracula"
+                cfg.rag = RAGConfig(chunk_size=1000)
+                ConfigManager._instance = cfg
+                ConfigManager.save()
+
+                # Reload
+                ConfigManager.reset()
+                reloaded = ConfigManager.load()
+                assert reloaded.theme == "dracula"
+                assert reloaded.rag.chunk_size == 1000
+                ConfigManager.reset()
+
+
+# ── main.py startup gate ─────────────────────────────────────────────────────
+
+
+class TestMainStartupGate:
+    def test_gate_exits_on_errors(self):
+        from stupidex import main
+
+        with (
+            patch.object(main.ConfigManager, "load"),
+            patch.object(main.ConfigManager, "errors", return_value=["bad field"]),
+            patch.object(main.ConfigManager, "ensure_home_config"),
+            patch.object(main, "sys") as mock_sys,
+        ):
+            main.main()
+
+        mock_sys.exit.assert_called_once_with(1)
+        # Should have printed to stderr
+        assert mock_sys.stderr.write.called or mock_sys.stderr.writelines.called
+
+    def test_gate_starts_app_on_no_errors(self):
+        from stupidex import main
+
+        with (
+            patch.object(main.ConfigManager, "load"),
+            patch.object(main.ConfigManager, "errors", return_value=[]),
+            patch.object(main.ConfigManager, "ensure_home_config"),
+            patch.object(main, "Stupidex") as mock_app_cls,
+        ):
+            mock_app = MagicMock()
+            mock_app_cls.return_value = mock_app
+
+            main.main()
+
+        mock_app_cls.assert_called_once()
+        mock_app.run.assert_called_once()

@@ -9,9 +9,6 @@ log = logging.getLogger(__name__)
 
 _MCP_SERVER_NAME_RE = re.compile(r"^[a-z0-9-]+$")
 _PROVIDER_ALIAS_RE = re.compile(r"^[a-z0-9-]+$")
-_PROVIDER_MODEL_OVERRIDE_KEYS = frozenset(
-    {"max_input_tokens", "max_output_tokens", "supports_vision", "mode", "litellm_provider"}
-)
 _RESERVED_PROVIDER_ALIASES = frozenset({"fastembed"})
 
 HOME_CONFIG_DIR = Path.home() / ".stupidex"
@@ -27,6 +24,15 @@ RAG_INDEX_DB = "index.db"
 PROJECT_AST_DIR = ".stupidex/ast"
 AST_INDEX_DB = "symbols.db"
 ENV_PREFIX = "STUPIDEX_"
+
+
+@dataclass
+class RAGConfig:
+    chunk_size: int = 2000
+    chunk_overlap: int = 200
+    top_k: int = 5
+    max_file_size: int = 512000
+    embedding_model: str = "fastembed/BAAI/bge-small-en-v1.5"
 
 
 @dataclass
@@ -71,11 +77,7 @@ class Config:
     directory_tree_depth: int = 2
     theme: str = "default"
     personality: str = "default"
-    rag_embedding_model: str = "fastembed/BAAI/bge-small-en-v1.5"
-    rag_chunk_size: int = 2000
-    rag_chunk_overlap: int = 200
-    rag_top_k: int = 5
-    rag_max_file_size: int = 512000
+    rag: RAGConfig = field(default_factory=RAGConfig)
     ast_max_file_size: int = 1_048_576
     mcp_servers: dict[str, dict] = field(
         default_factory=lambda: {
@@ -99,6 +101,17 @@ class Config:
         }
     )
 
+    def __post_init__(self) -> None:
+        """Normalise nested dataclass fields after construction.
+
+        ``Config(**{"rag": {"chunk_size": 2000, ...}})`` leaves ``self.rag`` as a
+        plain dict because the dataclass machinery does not recursively construct
+        nested dataclass instances. This fix-up converts the dict to a ``RAGConfig``
+        when the constructor receives a dict.
+        """
+        if isinstance(self.rag, dict):
+            object.__setattr__(self, "rag", RAGConfig(**self.rag))
+
 
 _ENV_MAP = {
     "STUPIDEX_DEFAULT_MODEL": "default_model",
@@ -109,12 +122,15 @@ _ENV_MAP = {
     "STUPIDEX_DIRECTORY_TREE_DEPTH": "directory_tree_depth",
     "STUPIDEX_THEME": "theme",
     "STUPIDEX_PERSONALITY": "personality",
-    "STUPIDEX_RAG_EMBEDDING_MODEL": "rag_embedding_model",
-    "STUPIDEX_RAG_CHUNK_SIZE": "rag_chunk_size",
-    "STUPIDEX_RAG_CHUNK_OVERLAP": "rag_chunk_overlap",
-    "STUPIDEX_RAG_TOP_K": "rag_top_k",
-    "STUPIDEX_RAG_MAX_FILE_SIZE": "rag_max_file_size",
     "STUPIDEX_AST_MAX_FILE_SIZE": "ast_max_file_size",
+}
+
+_RAG_ENV_MAP = {
+    "STUPIDEX_RAG_EMBEDDING_MODEL": "embedding_model",
+    "STUPIDEX_RAG_CHUNK_SIZE": "chunk_size",
+    "STUPIDEX_RAG_CHUNK_OVERLAP": "chunk_overlap",
+    "STUPIDEX_RAG_TOP_K": "top_k",
+    "STUPIDEX_RAG_MAX_FILE_SIZE": "max_file_size",
 }
 
 
@@ -124,6 +140,39 @@ def _load_json(path: Path) -> dict:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+def _convert_from_dict(data: dict) -> dict:
+    """Convert flat or mixed dict data to the nested Config representation.
+
+    Handles both old-style flat RAG fields (`rag_chunk_size`, etc.) and
+    new-style nested `rag` key. Never mutates the input.
+    """
+    result = dict(data)
+
+    # Strip None values so they don't shadow defaults
+    for k in list(result.keys()):
+        if result[k] is None:
+            del result[k]
+
+    flat_rag_keys = {"rag_chunk_size", "rag_chunk_overlap", "rag_top_k", "rag_max_file_size", "rag_embedding_model"}
+    has_flat_rag = bool(flat_rag_keys & result.keys())
+    has_nested_rag = "rag" in result and isinstance(result.get("rag"), dict)
+
+    if has_flat_rag and not has_nested_rag:
+        result["rag"] = {
+            "chunk_size": result.pop("rag_chunk_size", RAGConfig.chunk_size),
+            "chunk_overlap": result.pop("rag_chunk_overlap", RAGConfig.chunk_overlap),
+            "top_k": result.pop("rag_top_k", RAGConfig.top_k),
+            "max_file_size": result.pop("rag_max_file_size", RAGConfig.max_file_size),
+            "embedding_model": result.pop("rag_embedding_model", RAGConfig.embedding_model),
+        }
+    elif has_nested_rag:
+        # Remove any lingering flat keys in favor of nested
+        for k in flat_rag_keys:
+            result.pop(k, None)
+
+    return result
 
 
 def _cast_value(value: str, target_type):
@@ -143,189 +192,149 @@ def _merge_from_env(cfg: Config) -> Config:
         if raw is not None:
             target_type = type(values[field_name])
             values[field_name] = _cast_value(raw, target_type)
+    # Nested RAG env overrides
+    rag_values = dict(values["rag"])
+    for env_key, field_name in _RAG_ENV_MAP.items():
+        raw = os.environ.get(env_key)
+        if raw is not None:
+            target_type = type(rag_values[field_name])
+            rag_values[field_name] = _cast_value(raw, target_type)
+    values["rag"] = RAGConfig(**rag_values)
     return Config(**values)
 
 
 _NON_EMPTY_STRINGS = {"default_model"}
 
+_VALID_TIERS = frozenset({"tolo", "tainha", "papudo", "papaca"})
 
-def _validate_provider_entry(alias: str, entry: object) -> tuple[bool, dict | None]:
-    """Validate a single `providers[alias]` entry.
 
-    Mirrors the warn-and-skip pattern used for `mcp_servers`. Returns
-    `(keep, cleaned_entry)` — `keep` is False when the entry is dropped
-    entirely; `cleaned_entry` is the validated dict to store when kept.
+def validate_config(cfg: Config) -> list[str]:
+    """Validate config and return a list of error messages.
+
+    Returns an empty list if the config is valid. Each message describes
+    a specific problem with a field path.
     """
-    if not isinstance(entry, dict):
-        log.warning(
-            "Skipping provider '%s': config must be a dict, got %s",
-            alias,
-            type(entry).__name__,
-        )
-        return False, None
-    if not _PROVIDER_ALIAS_RE.match(alias):
-        log.warning(
-            "Skipping provider '%s': alias must match [a-z0-9-]+ (no '/')",
-            alias,
-        )
-        return False, None
-    if alias in _RESERVED_PROVIDER_ALIASES:
-        log.warning(
-            "Skipping provider '%s': alias is reserved (built-in pseudo-provider)",
-            alias,
-        )
-        return False, None
+    errors: list[str] = []
 
-    cleaned: dict = {}
-
-    base_url = entry.get("base_url")
-    if base_url is not None:
-        if not isinstance(base_url, str) or not base_url:
-            log.warning(
-                "Provider '%s': 'base_url' must be a non-empty string, got %s; dropping field",
-                alias,
-                type(base_url).__name__,
-            )
-        else:
-            cleaned["base_url"] = base_url
-
-    api_key = entry.get("api_key")
-    api_key_env = entry.get("api_key_env")
-    has_api_key = api_key is not None
-    has_api_key_env = api_key_env is not None
-    if has_api_key:
-        if not isinstance(api_key, str) or not api_key:
-            log.warning(
-                "Provider '%s': 'api_key' must be a non-empty string, got %s; dropping field",
-                alias,
-                type(api_key).__name__,
-            )
-            has_api_key = False
-        else:
-            cleaned["api_key"] = api_key
-    if has_api_key_env:
-        if not isinstance(api_key_env, str) or not api_key_env:
-            log.warning(
-                "Provider '%s': 'api_key_env' must be a non-empty string, got %s; dropping field",
-                alias,
-                type(api_key_env).__name__,
-            )
-            has_api_key_env = False
-        else:
-            cleaned["api_key_env"] = api_key_env
-    if has_api_key and has_api_key_env:
-        log.warning(
-            "Provider '%s': both 'api_key' and 'api_key_env' set; dropping 'api_key_env'",
-            alias,
-        )
-        cleaned.pop("api_key_env", None)
-
-    litellm_provider = entry.get("litellm_provider")
-    if litellm_provider is not None:
-        if not isinstance(litellm_provider, str) or not litellm_provider:
-            log.warning(
-                "Provider '%s': 'litellm_provider' must be a non-empty string, got %s; dropping field",
-                alias,
-                type(litellm_provider).__name__,
-            )
-        else:
-            cleaned["litellm_provider"] = litellm_provider
-
-    models = entry.get("models", {})
-    if not isinstance(models, dict):
-        log.warning(
-            "Provider '%s': 'models' must be a dict, got %s; treating as empty",
-            alias,
-            type(models).__name__,
-        )
-        models = {}
-    cleaned_models: dict[str, dict] = {}
-    for model_id, override in models.items():
-        if override is None:
-            cleaned_models[str(model_id)] = {}
-            continue
-        if not isinstance(override, dict):
-            log.warning(
-                "Provider '%s': model '%s' override must be a dict, got %s; treating as empty",
-                alias,
-                model_id,
-                type(override).__name__,
-            )
-            cleaned_models[str(model_id)] = {}
-            continue
-        cleaned_override: dict = {}
-        for k, v in override.items():
-            if k in _PROVIDER_MODEL_OVERRIDE_KEYS:
-                cleaned_override[k] = v
-            else:
-                log.warning(
-                    "Provider '%s': model '%s' has unknown override field '%s'; dropping",
-                    alias,
-                    model_id,
-                    k,
-                )
-        cleaned_models[str(model_id)] = cleaned_override
-    cleaned["models"] = cleaned_models
-
-    return True, cleaned
-
-
-def _validate_config(cfg: Config) -> Config:
-    defaults = Config()
-    values = asdict(cfg)
     for field_name in _NON_EMPTY_STRINGS:
-        val = values.get(field_name)
+        val = getattr(cfg, field_name)
         if not val or not isinstance(val, str):
-            values[field_name] = asdict(defaults)[field_name]
+            errors.append(f"'{field_name}' must be a non-empty string, got {type(val).__name__}")
 
-    if not isinstance(values["rag_chunk_size"], int) or values["rag_chunk_size"] <= 0:
-        values["rag_chunk_size"] = defaults.rag_chunk_size
-    if not isinstance(values["rag_chunk_overlap"], int):
-        values["rag_chunk_overlap"] = defaults.rag_chunk_overlap
-    elif values["rag_chunk_overlap"] < 0 or values["rag_chunk_overlap"] >= values["rag_chunk_size"]:
-        values["rag_chunk_overlap"] = min(defaults.rag_chunk_overlap, values["rag_chunk_size"] - 1)
-    if not isinstance(values["rag_top_k"], int) or values["rag_top_k"] <= 0:
-        values["rag_top_k"] = defaults.rag_top_k
-    if not isinstance(values["rag_max_file_size"], int) or values["rag_max_file_size"] <= 0:
-        values["rag_max_file_size"] = defaults.rag_max_file_size
-    if not isinstance(values["ast_max_file_size"], int) or isinstance(values["ast_max_file_size"], bool) or values["ast_max_file_size"] <= 0:
-        values["ast_max_file_size"] = defaults.ast_max_file_size
+    # Validate tier_models
+    if not isinstance(cfg.tier_models, dict):
+        errors.append("'tier_models' must be a dict")
+    else:
+        for tier, model in cfg.tier_models.items():
+            if not isinstance(tier, str) or not tier:
+                errors.append(f"'tier_models' key must be a non-empty string, got {tier!r}")
+            if not isinstance(model, str) or not model:
+                errors.append(f"'tier_models.{tier}' must be a non-empty string, got {model!r}")
 
-    mcp_servers = values.get("mcp_servers", {})
-    if not isinstance(mcp_servers, dict):
-        mcp_servers = {}
-    cleaned_mcp: dict[str, dict] = {}
-    for name, server_cfg in mcp_servers.items():
-        if not isinstance(server_cfg, dict):
-            log.warning("Skipping MCP server '%s': config must be a dict, got %s", name, type(server_cfg).__name__)
-            continue
-        if not _MCP_SERVER_NAME_RE.match(name):
-            log.warning("Skipping MCP server '%s': name must match [a-z0-9-]+", name)
-            continue
-        if "url" not in server_cfg:
-            cmd = server_cfg.get("command")
-            if not isinstance(cmd, str):
-                log.warning("Skipping MCP server '%s': 'command' must be a string, got %s", name, type(cmd).__name__)
+    # Validate ignored_dirs
+    if not isinstance(cfg.ignored_dirs, list):
+        errors.append("'ignored_dirs' must be a list")
+
+    # Validate int fields
+    _check_positive_int(cfg, "command_timeout", errors)
+    _check_positive_int(cfg, "read_line_limit", errors)
+    _check_positive_int(cfg, "grep_max_results", errors)
+    _check_positive_int(cfg, "directory_tree_depth", errors)
+    _check_positive_int(cfg, "ast_max_file_size", errors)
+
+    # Validate RAG
+    if not isinstance(cfg.rag, RAGConfig):
+        errors.append("'rag' must be a RAGConfig object")
+    else:
+        _check_positive_int(cfg.rag, "chunk_size", errors, prefix="rag")
+        _check_nonneg_int(cfg.rag, "chunk_overlap", errors, prefix="rag")
+        if isinstance(cfg.rag.chunk_size, int) and isinstance(cfg.rag.chunk_overlap, int) and cfg.rag.chunk_overlap >= cfg.rag.chunk_size:
+            errors.append("'rag.chunk_overlap' must be less than 'rag.chunk_size'")
+        _check_positive_int(cfg.rag, "top_k", errors, prefix="rag")
+        _check_positive_int(cfg.rag, "max_file_size", errors, prefix="rag")
+        if not isinstance(cfg.rag.embedding_model, str) or not cfg.rag.embedding_model:
+            errors.append("'rag.embedding_model' must be a non-empty string")
+
+    # Validate providers
+    if not isinstance(cfg.providers, dict):
+        errors.append("'providers' must be a dict")
+    else:
+        for alias, entry in cfg.providers.items():
+            if not isinstance(alias, str) or not _PROVIDER_ALIAS_RE.match(alias):
+                errors.append(f"'providers.{alias}': alias must match [a-z0-9-]+ (no '/')")
+            if alias in _RESERVED_PROVIDER_ALIASES:
+                errors.append(f"'providers.{alias}': alias is reserved (built-in pseudo-provider)")
+            if not isinstance(entry, dict):
+                errors.append(f"'providers.{alias}': must be a dict, got {type(entry).__name__}")
                 continue
-            args = server_cfg.get("args", [])
-            if not isinstance(args, list):
-                log.warning("Skipping MCP server '%s': 'args' must be a list, got %s", name, type(args).__name__)
+            base_url = entry.get("base_url")
+            if base_url is not None and (not isinstance(base_url, str) or not base_url):
+                errors.append(f"'providers.{alias}.base_url': must be a non-empty string")
+            api_key = entry.get("api_key")
+            if api_key is not None and (not isinstance(api_key, str) or not api_key):
+                errors.append(f"'providers.{alias}.api_key': must be a non-empty string")
+            api_key_env = entry.get("api_key_env")
+            if api_key_env is not None and (not isinstance(api_key_env, str) or not api_key_env):
+                errors.append(f"'providers.{alias}.api_key_env': must be a non-empty string")
+            if api_key and api_key_env:
+                errors.append(f"'providers.{alias}': both 'api_key' and 'api_key_env' set; use only one")
+            litellm_provider = entry.get("litellm_provider")
+            if litellm_provider is not None and (not isinstance(litellm_provider, str) or not litellm_provider):
+                errors.append(f"'providers.{alias}.litellm_provider': must be a non-empty string")
+            models = entry.get("models", {})
+            if not isinstance(models, dict):
+                errors.append(f"'providers.{alias}.models': must be a dict")
+            else:
+                for model_id, override in models.items():
+                    if override is not None and not isinstance(override, dict):
+                        errors.append(f"'providers.{alias}.models.{model_id}': override must be a dict")
+
+    # Validate mcp_servers
+    if not isinstance(cfg.mcp_servers, dict):
+        errors.append("'mcp_servers' must be a dict")
+    else:
+        for name, server_cfg in cfg.mcp_servers.items():
+            if not isinstance(name, str) or not _MCP_SERVER_NAME_RE.match(name):
+                errors.append(f"'mcp_servers.{name}': name must match [a-z0-9-]+")
+            if not isinstance(server_cfg, dict):
+                errors.append(f"'mcp_servers.{name}': must be a dict, got {type(server_cfg).__name__}")
                 continue
-        cleaned_mcp[name] = server_cfg
-    values["mcp_servers"] = cleaned_mcp
+            if "url" not in server_cfg:
+                cmd = server_cfg.get("command")
+                if not isinstance(cmd, str) or not cmd:
+                    errors.append(f"'mcp_servers.{name}.command': must be a non-empty string")
+                args = server_cfg.get("args", [])
+                if not isinstance(args, list):
+                    errors.append(f"'mcp_servers.{name}.args': must be a list")
+            env = server_cfg.get("env")
+            if env is not None and not isinstance(env, dict):
+                errors.append(f"'mcp_servers.{name}.env': must be a dict")
 
-    providers = values.get("providers", {})
-    if not isinstance(providers, dict):
-        log.warning("'providers' must be a dict, got %s; resetting to empty", type(providers).__name__)
-        providers = {}
-    cleaned_providers: dict[str, dict] = {}
-    for alias, entry in providers.items():
-        keep, cleaned = _validate_provider_entry(alias, entry)
-        if keep and cleaned is not None:
-            cleaned_providers[alias] = cleaned
-    values["providers"] = cleaned_providers
+    # Validate theme and personality (basic existence check — full validation done at load time)
+    if not isinstance(cfg.theme, str) or not cfg.theme:
+        errors.append("'theme' must be a non-empty string")
+    if not isinstance(cfg.personality, str) or not cfg.personality:
+        errors.append("'personality' must be a non-empty string")
 
-    return Config(**values)
+    return errors
+
+
+def _check_positive_int(obj, field: str, errors: list[str], prefix: str | None = None) -> None:
+    val = getattr(obj, field)
+    key = f"{prefix}.{field}" if prefix else f"'{field}'"
+    if not isinstance(val, int) or isinstance(val, bool):
+        errors.append(f"{key} must be a positive integer, got {type(val).__name__}")
+    elif val <= 0:
+        errors.append(f"{key} must be a positive integer, got {val}")
+
+
+def _check_nonneg_int(obj, field: str, errors: list[str], prefix: str | None = None) -> None:
+    val = getattr(obj, field)
+    key = f"{prefix}.{field}" if prefix else f"'{field}'"
+    if not isinstance(val, int) or isinstance(val, bool):
+        errors.append(f"{key} must be a non-negative integer, got {type(val).__name__}")
+    elif val < 0:
+        errors.append(f"{key} must be a non-negative integer, got {val}")
 
 
 def _deep_merge_provider_dict(home: dict, project: dict) -> dict:
@@ -369,6 +378,12 @@ _DEEP_MERGE_KEYS = frozenset({"mcp_servers", "providers"})
 
 class ConfigManager:
     _instance: Config | None = None
+    _errors: list[str] = []
+
+    @classmethod
+    def errors(cls) -> list[str]:
+        """Return validation errors from the last load."""
+        return cls._errors
 
     @classmethod
     def load(cls) -> Config:
@@ -379,6 +394,7 @@ class ConfigManager:
         merged = asdict(defaults)
 
         home = _load_json(HOME_CONFIG_PATH)
+        home = _convert_from_dict(home)
         for k, v in home.items():
             if k not in merged:
                 continue
@@ -389,6 +405,7 @@ class ConfigManager:
 
         project_path = Path.cwd() / PROJECT_CONFIG_NAME
         project = _load_json(project_path)
+        project = _convert_from_dict(project)
         for k, v in project.items():
             if k not in merged:
                 continue
@@ -399,7 +416,7 @@ class ConfigManager:
 
         cfg = Config(**merged)
         cfg = _merge_from_env(cfg)
-        cfg = _validate_config(cfg)
+        cls._errors = validate_config(cfg)
 
         cls._instance = cfg
         return cfg

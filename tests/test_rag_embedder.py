@@ -20,14 +20,14 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from stupidex.config import Config, _validate_config
+from stupidex.config import Config
 from stupidex.llm import providers as providers_mod
 from stupidex.llm.providers import ProviderResolutionError, reset_cache
 from stupidex.rag.embedder import MAX_RETRIES, Embedder, EmbeddingError
 
 
 def _cfg(providers: dict) -> Config:
-    return _validate_config(Config(providers=providers))
+    return Config(providers=providers)
 
 
 class EmbedderTestCase(unittest.TestCase):
@@ -195,13 +195,13 @@ class TestEmbedErrors(EmbedderTestCase):
         """An empty model is a config bug -> EmbeddingError mentioning `rag_embedding_model`."""
         with self.assertRaises(EmbeddingError) as ctx:
             asyncio.run(Embedder("").embed(["x"]))
-        self.assertIn("rag_embedding_model", str(ctx.exception))
+        self.assertIn("rag.embedding_model", str(ctx.exception))
 
     def test_none_model_raises_embedding_error(self):
         """A `None` model is a config bug -> EmbeddingError mentioning `rag_embedding_model`."""
         with self.assertRaises(EmbeddingError) as ctx:
             asyncio.run(Embedder(None).embed(["x"]))
-        self.assertIn("rag_embedding_model", str(ctx.exception))
+        self.assertIn("rag.embedding_model", str(ctx.exception))
 
     def test_litellm_failure_retries_then_raises_embedding_error(self):
         """After `MAX_RETRIES` attempts, a litellm exception surfaces as `EmbeddingError`."""

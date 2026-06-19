@@ -28,6 +28,7 @@ COMMANDS = {
     "/model": "Change the model for the current session",
     "/theme": "Switch the application theme",
     "/personality": "Switch the agent personality",
+    "/settings": "Open the configuration settings screen",
     "/index-rag": "Index the project for RAG semantic search",
     "/index-ast": "Re-scan the project for AST symbol indexing",
     "/rag status": "Show RAG index status",
@@ -280,6 +281,20 @@ async def execute_command(app: App, cmd: str) -> None:
                     set_current_personality(result)
 
             app.push_screen(OptionPicker(items), on_personality_picked)
+        case "/settings":
+            from stupidex.config import ConfigManager
+            from stupidex.screens.settings import SettingsScreen
+
+            cfg = get_config()
+
+            async def on_settings_result(result: Config | None):
+                if result is not None:
+                    ConfigManager._instance = result
+                    ConfigManager.save()
+                    app.notify("Settings saved. Restart the application for some changes to take effect.", severity="information")
+
+            app.push_screen(SettingsScreen(cfg), on_settings_result)
+
         case "/index-rag":
             from stupidex.rag.indexer import index_project
             from stupidex.rag.indexer import is_indexing as rag_is_indexing
