@@ -35,8 +35,13 @@ def _load_agents_from_dir(agents_dir: Path) -> dict[str, Agent]:
         agent_type = metadata.get('type', 'subagent')
         tier = metadata.get('tier', 'papudo')
         description = metadata.get('description', '')
-        allowed_tools = metadata.get('allowed_tools', [])
+        allowed_tools = metadata.get('allowed_tools')
         allowed_skills = metadata.get('allowed_skills', [])
+        if isinstance(allowed_tools, str):
+            if allowed_tools.strip() in ('[]', ''):
+                allowed_tools = []
+            else:
+                allowed_tools = [t.strip() for t in allowed_tools.split(',') if t.strip()]
         if isinstance(allowed_skills, str):
             if allowed_skills.strip() in ('[]', ''):
                 allowed_skills = []
@@ -50,7 +55,7 @@ def _load_agents_from_dir(agents_dir: Path) -> dict[str, Agent]:
             log.warning("Skipping %s: no description in frontmatter", agent_file)
             continue
 
-        if not allowed_tools:
+        if allowed_tools is None:
             log.warning("Skipping %s: no allowed_tools in frontmatter", agent_file)
             continue
 

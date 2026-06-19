@@ -11,7 +11,7 @@ from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
-from stupidex.domain.session import Session, SessionManager
+from stupidex.domain.session import Session, SessionManager, set_current_session_id
 from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
 from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
@@ -102,6 +102,7 @@ class Stupidex(App):
     async def on_mount(self) -> None:
         self.sessions.create()
         set_todo_store(self.sessions.active.todo_store)
+        set_current_session_id(self.sessions.active.id)
         set_todo_refresh_callback(self.refresh_todos)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
@@ -139,6 +140,7 @@ class Stupidex(App):
                 pass
         from stupidex.mcp import set_mcp_manager
         set_mcp_manager(None)
+        set_current_session_id(None)
 
     def _is_streaming(self) -> bool:
         return self._active_worker is not None and not self._active_worker.is_finished
