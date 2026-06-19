@@ -5,26 +5,33 @@ from dataclasses import asdict
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Static, Tab, Tabs
+from textual.widgets import Button, Input, Label, Select, Static, Tab, Tabs
 
+from stupidex.commands.session_commands import _build_model_picker_items
 from stupidex.config import (
     Config,
     RAGConfig,
     validate_config,
 )
+from stupidex.screens.picker import OptionPicker
 
 
 class NewProviderForm(ModalScreen[dict | None]):
-    """Modal form to add or edit a provider entry."""
+    """Modal form to add or edit a provider entry.
+
+    Per-model attributes are edited inline via a dynamic list of model rows.
+    Each row captures ``model_id`` plus the four supported override fields:
+    ``max_input_tokens``, ``max_output_tokens``, ``supports_vision``, ``mode``.
+    """
 
     CSS = """
     NewProviderForm {
         align: center middle;
     }
     #provider-form-container {
-        width: 60;
+        width: 76;
         height: auto;
-        max-height: 80%;
+        max-height: 85%;
         border: thick $primary;
         background: $surface;
         padding: 1 2;
@@ -49,12 +56,48 @@ class NewProviderForm(ModalScreen[dict | None]):
         color: $error;
         margin-bottom: 1;
     }
+    #pf-models-list {
+        margin-top: 1;
+        height: auto;
+    }
+    .pf-model-row {
+        height: auto;
+        border: solid $surface-lighten-1;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    .pf-model-row-input {
+        width: 1fr;
+        margin: 0 1 0 0;
+    }
+    .pf-model-row-small {
+        width: 12;
+        margin: 0 1 0 0;
+    }
+    .pf-model-row-vision {
+        width: 16;
+        margin: 0 1 0 0;
+    }
+    .pf-model-row-remove {
+        width: auto;
+    }
+    .pf-model-row-label {
+        text-style: bold;
+        margin-bottom: 1;
+    }
     """
 
     def __init__(self, title: str, initial: dict | None = None) -> None:
         super().__init__()
         self._title = title
         self._initial = initial or {}
+        # Tracking list of model entries for dynamic add/remove.
+        # Each entry is a dict: {"model_id": str, "max_input_tokens": str,
+        # "max_output_tokens": str, "supports_vision": bool, "mode": str}
+        # Values are kept as strings (tokens) / bool / str to round-trip through Inputs.
+        self._model_entries: list[dict] = []
+        # Track the next available index for unique widget IDs.
+        self._model_seq = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="provider-form-container"):
@@ -91,24 +134,147 @@ class NewProviderForm(ModalScreen[dict | None]):
                 value=self._initial.get("litellm_provider", ""),
                 id="pf-litellm-provider",
             )
-            yield Label("Models (comma-separated):")
-            yield Input(
-                placeholder="gpt-4o, gpt-4o-mini",
-                value=self._initial.get("_models_str", ""),
-                id="pf-models",
-            )
+            yield Label("Models:")
+            yield Vertical(id="pf-models-list")
             with Horizontal(id="provider-form-buttons"):
+                yield Button("Add Model", id="pf-add-model")
                 yield Button("Save", variant="primary", id="pf-save")
                 yield Button("Cancel", variant="default", id="pf-cancel")
 
     def on_mount(self) -> None:
+        # Seed the models list from the initial config.
+        initial_models = self._initial.get("models", {}) if isinstance(self._initial, dict) else {}
+        if isinstance(initial_models, dict):
+            for model_id, overrides in initial_models.items():
+                if not isinstance(overrides, dict):
+                    overrides = {}
+                self._add_model_entry(model_id=model_id, overrides=overrides)
+        # Always ensure at least one empty row when adding a new provider with
+        # no models, so the user has a visible place to type.
+        if not self._model_entries:
+            self._add_model_entry()
         self.query_one("#pf-alias", Input).focus()
 
+    # ── Dynamic model entries ──────────────────────────────────────────
+
+    def _add_model_entry(
+        self,
+        model_id: str = "",
+        overrides: dict | None = None,
+    ) -> None:
+        """Append a new model row to the form and mount its widgets."""
+        overrides = overrides or {}
+        idx = self._model_seq
+        self._model_seq += 1
+        supports_vision = bool(overrides.get("supports_vision", False))
+        entry = {
+            "idx": idx,
+            "model_id": model_id,
+            "max_input_tokens": str(overrides.get("max_input_tokens", ""))
+            if overrides.get("max_input_tokens") is not None
+            else "",
+            "max_output_tokens": str(overrides.get("max_output_tokens", ""))
+            if overrides.get("max_output_tokens") is not None
+            else "",
+            "supports_vision": supports_vision,
+            "mode": str(overrides.get("mode", "")) if overrides.get("mode") else "",
+        }
+        self._model_entries.append(entry)
+        models_list = self.query_one("#pf-models-list", Vertical)
+        models_list.mount(self._build_model_row(entry))
+        # Focus the freshly added model_id input to make the entry point obvious.
+        try:
+            self.query_one(f"#pf-model-id-{idx}", Input).focus()
+        except Exception:
+            pass
+
+    def _build_model_row(self, entry: dict) -> Vertical:
+        idx = entry["idx"]
+        vision_select = Select(
+            [("false", False), ("true", True)],
+            value=entry["supports_vision"],
+            id=f"pf-model-vision-{idx}",
+            classes="pf-model-row-vision",
+        )
+        return Vertical(
+            Label("Model ID:", classes="pf-model-row-label"),
+            Input(
+                placeholder="gpt-4o",
+                value=entry["model_id"],
+                id=f"pf-model-id-{idx}",
+                classes="pf-model-row-input",
+            ),
+            Horizontal(
+                Input(
+                    placeholder="max_input_tokens",
+                    value=entry["max_input_tokens"],
+                    id=f"pf-model-mit-{idx}",
+                    classes="pf-model-row-small",
+                ),
+                Input(
+                    placeholder="max_output_tokens",
+                    value=entry["max_output_tokens"],
+                    id=f"pf-model-mot-{idx}",
+                    classes="pf-model-row-small",
+                ),
+                vision_select,
+                Input(
+                    placeholder="mode (chat)",
+                    value=entry["mode"],
+                    id=f"pf-model-mode-{idx}",
+                    classes="pf-model-row-small",
+                ),
+                Button("Remove", id=f"pf-model-rm-{idx}", classes="pf-model-row-remove"),
+            ),
+            classes="pf-model-row",
+        )
+
+    def _remove_model_entry(self, idx: int) -> None:
+        # Drop the entry from the tracking list and unmount its row.
+        self._model_entries = [e for e in self._model_entries if e["idx"] != idx]
+        # Find the row container that owns the matching remove button and remove it.
+        for row in self.query(".pf-model-row"):
+            try:
+                row.query_one(f"#pf-model-rm-{idx}", Button)
+            except Exception:
+                continue
+            row.remove()
+            break
+
+    # ── Event handlers ─────────────────────────────────────────────────
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "pf-save":
+        btn_id = event.button.id or ""
+        if btn_id == "pf-save":
             self._do_save()
-        else:
+        elif btn_id == "pf-cancel":
             self.dismiss(None)
+        elif btn_id == "pf-add-model":
+            self._add_model_entry()
+        elif btn_id.startswith("pf-model-rm-"):
+            idx = int(btn_id[len("pf-model-rm-") :])
+            self._remove_model_entry(idx)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        # Keep the in-memory entry dict in sync so save reflects edits.
+        input_id = event.input.id or ""
+        for entry in self._model_entries:
+            i = entry["idx"]
+            if input_id == f"pf-model-id-{i}":
+                entry["model_id"] = event.value
+            elif input_id == f"pf-model-mit-{i}":
+                entry["max_input_tokens"] = event.value
+            elif input_id == f"pf-model-mot-{i}":
+                entry["max_output_tokens"] = event.value
+            elif input_id == f"pf-model-mode-{i}":
+                entry["mode"] = event.value
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        select_id = event.select.id or ""
+        for entry in self._model_entries:
+            i = entry["idx"]
+            if select_id == f"pf-model-vision-{i}":
+                entry["supports_vision"] = bool(event.value)
 
     def _do_save(self) -> None:
         alias = self.query_one("#pf-alias", Input).value.strip()
@@ -123,7 +289,6 @@ class NewProviderForm(ModalScreen[dict | None]):
         api_key = self.query_one("#pf-api-key", Input).value.strip()
         api_key_env = self.query_one("#pf-api-key-env", Input).value.strip()
         litellm_provider = self.query_one("#pf-litellm-provider", Input).value.strip()
-        models_str = self.query_one("#pf-models", Input).value.strip()
 
         entry: dict = {}
         if base_url:
@@ -134,12 +299,45 @@ class NewProviderForm(ModalScreen[dict | None]):
             entry["api_key_env"] = api_key_env
         if litellm_provider:
             entry["litellm_provider"] = litellm_provider
-        models = {}
-        if models_str:
-            for m in models_str.split(","):
-                m = m.strip()
-                if m:
-                    models[m] = {}
+
+        # Collect model entries into the models dict.
+        models: dict[str, dict] = {}
+        seen_ids: set[str] = set()
+        for entry_data in self._model_entries:
+            model_id = entry_data["model_id"].strip()
+            if not model_id:
+                continue
+            if model_id in seen_ids:
+                self.query_one(
+                    "#provider-form-error", Static
+                ).update(f"Duplicate model id: {model_id}")
+                return
+            seen_ids.add(model_id)
+            overrides: dict = {}
+            mit = entry_data["max_input_tokens"].strip()
+            if mit:
+                try:
+                    overrides["max_input_tokens"] = int(mit)
+                except ValueError:
+                    self.query_one(
+                        "#provider-form-error", Static
+                    ).update(f"max_input_tokens must be an integer for {model_id!r}.")
+                    return
+            mot = entry_data["max_output_tokens"].strip()
+            if mot:
+                try:
+                    overrides["max_output_tokens"] = int(mot)
+                except ValueError:
+                    self.query_one(
+                        "#provider-form-error", Static
+                    ).update(f"max_output_tokens must be an integer for {model_id!r}.")
+                    return
+            if entry_data["supports_vision"]:
+                overrides["supports_vision"] = True
+            mode = entry_data["mode"].strip()
+            if mode:
+                overrides["mode"] = mode
+            models[model_id] = overrides
         if models:
             entry["models"] = models
 
@@ -265,13 +463,28 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     #settings-footer {
         dock: bottom;
-        height: 3;
+        height: auto;
         padding: 1 2;
+        background: $primary-darken-2;
+    }
+
+    #settings-footer-buttons {
+        height: auto;
         align: center middle;
     }
 
-    #settings-footer Button {
+    #settings-footer-buttons Button {
         margin: 0 1;
+    }
+
+    #settings-footer-hint {
+        color: $text-muted;
+        text-align: center;
+        margin-top: 1;
+    }
+
+    #settings-save {
+        text-style: bold;
     }
 
     #settings-error {
@@ -317,6 +530,24 @@ class SettingsScreen(ModalScreen[Config | None]):
         color: $text-muted;
     }
 
+    .tier-row {
+        height: auto;
+        margin-bottom: 1;
+        align-vertical: middle;
+    }
+
+    .tier-label {
+        width: 20;
+        padding: 0 1;
+        text-style: bold;
+    }
+
+    .tier-current {
+        width: 1fr;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
     .item-actions {
         dock: right;
         width: auto;
@@ -339,10 +570,15 @@ class SettingsScreen(ModalScreen[Config | None]):
             yield Static("Settings", id="settings-header")
             yield Tabs(*[Tab(name, id=name.lower().replace(" ", "-")) for name in self.TABS], id="settings-tabs")
             yield ScrollableContainer(id="settings-content")
-            with Horizontal(id="settings-footer"):
-                yield Static("", id="settings-error")
-                yield Button("Save", variant="primary", id="settings-save")
-                yield Button("Cancel", variant="default", id="settings-cancel")
+            with Vertical(id="settings-footer"):
+                with Horizontal(id="settings-footer-buttons"):
+                    yield Static("", id="settings-error")
+                    yield Button("Save [Ctrl+S]", variant="primary", id="settings-save")
+                    yield Button("Cancel [Esc]", variant="default", id="settings-cancel")
+                yield Static(
+                    "Press Ctrl+S to save changes, Esc to cancel.",
+                    id="settings-footer-hint",
+                )
 
     def on_mount(self) -> None:
         self._render_tab("providers")
@@ -371,20 +607,19 @@ class SettingsScreen(ModalScreen[Config | None]):
 
         self._render_keyed_list(container, items, "prov")
 
-        btn_row = Horizontal(classes="settings-row")
-        btn_row.mount(Button("Add Provider", variant="primary", id="providers-add"))
-        container.mount(btn_row)
+        container.mount(Horizontal(
+            Button("Add Provider", variant="primary", id="providers-add"),
+            classes="settings-row",
+        ))
 
     def _on_provider_action(self, alias: str, action: str) -> None:
         if action == "edit":
             entry = self._config.providers.get(alias, {})
-            models = list(entry.get("models", {}).keys())
             initial = {
                 "_alias": alias,
                 **entry,
-                "_models_str": ", ".join(models),
             }
-            self.push_screen(
+            self.app.push_screen(
                 NewProviderForm(f"Edit Provider: {alias}", initial),
                 self._on_edit_provider_result,
             )
@@ -395,7 +630,6 @@ class SettingsScreen(ModalScreen[Config | None]):
     def _on_edit_provider_result(self, result: dict | None) -> None:
         if result is not None:
             alias = result.pop("_alias")
-            result.pop("_models_str", "")
             self._config.providers[alias] = result
             self._refresh_tab()
 
@@ -424,11 +658,17 @@ class SettingsScreen(ModalScreen[Config | None]):
                     self._on_mcp_action(name, "delete")
             return
 
+        # ── Tier model change buttons ────────────────────
+        if btn_id.startswith("tier-change-"):
+            tier = btn_id[len("tier-change-") :]
+            self._open_tier_model_picker(tier)
+            return
+
         # ── Other buttons ────────────────────────────────
         if btn_id == "providers-add":
-            self.push_screen(NewProviderForm("Add Provider"), self._on_add_provider_result)
+            self.app.push_screen(NewProviderForm("Add Provider"), self._on_add_provider_result)
         elif btn_id == "mcp-add":
-            self.push_screen(NewMCPServerForm("Add MCP Server"), self._on_add_mcp_result)
+            self.app.push_screen(NewMCPServerForm("Add MCP Server"), self._on_add_mcp_result)
         elif btn_id == "settings-save":
             self._do_save()
         elif btn_id == "settings-cancel":
@@ -437,7 +677,6 @@ class SettingsScreen(ModalScreen[Config | None]):
     def _on_add_provider_result(self, result: dict | None) -> None:
         if result is not None:
             alias = result.pop("_alias")
-            result.pop("_models_str", None)
             self._config.providers[alias] = result
             self._refresh_tab()
 
@@ -463,15 +702,16 @@ class SettingsScreen(ModalScreen[Config | None]):
 
         self._render_keyed_list(container, items, "mcp")
 
-        btn_row = Horizontal(classes="settings-row")
-        btn_row.mount(Button("Add MCP Server", variant="primary", id="mcp-add"))
-        container.mount(btn_row)
+        container.mount(Horizontal(
+            Button("Add MCP Server", variant="primary", id="mcp-add"),
+            classes="settings-row",
+        ))
 
     def _on_mcp_action(self, name: str, action: str) -> None:
         if action == "edit":
             entry = self._config.mcp_servers.get(name, {})
             initial = {"_name": name, **entry}
-            self.push_screen(
+            self.app.push_screen(
                 NewMCPServerForm(f"Edit MCP Server: {name}", initial),
                 self._on_edit_mcp_result,
             )
@@ -493,23 +733,53 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     # ── Tier Models tab ───────────────────────────────────────────────
 
+    TIERS = ["tolo", "tainha", "papudo", "papaca"]
+
     def _render_tier_models(self, container: ScrollableContainer) -> None:
         container.mount(Static("Tier Models", classes="settings-section-title"))
-        container.mount(Static("Map each agent tier to a model (alias/model format).", classes="settings-list-item-detail"))
-
-        tiers = ["tolo", "tainha", "papudo", "papaca"]
-        for tier in tiers:
-            current = self._config.tier_models.get(tier, self._config.default_model)
-            row = Horizontal(classes="settings-row")
-            row.mount(Label(f"  {tier}:", classes="settings-label"))
-            inp = Input(
-                value=current,
-                placeholder="alias/model-id",
-                id=f"tier-{tier}",
-                classes="settings-input",
+        container.mount(
+            Static(
+                "Map each agent tier to a model (alias/model format). "
+                "Click Change to pick from configured providers.",
+                classes="settings-list-item-detail",
             )
-            row.mount(inp)
-            container.mount(row)
+        )
+
+        # Build the available picker items once per render to know whether any models exist.
+        picker_items = _build_model_picker_items(self._config)
+        if not picker_items:
+            container.mount(
+                Static(
+                    "No models available. Add providers and models in the Providers tab first.",
+                    classes="settings-list-item-detail",
+                )
+            )
+            return
+
+        for tier in self.TIERS:
+            current = self._config.tier_models.get(tier, self._config.default_model)
+            container.mount(
+                Horizontal(
+                    Label(f"  {tier}:", classes="tier-label"),
+                    Static(current or "—", classes="tier-current"),
+                    Button("Change", id=f"tier-change-{tier}"),
+                    classes="tier-row",
+                )
+            )
+
+    def _open_tier_model_picker(self, tier: str) -> None:
+        """Push the OptionPicker to select a model assignment for `tier`."""
+        items = _build_model_picker_items(self._config)
+        if not items:
+            return
+
+        def _on_picked(selected: str | None) -> None:
+            if not selected:
+                return
+            self._config.tier_models[tier] = selected
+            self._refresh_tab()
+
+        self.app.push_screen(OptionPicker(items), _on_picked)
 
     # ── RAG tab ───────────────────────────────────────────────────────
 
@@ -524,21 +794,21 @@ class SettingsScreen(ModalScreen[Config | None]):
             ("max_file_size", "Max File Size (bytes)", str(self._config.rag.max_file_size)),
         ]
         for field_id, label, value in fields:
-            row = Horizontal(classes="settings-row")
-            row.mount(Label(f"  {label}:", classes="settings-label"))
-            inp = Input(value=value, id=f"rag-{field_id}", classes="settings-input")
-            row.mount(inp)
-            container.mount(row)
+            container.mount(Horizontal(
+                Label(f"  {label}:", classes="settings-label"),
+                Input(value=value, id=f"rag-{field_id}", classes="settings-input"),
+                classes="settings-row",
+            ))
 
-        row = Horizontal(classes="settings-row")
-        row.mount(Label("  Embedding Model:", classes="settings-label"))
-        inp = Input(
-            value=self._config.rag.embedding_model,
-            id="rag-embedding_model",
-            classes="settings-input",
-        )
-        row.mount(inp)
-        container.mount(row)
+        container.mount(Horizontal(
+            Label("  Embedding Model:", classes="settings-label"),
+            Input(
+                value=self._config.rag.embedding_model,
+                id="rag-embedding_model",
+                classes="settings-input",
+            ),
+            classes="settings-row",
+        ))
 
     # ── General tab ───────────────────────────────────────────────────
 
@@ -555,23 +825,23 @@ class SettingsScreen(ModalScreen[Config | None]):
             ("ast_max_file_size", "AST Max File Size (bytes)", str(self._config.ast_max_file_size)),
         ]
         for field_id, label, value in fields:
-            row = Horizontal(classes="settings-row")
-            row.mount(Label(f"  {label}:", classes="settings-label"))
-            inp = Input(value=value, id=f"gen-{field_id}", classes="settings-input")
-            row.mount(inp)
-            container.mount(row)
+            container.mount(Horizontal(
+                Label(f"  {label}:", classes="settings-label"),
+                Input(value=value, id=f"gen-{field_id}", classes="settings-input"),
+                classes="settings-row",
+            ))
 
-        row = Horizontal(classes="settings-row")
-        row.mount(Label("  Theme:", classes="settings-label"))
-        inp = Input(value=self._config.theme, id="gen-theme", classes="settings-input")
-        row.mount(inp)
-        container.mount(row)
+        container.mount(Horizontal(
+            Label("  Theme:", classes="settings-label"),
+            Input(value=self._config.theme, id="gen-theme", classes="settings-input"),
+            classes="settings-row",
+        ))
 
-        row = Horizontal(classes="settings-row")
-        row.mount(Label("  Personality:", classes="settings-label"))
-        inp = Input(value=self._config.personality, id="gen-personality", classes="settings-input")
-        row.mount(inp)
-        container.mount(row)
+        container.mount(Horizontal(
+            Label("  Personality:", classes="settings-label"),
+            Input(value=self._config.personality, id="gen-personality", classes="settings-input"),
+            classes="settings-row",
+        ))
 
     # ── Helpers ───────────────────────────────────────────────────────
 
@@ -601,14 +871,12 @@ class SettingsScreen(ModalScreen[Config | None]):
             container.mount(item)
 
     def _collect_modified_config(self) -> Config:
-        """Read all input fields and produce a modified Config."""
-        cfg = self._config
+        """Read all input fields and produce a modified Config.
 
-        # Tier models
-        for tier in ["tolo", "tainha", "papudo", "papaca"]:
-            inp = self.query_one(f"#tier-{tier}", Input)
-            if inp:
-                cfg.tier_models[tier] = inp.value.strip() or cfg.default_model
+        Tier models are stored directly on `self._config.tier_models` by the
+        OptionPicker callbacks, so they are not re-read from Inputs here.
+        """
+        cfg = self._config
 
         # RAG
         rag_fields = {
@@ -674,6 +942,12 @@ class SettingsScreen(ModalScreen[Config | None]):
             err_widget.update("Errors:\n" + "\n".join(f"• {e}" for e in errors))
             return
         self.dismiss(config)
+
+    # ── Keyboard shortcuts ────────────────────────────────────────────
+
+    def key_ctrl_s(self) -> None:
+        """Ctrl+S saves the current settings."""
+        self._do_save()
 
     def key_escape(self) -> None:
         self.dismiss(None)

@@ -164,25 +164,25 @@ class TestSettingsScreenCollectModifiedConfig:
         m.value = value
         return m
 
-    def test_tier_models_read_from_inputs(self):
-        screen = SettingsScreen(Config())
-        screen.query_one = MagicMock()
-
-        def qo(selector: str, _cls=None):
-            mapping = {
-                "#tier-tolo": self._make_mock_input("provider-a/model-x"),
-                "#tier-tainha": self._make_mock_input("provider-a/model-y"),
-                "#tier-papudo": self._make_mock_input(""),
-                "#tier-papaca": self._make_mock_input("provider-b/model-z"),
-            }
-            return mapping.get(selector, self._make_mock_input(""))
-
-        screen.query_one = qo
+    def test_tier_models_kept_from_config(self):
+        """Tier models are stored directly on `_config.tier_models` via the
+        OptionPicker callbacks, so `_collect_modified_config` must preserve
+        whatever is already there rather than re-reading from Input fields."""
+        base = Config()
+        base.tier_models = {
+            "tolo": "provider-a/model-x",
+            "tainha": "provider-a/model-y",
+            "papudo": "provider-b/model-z",
+            "papaca": "provider-b/model-w",
+        }
+        screen = SettingsScreen(base)
+        # `query_one` should not be consulted for tier-anything.
+        screen.query_one = MagicMock(return_value=self._make_mock_input(""))
         cfg = screen._collect_modified_config()
         assert cfg.tier_models["tolo"] == "provider-a/model-x"
         assert cfg.tier_models["tainha"] == "provider-a/model-y"
-        assert cfg.tier_models["papudo"] == cfg.default_model  # empty → default
-        assert cfg.tier_models["papaca"] == "provider-b/model-z"
+        assert cfg.tier_models["papudo"] == "provider-b/model-z"
+        assert cfg.tier_models["papaca"] == "provider-b/model-w"
 
     def test_rag_fields_read_from_inputs(self):
         screen = SettingsScreen(Config())
@@ -316,6 +316,20 @@ class TestNewProviderForm:
         form.query_one = qo
         return form
 
+    def _add_entry(self, form: NewProviderForm, **fields) -> dict:
+        """Append an in-memory model entry (bypasses widget mounting)."""
+        entry = {
+            "idx": form._model_seq,
+            "model_id": fields.get("model_id", ""),
+            "max_input_tokens": fields.get("max_input_tokens", ""),
+            "max_output_tokens": fields.get("max_output_tokens", ""),
+            "supports_vision": fields.get("supports_vision", False),
+            "mode": fields.get("mode", ""),
+        }
+        form._model_seq += 1
+        form._model_entries.append(entry)
+        return entry
+
     def test_alias_required(self):
         form = self._make_form({"#pf-alias": ""})
         error_static = MagicMock()
@@ -342,7 +356,7 @@ class TestNewProviderForm:
         form.dismiss.assert_not_called()
 
     def test_valid_provider_saves_without_extra_fields(self):
-        """Minimal valid provider: alias only, no optional fields."""
+        """Minimal valid provider: alias only, no models."""
         def qo(selector: str, _cls=None):
             return MagicMock(value={
                 "#pf-alias": "my-provider",
@@ -350,7 +364,6 @@ class TestNewProviderForm:
                 "#pf-api-key": "",
                 "#pf-api-key-env": "",
                 "#pf-litellm-provider": "",
-                "#pf-models": "",
             }.get(selector, ""))
 
         form = NewProviderForm("Test")
@@ -371,12 +384,13 @@ class TestNewProviderForm:
                 "#pf-api-key": "sk-secret",
                 "#pf-api-key-env": "",
                 "#pf-litellm-provider": "openai",
-                "#pf-models": "gpt-4o, gpt-4o-mini",
             }.get(selector, ""))
 
         form = NewProviderForm("Test")
         form.query_one = qo
         form.dismiss = MagicMock()
+        self._add_entry(form, model_id="gpt-4o")
+        self._add_entry(form, model_id="gpt-4o-mini")
         form._do_save()
         result = form.dismiss.call_args[0][0]
         assert result["_alias"] == "my-provider"
@@ -384,6 +398,90 @@ class TestNewProviderForm:
         assert result["api_key"] == "sk-secret"
         assert result["litellm_provider"] == "openai"
         assert set(result["models"].keys()) == {"gpt-4o", "gpt-4o-mini"}
+
+    def test_model_attributes_collected_into_overrides(self):
+        """max_input_tokens, max_output_tokens, supports_vision, mode round-trip."""
+        def qo(selector: str, _cls=None):
+            return MagicMock(value={
+                "#pf-alias": "p",
+                "#pf-base-url": "",
+                "#pf-api-key": "",
+                "#pf-api-key-env": "",
+                "#pf-litellm-provider": "",
+            }.get(selector, ""))
+
+        error_static = MagicMock()
+        form = NewProviderForm("Test")
+        form.query_one = MagicMock(side_effect=lambda sid, _cls=None: (
+            error_static if "#provider-form-error" in sid
+            else qo(sid, _cls)
+        ))
+        form.dismiss = MagicMock()
+        self._add_entry(
+            form,
+            model_id="gpt-4o",
+            max_input_tokens="128000",
+            max_output_tokens="16384",
+            supports_vision=True,
+            mode="chat",
+        )
+        self._add_entry(form, model_id="plain-model")
+        form._do_save()
+        result = form.dismiss.call_args[0][0]
+        assert result["models"]["gpt-4o"] == {
+            "max_input_tokens": 128000,
+            "max_output_tokens": 16384,
+            "supports_vision": True,
+            "mode": "chat",
+        }
+        assert result["models"]["plain-model"] == {}
+
+    def test_non_integer_token_is_error(self):
+        def qo(selector: str, _cls=None):
+            return MagicMock(value={
+                "#pf-alias": "p",
+                "#pf-base-url": "",
+                "#pf-api-key": "",
+                "#pf-api-key-env": "",
+                "#pf-litellm-provider": "",
+            }.get(selector, ""))
+
+        error_static = MagicMock()
+        form = NewProviderForm("Test")
+        form.query_one = MagicMock(side_effect=lambda sid, _cls=None: (
+            error_static if "#provider-form-error" in sid
+            else qo(sid, _cls)
+        ))
+        form.dismiss = MagicMock()
+        self._add_entry(form, model_id="gpt-4o", max_input_tokens="not-a-number")
+        form._do_save()
+        error_static.update.assert_called_once()
+        assert "max_input_tokens" in error_static.update.call_args[0][0]
+        form.dismiss.assert_not_called()
+
+    def test_duplicate_model_id_is_error(self):
+        def qo(selector: str, _cls=None):
+            return MagicMock(value={
+                "#pf-alias": "p",
+                "#pf-base-url": "",
+                "#pf-api-key": "",
+                "#pf-api-key-env": "",
+                "#pf-litellm-provider": "",
+            }.get(selector, ""))
+
+        error_static = MagicMock()
+        form = NewProviderForm("Test")
+        form.query_one = MagicMock(side_effect=lambda sid, _cls=None: (
+            error_static if "#provider-form-error" in sid
+            else qo(sid, _cls)
+        ))
+        form.dismiss = MagicMock()
+        self._add_entry(form, model_id="gpt-4o")
+        self._add_entry(form, model_id="gpt-4o")
+        form._do_save()
+        error_static.update.assert_called_once()
+        assert "Duplicate" in error_static.update.call_args[0][0]
+        form.dismiss.assert_not_called()
 
 
 # ── NewMCPServerForm tests ────────────────────────────────────────────────────
@@ -466,16 +564,19 @@ class TestConfigManagerSettingsFlow:
     def test_settings_screen_returns_modified_config(self):
         """Verify that validate_config accepts a config modified via _collect_modified_config."""
         orig = Config()
+        # Tier models are now mutated directly via the OptionPicker callbacks.
+        orig.tier_models = {
+            "tolo": "custom/tolo-model",
+            "tainha": "custom/tainha-model",
+            "papudo": "custom/papudo-model",
+            "papaca": "custom/papaca-model",
+        }
         screen = SettingsScreen(orig)
         screen.query_one = MagicMock()
 
         def qo(selector: str, _cls=None):
             m = MagicMock()
             mapping = {
-                "#tier-tolo": "custom/tolo-model",
-                "#tier-tainha": "custom/tainha-model",
-                "#tier-papudo": "custom/papudo-model",
-                "#tier-papaca": "custom/papaca-model",
                 "#rag-chunk_size": "3000",
                 "#rag-chunk_overlap": "300",
                 "#rag-top_k": "8",
