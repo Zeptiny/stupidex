@@ -3,3 +3,5 @@ __pycache__/
 *.egg-info/
 .stupidex/rag/
 .stupidex/ast/
+build/
+.stupidex/rag/
