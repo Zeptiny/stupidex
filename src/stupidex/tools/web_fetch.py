@@ -9,6 +9,7 @@ from xml.sax.saxutils import escape, quoteattr
 import httpx
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+import html2text
 import litellm  # noqa: E402
 
 from stupidex.agents import get_agent_registry  # noqa: E402
@@ -123,11 +124,6 @@ def _extract_title(html: str) -> str:
 
 
 def _html_to_markdown(html: str) -> str:
-    try:
-        import html2text
-    except ImportError as e:
-        raise RuntimeError("html2text is not installed. Install project dependencies and try again.") from e
-
     converter = html2text.HTML2Text()
     converter.body_width = 0
     converter.ignore_images = True
@@ -228,7 +224,7 @@ def _raw_result(url: str, title: str, content_type: str, content: str) -> Execut
         display=f"Fetched {len(content)} characters to {path}",
         content=(
             f"<web_fetch_raw {attrs}>\n"
-            f"<warning>Content exceeded {RAW_CONTENT_THRESHOLD} characters and was written to cache.</warning>\n"
+            f"<warning>Content exceeded {RAW_CONTENT_THRESHOLD} characters and was written to cache - {path}, use grep and read tools to get the result</warning>\n"
             f"</web_fetch_raw>"
         ),
     )
