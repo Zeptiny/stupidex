@@ -88,11 +88,21 @@ class MCPManager:
             self._ready.set()
             # Idle until shutdown is requested, then close the stack in THIS
             # task — the same task that entered every transport.
-            await self._stop.wait()
+            # Catch CancelledError so aclose() runs regardless — otherwise
+            # the async generators (stdio_client, sse_client) dangle and
+            # their finalizers later raise "exit cancel scope in a different
+            # task" when the event loop runs shutdown_asyncgens.
+            cancelled: bool = False
+            try:
+                await self._stop.wait()
+            except asyncio.CancelledError:
+                cancelled = True
             try:
                 await self._exit_stack.aclose()
             except Exception:
                 logger.warning("Error during MCP shutdown", exc_info=True)
+            if cancelled:
+                raise
 
     async def _await_runner(self, timeout: float = 3.0) -> None:
         self._stop.set()
