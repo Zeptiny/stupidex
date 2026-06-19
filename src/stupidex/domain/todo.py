@@ -136,6 +136,25 @@ class TodoStore:
     def delete(self, task_id: str) -> TodoTask | None:
         return self._tasks.pop(task_id, None)
 
+    def to_storage_dict(self) -> dict[str, Any]:
+        return {"tasks": [t.to_dict() for t in self._tasks.values()]}
+
+    @classmethod
+    def from_storage_dict(cls, data: dict[str, Any]) -> TodoStore:
+        store = cls()
+        for td in data.get("tasks", []):
+            task = TodoTask(
+                id=td["id"],
+                title=td["title"],
+                description=td.get("description", ""),
+                status=TodoStatus.from_str(td.get("status", "open")),
+                subagent_id=td.get("subagent_id", ""),
+                created_at=td.get("created_at", 0.0),
+                updated_at=td.get("updated_at", 0.0),
+            )
+            store._tasks[task.id] = task
+        return store
+
 
 _current_store: ContextVar[TodoStore | None] = ContextVar("current_store", default=None)
 

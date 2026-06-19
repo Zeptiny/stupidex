@@ -44,6 +44,44 @@ class Message:
             d["tool_calls"] = self.tool_calls
         return d
 
+    def to_storage_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "role": self.role.value,
+            "content": self.content,
+            "type": self.type.value,
+        }
+        if self.display:
+            d["display"] = self.display
+        if self.metadata:
+            d["metadata"] = self.metadata
+        if self.usage:
+            d["usage"] = {
+                "prompt_tokens": self.usage.prompt_tokens,
+                "completion_tokens": self.usage.completion_tokens,
+                "total_tokens": self.usage.total_tokens,
+            }
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.tool_calls:
+            d["tool_calls"] = self.tool_calls
+        return d
+
+    @classmethod
+    def from_storage_dict(cls, data: dict[str, Any]) -> "Message":
+        usage = None
+        if "usage" in data and data["usage"] is not None:
+            usage = Usage(**data["usage"])
+        return cls(
+            role=MessageRole(data["role"]),
+            content=data.get("content", ""),
+            type=MessageType(data.get("type", "text")),
+            display=data.get("display"),
+            metadata=data.get("metadata", {}),
+            usage=usage,
+            tool_call_id=data.get("tool_call_id"),
+            tool_calls=data.get("tool_calls"),
+        )
+
 
 @dataclass
 class StreamHistoryState:

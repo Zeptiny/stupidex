@@ -59,3 +59,15 @@ def test_invalid_type_ast_max_file_size_falls_back():
 
     validated = _validate_config(cfg)
     assert validated.ast_max_file_size == 1_048_576
+
+
+def test_validate_bool_ast_max_file_size_falls_back():
+    from stupidex.config import _validate_config
+
+    for bool_val in (True, False):
+        cfg = Config(ast_max_file_size=bool_val)
+        ConfigManager.reset()
+        validated = _validate_config(cfg)
+        assert validated.ast_max_file_size == 1_048_576, (
+            f"Boolean {bool_val!r} should fall back to default"
+        )

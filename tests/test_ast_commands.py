@@ -123,5 +123,28 @@ class TestIndexAstExecution(unittest.TestCase):
         asyncio.run(captured_fn["fn"]())
         mock_index.assert_called_with(force=True)
 
+    def test_error_path_sends_error_notification(self):
+        """Scenario 4: index_project exception -> error notification, no crash."""
+        captured_fn = {}
+
+        def capture_worker(coro_fn):
+            captured_fn["fn"] = coro_fn
+
+        app = MagicMock()
+        app.run_worker = capture_worker
+        app.refresh_index_status = AsyncMock()
+
+        mock_index = AsyncMock(side_effect=RuntimeError("index exploded"))
+
+        with patch(_INDEX_PROJECT, mock_index), patch(_IS_INDEXING, return_value=False):
+            asyncio.run(execute_command(app, "/index-ast"))
+
+        asyncio.run(captured_fn["fn"]())
+
+        app.notify.assert_any_call(
+            "AST re-index failed: index exploded",
+            severity="error",
+        )
+
 if __name__ == "__main__":
     unittest.main()

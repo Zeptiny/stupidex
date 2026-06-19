@@ -1,6 +1,7 @@
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from stupidex.domain.message import Message
 
@@ -40,3 +41,23 @@ class Chain:
         minutes = int(seconds // 60)
         secs = seconds % 60
         return f"{minutes}m {secs:.0f}s"
+
+    def to_storage_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "messages": [m.to_storage_dict() for m in self.messages],
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "status": self.status.value,
+        }
+
+    @classmethod
+    def from_storage_dict(cls, data: dict[str, Any]) -> "Chain":
+        chain = cls(
+            model=data.get("model"),
+            messages=[Message.from_storage_dict(m) for m in data.get("messages", [])],
+            start_time=data.get("start_time", 0.0),
+            end_time=data.get("end_time"),
+            status=ChainStatus(data.get("status", "completed")),
+        )
+        return chain

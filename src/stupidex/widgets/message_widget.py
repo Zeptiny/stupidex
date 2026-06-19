@@ -9,7 +9,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.widgets import Collapsible, Static
 
-from stupidex.domain.chain import Chain
+from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.tools import get_tool_registry
 
@@ -218,20 +218,26 @@ class UserMessageWidget(MessageWidget):
 class ThinkingMessageWidget(Static):
     """A collapsible widget that shows 'Thinking...' when collapsed and full thinking when expanded."""
 
-    def __init__(self, msg: Message, **kwargs):
+    def __init__(self, msg: Message, *, loaded: bool = False, **kwargs):
         self.msg = msg
         self._last_render_time: float = 0
         self._flush_scheduled: bool = False
         self._start_time: float = time.monotonic()
+        self._loaded = loaded
+        self._stored_duration: float | None = msg.metadata.get("thinking_duration")
         self._content_widget: Static | None = None
         self._collapsible: Collapsible | None = None
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
-        self._content_widget = Static("", classes="thinking-content")
+        if self._loaded:
+            title = f"Thought: {Chain.format_elapsed(self._stored_duration)}" if self._stored_duration is not None else "Thought"
+        else:
+            title = "Thinking..."
+        self._content_widget = Static(self.msg.content if self._loaded else "", classes="thinking-content")
         self._collapsible = Collapsible(
             self._content_widget,
-            title="Thinking...",
+            title=title,
             collapsed=True,
             classes="thinking-collapse",
         )
@@ -272,14 +278,8 @@ class ThinkingMessageWidget(Static):
         self._flush_scheduled = False
         self._do_update()
         elapsed = time.monotonic() - self._start_time
-        if elapsed < 1:
-            label = f"{elapsed * 1000:.0f}ms"
-        elif elapsed < 60:
-            label = f"{elapsed:.1f}s"
-        else:
-            minutes = int(elapsed // 60)
-            seconds = elapsed % 60
-            label = f"{minutes}m {seconds:.0f}s"
+        self.msg.metadata["thinking_duration"] = elapsed
+        label = Chain.format_elapsed(elapsed)
         if self._collapsible is not None:
             self._collapsible.title = f"Thought: {label}"
 
@@ -313,7 +313,7 @@ class ChainFooterWidget(Static):
         return f"{model} · {Chain.format_elapsed(self._chain.elapsed)}"
 
     def tick(self) -> None:
-        if self._chain.status == self._chain.status.RUNNING:
+        if self._chain.status == ChainStatus.RUNNING:
             self.update(self._build_text())
 
     def freeze(self) -> None:
@@ -418,11 +418,11 @@ class ToolResultMessageWidget(Static):
         )
 
 
-def create_message_widget(msg: Message) -> Static | None:
+def create_message_widget(msg: Message, *, loaded: bool = False) -> Static | None:
     """Factory function to create the appropriate widget for a message."""
     match msg.type:
         case MessageType.THINKING:
-            return ThinkingMessageWidget(msg)
+            return ThinkingMessageWidget(msg, loaded=loaded)
         case MessageType.TOOL_CALL:
             return None
         case MessageType.TOOL_RESULT:
