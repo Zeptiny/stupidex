@@ -1,5 +1,6 @@
 import logging
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -11,6 +12,16 @@ from stupidex.domain.message import Message
 from stupidex.domain.todo import TodoStore
 
 log = logging.getLogger(__name__)
+
+_current_session_id: ContextVar[str | None] = ContextVar("current_session_id", default=None)
+
+
+def get_current_session_id() -> str | None:
+    return _current_session_id.get()
+
+
+def set_current_session_id(session_id: str | None) -> None:
+    _current_session_id.set(session_id)
 
 
 @dataclass

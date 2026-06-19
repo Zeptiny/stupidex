@@ -57,6 +57,7 @@ from stupidex.tools.todo import (
     todo_list_tool,
     todo_update_tool,
 )
+from stupidex.tools.web_fetch import execute_web_fetch, web_fetch_tool
 
 _TOOL_REGISTRY: dict[str, dict] | None = None
 
@@ -79,6 +80,7 @@ def get_tool_registry() -> dict[str, dict]:
         "todo_list": {"tool": todo_list_tool, "executor": execute_todo_list},
         "todo_delete": {"tool": todo_delete_tool, "executor": execute_todo_delete},
         "execute_command": {"tool": execute_command_tool, "executor": execute_command},
+        "web_fetch": {"tool": web_fetch_tool, "executor": execute_web_fetch},
         "delegate_to_subagent": {"tool": build_delegate_tool(), "executor": execute_delegate_to_subagent},
         "wait_for_subagent": {"tool": wait_for_subagent, "executor": execute_wait_for_subagent},
         "list_subagents": {"tool": list_subagents, "executor": execute_list_subagents},

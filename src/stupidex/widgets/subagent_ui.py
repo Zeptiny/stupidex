@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from textual.containers import ScrollableContainer
@@ -25,6 +26,8 @@ class SubagentUIManager:
         self.app = app
         self._widgets: dict[str, dict[str, Any]] = {}
         self._timer: Timer | None = None
+        self._sidebar_lock: asyncio.Lock = asyncio.Lock()
+        self._sidebar_refresh_pending: bool = False
 
     def setup(self, manager) -> None:
         """Wire callbacks on the subagent manager."""
@@ -114,15 +117,24 @@ class SubagentUIManager:
                 await self.on_message(record.id, msg)
 
     async def update_sidebar(self) -> None:
-        try:
-            sidebar = self.app.query_one("#sidebar", Sidebar)
-        except Exception:
+        if self._sidebar_lock.locked():
+            self._sidebar_refresh_pending = True
             return
-        if self.app.sessions.active:
-            records = self.app.sessions.active.subagent_manager.all_records()
-            await sidebar.update_subagents(records)
-        else:
-            await sidebar.update_subagents([])
+
+        async with self._sidebar_lock:
+            for _ in range(2):
+                self._sidebar_refresh_pending = False
+                try:
+                    sidebar = self.app.query_one("#sidebar", Sidebar)
+                except Exception:
+                    return
+                if self.app.sessions.active:
+                    records = self.app.sessions.active.subagent_manager.all_records()
+                    await sidebar.update_subagents(records)
+                else:
+                    await sidebar.update_subagents([])
+                if not self._sidebar_refresh_pending:
+                    break
         self._manage_timer()
 
     def _manage_timer(self) -> None:

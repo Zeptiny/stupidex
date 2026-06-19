@@ -12,6 +12,7 @@ from stupidex.config import (
     set_current_personality,
     set_current_theme,
 )
+from stupidex.domain.session import set_current_session_id
 from stupidex.domain.todo import set_todo_store
 from stupidex.llm.providers import discover_provider_models, resolve_model_metadata
 from stupidex.personality import load_personalities
@@ -170,6 +171,7 @@ async def execute_command(app: App, cmd: str) -> None:
         case "/new":
             app.sessions.create()
             set_todo_store(app.sessions.active.todo_store)
+            set_current_session_id(app.sessions.active.id)
             await app.rerender_all()
         case "/model":
             cfg = get_config()
@@ -200,6 +202,7 @@ async def execute_command(app: App, cmd: str) -> None:
                     session = app.sessions.load(result)
                     if session:
                         set_todo_store(session.todo_store)
+                        set_current_session_id(session.id)
                         await app.rerender_all()
                     else:
                         app.notify("Failed to load session", severity="error")
@@ -221,9 +224,11 @@ async def execute_command(app: App, cmd: str) -> None:
                     if deleted:
                         app.notify("Session deleted.", severity="information")
                         if not app.sessions.active:
+                            set_current_session_id(None)
                             app.sessions.create()
                             set_todo_store(app.sessions.active.todo_store)
                             await app.rerender_all()
+                        set_current_session_id(app.sessions.active.id)
                     else:
                         app.notify("Failed to delete session.", severity="error")
 

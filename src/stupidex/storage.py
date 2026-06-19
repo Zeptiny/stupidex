@@ -1,7 +1,10 @@
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
+
+from stupidex.config import HOME_CONFIG_DIR
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +78,13 @@ def delete_session(session_id: str) -> bool:
         return False
     try:
         path.unlink()
-        return True
     except OSError as e:
-        log.warning("Failed to delete session %s: %s", session_id, e)
+        log.warning("Failed to delete session file %s: %s", session_id, e)
         return False
+    cache_dir = HOME_CONFIG_DIR / "cache" / "web-fetch" / session_id
+    if cache_dir.exists():
+        try:
+            shutil.rmtree(cache_dir)
+        except OSError as e:
+            log.warning("Failed to delete cache dir for %s: %s", session_id, e)
+    return True
