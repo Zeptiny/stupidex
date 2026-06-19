@@ -142,7 +142,7 @@ class Stupidex(App):
             await mcp_manager.shutdown()
             raise
         except Exception:
-            logger.warning("MCP startup failed", exc_info=True)
+            log.warning("MCP startup failed", exc_info=True)
         await self.refresh_mcp_servers()
 
     async def on_exit(self) -> None:
