@@ -37,6 +37,8 @@
 
 ## P1 — High-impact / Should fix (~30 deduplicated)
 
+> P1-5, P1-9, P1-10, P1-11 have been **fixed** by the P0-5 stream idle-timeout + retries work (see `docs/plans/2026-06-20-p0-verification-and-fix-plan.md`).
+
 ### Correctness / Reliability
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
@@ -45,13 +47,13 @@
 | P1-2 | agents | agents/manager.py:173 | Cancelling a not-yet-started _run task leaves record stuck in PENDING; saved state diverges silently | correctness | 60 | gated_auto | N |
 | P1-3 | agents | agents/manager.py:281 | _run and on_spawn can concurrently mount the same streamed message (race, shared StreamWidgetState) | correctness | 50 | manual | Y |
 | P1-4 | llm | llm/client.py:438 | Context-window exhaustion — while-True re-submission loop has no token budget; large tool outputs blow context mid-turn | correctness, adversarial, reliability | 75 | manual | Y |
-| P1-5 | llm | llm/client.py:24 | wait_for_subagent and excluded tools can hang the stream indefinitely; msg_q backpressure deadlocks | adversarial | 75 | manual | Y |
+| P1-5 | llm | llm/client.py:24 | wait_for_subagent and excluded tools can hang the stream indefinitely; msg_q backpressure deadlocks **[FIXED — P0-5 stream idle-timeout + retries]** | adversarial | 75 | manual | Y |
 | P1-6 | llm | llm/client.py:348 | Interleaved tool_call index deltas cause a tool_call to be queued for execution multiple times → strict providers 400 | correctness | 50 | gated_auto | Y |
 | P1-7 | llm | llm/client.py:338 | commit_assistant_with_tool_calls may emit a tool_call with empty id/name if first delta for an index lacks them → strict providers 400 | correctness, adversarial | 50/75 | gated_auto | Y |
 | P1-8 | llm | llm/client.py:284 | Committed assistant message's content in api_messages diverges from persisted history if content deltas arrive after tool_calls started | correctness | 50 | gated_auto | Y |
-| P1-9 | llm | llm/client.py:439 | litellm.acompletion streaming call has no explicit timeout — provider stall blocks _stream_task forever | reliability | 90 | manual | N |
-| P1-10 | llm | llm/client.py:295 | Streaming response object never closed via async context manager / aclose — connection pool exhausts under repeated escape | reliability | 80 | manual | N |
-| P1-11 | llm | llm/client.py:467 | No retry, backoff, or jitter on transient LLM errors — single 429/502 aborts the entire agent turn | reliability | 85 | manual | N |
+| P1-9 | llm | llm/client.py:439 | litellm.acompletion streaming call has no explicit timeout — provider stall blocks _stream_task forever **[FIXED — P0-5 stream idle-timeout]** | reliability | 90 | manual | N |
+| P1-10 | llm | llm/client.py:295 | Streaming response object never closed via async context manager / aclose — connection pool exhausts under repeated escape **[FIXED — P0-5 _safe_aclose()]** | reliability | 80 | manual | N |
+| P1-11 | llm | llm/client.py:467 | No retry, backoff, or jitter on transient LLM errors — single 429/502 aborts the entire agent turn **[FIXED — P0-5 exponential backoff + jitter]** | reliability | 85 | manual | N |
 | P1-12 | llm | llm/client.py:483 | Outer while-True agent loop has no iteration cap — runaway tool loop burns tokens forever | reliability, adversarial | 75 | manual | N |
 | P1-13 | tools | tools/exec.py:71 | Memory-exhaustion abuse — process.communicate() buffers unbounded stdout/stderr until timeout; yes/cat /dev/urandom OOM-kills the TUI | adversarial, performance | 75/50 | manual | Y |
 | P1-14 | tools | tools/file_manipulation.py:206 | edit/write tools are non-atomic and have a read-modify-write TOCTOU; concurrent subagents cause lost updates. Contrast ast.py's existing _atomic_write | adversarial, reliability | 75/80 | manual | N |
