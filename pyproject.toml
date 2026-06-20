@@ -25,6 +25,14 @@ stupidex = "stupidex.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-timeout>=2.0",
+    "ruff",
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 120
@@ -36,3 +44,4 @@ ignore = ["E501", "SIM105"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+timeout = 120
