@@ -54,7 +54,7 @@
 | P1-9 | llm | llm/client.py:439 | litellm.acompletion streaming call has no explicit timeout — provider stall blocks _stream_task forever **[FIXED — P0-5 stream idle-timeout]** | reliability | 90 | manual | N |
 | P1-10 | llm | llm/client.py:295 | Streaming response object never closed via async context manager / aclose — connection pool exhausts under repeated escape **[FIXED — P0-5 _safe_aclose()]** | reliability | 80 | manual | N |
 | P1-11 | llm | llm/client.py:467 | No retry, backoff, or jitter on transient LLM errors — single 429/502 aborts the entire agent turn **[FIXED — P0-5 exponential backoff + jitter]** | reliability | 85 | manual | N |
-| P1-12 | llm | llm/client.py:483 | Outer while-True agent loop has no iteration cap — runaway tool loop burns tokens forever | reliability, adversarial | 75 | manual | N |
+| P1-12 | llm | llm/client.py:483 | Outer while-True agent loop has no iteration cap — runaway tool loop burns tokens forever | reliability, adversarial | 75 | manual | N | → README TODO |
 | P1-13 | tools | tools/exec.py:71 | Memory-exhaustion abuse — process.communicate() buffers unbounded stdout/stderr until timeout; yes/cat /dev/urandom OOM-kills the TUI | adversarial, performance | 75/50 | manual | Y |
 | P1-14 | tools | tools/file_manipulation.py:206 | edit/write tools are non-atomic and have a read-modify-write TOCTOU; concurrent subagents cause lost updates. Contrast ast.py's existing _atomic_write | adversarial, reliability | 75/80 | manual | N |
 | P1-15 | tools | tools/search.py:122 | Grep runs user-supplied regex synchronously in the event loop → ReDoS freezes the TUI. Naive glob→regex mishandles ?/[abc] | adversarial, kieran-python | 75/85 | manual | Y |
@@ -64,7 +64,7 @@
 | P1-19 | mcp | mcp/schema.py:25 / mcp/__init__.py:144 | Registry name `mcp_{server_name}_{tool_name}` is not injective — silent executor shadowing | correctness, adversarial, kieran-python | 75/100 | manual | N |
 | P1-20 | mcp | mcp/__init__.py:176 | call_tool silently discards all non-text content blocks (images, embedded resources) — agent gets empty string with no error | correctness | 100 | safe_auto | N |
 | P1-21 | mcp | mcp/__init__.py:193 | read_resource joins raw base64 BlobResourceContents.blob into text string — TypeError or garbled output at runtime | correctness, maintainability, kieran-python | 75/50 | manual | Y |
-| P1-22 | mcp | mcp/__init__.py:130 | Project-level MCP server configs spawn arbitrary commands with no trust prompt or attestation → workspace-trust RCE | security | 75 | manual | N |
+| P1-22 | mcp | mcp/__init__.py:130 | Project-level MCP server configs spawn arbitrary commands with no trust prompt or attestation → workspace-trust RCE | security | 75 | manual | N | → README TODO |
 | P1-23 | mcp | mcp/__init__.py:128/187 | SSE MCP server URLs unvalidated; no scheme/host allowlist; read_resource trusts server-advertised URIs (file://, redirect-to-private-host) | adversarial, security | 100/75 | manual/gated_auto | N |
 
 ### Persistence replay

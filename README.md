@@ -7,7 +7,9 @@
 - [ ] **P0-3: Sem confinamento de path em read/write/edit/glob/replace_symbol** (`tools/file_manipulation.py:44`) — agente (prompt-injected ou não) pode ler `~/.ssh/id_rsa`, `/etc/passwd`, `.env`, escrever `~/.bashrc`, plantar symlinks. Não existe verificação de limite de workspace.
 
 ### P1 - Code Review
+- [ ] **P1-12: Agent loop sem cap de iterações** (`llm/client.py:534`) — o outer `while True` re-submete ao LLM após cada round de tool calls sem contador; modelo confuso chamando tools em loop queima tokens indefinidamente.Needs `max_agent_turns` config field (default 25). Fixed later.
 - [ ] **P1-17: Subagent tier override permite escalação de modelo** (`tools/subagent.py:64`) — o LLM pode escalar para o modelo mais caro via override de tier no delegate_to_subagent, sem least-privilege enforcement. Deve ser corrigido depois.
+- [ ] **P1-22: Project MCP config → RCE** (`mcp/__init__.py:130` + `config.py:425`) — `.stupidex.json` no diretório do projeto pode spawnar comandos arbitrários via MCP stdio servers sem trust prompt. Needs workspace-trust system (trusted projects registry + modal). Fixed later.
 
 ### TODOs geral
 - Permitir textual serve (Atualmente tem problema com AST)
