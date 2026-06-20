@@ -835,6 +835,9 @@ class TestMainStartupGate:
             patch.object(main, "Stupidex") as mock_app_cls,
         ):
             mock_app = MagicMock()
+            # MagicMock attributes are truthy by default; ``restart_requested``
+            # must be falsy or main() calls os.execv, re-exec'ing the process.
+            mock_app.restart_requested = False
             mock_app_cls.return_value = mock_app
 
             main.main()
