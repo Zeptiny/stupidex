@@ -84,14 +84,51 @@ def _validate_tool_args(tool: Tool, args: dict) -> str | None:
 
 
 def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
-    """Convert persisted display history to API history."""
-    api_messages = []
+    """Convert persisted display history to API history.
+
+    Enforces the OpenAI-shaped invariant: every `tool` message is immediately
+    preceded by an assistant message whose `tool_calls` contains the same
+    `tool_call_id`. Orphaned tool results (e.g. from sessions saved before the
+    fix) are dropped defensively so we never send a malformed sequence.
+    """
+    api_messages: list[dict[str, Any]] = []
+    last_assistant_tool_call_ids: set[str] = set()
     for msg in messages:
-        if msg.type in (MessageType.THINKING, MessageType.TOOL_CALL, MessageType.TOOL_RESULT, MessageType.ERROR):
+        if msg.type == MessageType.ERROR:
+            continue
+        if msg.type == MessageType.TOOL_CALL and not msg.tool_calls:
+            continue
+        if msg.type == MessageType.THINKING:
+            if not msg.content:
+                continue
+            api_messages.append({
+                "role": "assistant",
+                "content": msg.content,
+                "reasoning": msg.content,
+            })
+            last_assistant_tool_call_ids = set()
+            continue
+        if msg.role == MessageRole.TOOL:
+            if not msg.tool_call_id:
+                continue
+            if msg.tool_call_id not in last_assistant_tool_call_ids:
+                log.warning(
+                    "Dropping orphaned tool result for tool_call_id=%s "
+                    "(no preceding assistant tool_calls message in history)",
+                    msg.tool_call_id,
+                )
+                continue
+            api_messages.append(msg.to_dict())
             continue
         if not msg.content and not msg.tool_calls:
             continue
         api_messages.append(msg.to_dict())
+        if msg.tool_calls:
+            last_assistant_tool_call_ids = {
+                tc.get("id") for tc in msg.tool_calls if tc.get("id")
+            }
+        else:
+            last_assistant_tool_call_ids = set()
     return api_messages
 
 
@@ -188,6 +225,22 @@ async def _stream_task(
                     type=MessageType.THINKING,
                 ))
 
+        async def emit_assistant_with_tool_calls() -> None:
+            """Persist the assistant message that carries the tool_calls block.
+
+            This must flow through msg_q so record_streamed_message attaches
+            `tool_calls` to the persisted assistant message on disk, not only
+            to the ephemeral api_messages list. Without this, a saved/reloaded
+            session loses the tool-call block and the model sees orphaned tool
+            results on the next turn.
+            """
+            await msg_q.put(Message(
+                role=MessageRole.ASSISTANT,
+                content=content,
+                type=MessageType.TEXT,
+                tool_calls=[dict(tc) for tc in tool_calls],
+            ))
+
         async for chunk in response:
             if not chunk.choices:
                 continue
@@ -248,6 +301,7 @@ async def _stream_task(
                                                  "content": content or None, "tool_calls": tool_calls})
                             assistant_appended.set()
                             tool_calls_started.set()
+                            await emit_assistant_with_tool_calls()
                         await ready_q.put(tool_calls[prev_index])
                     prev_index = tc_delta.index
 
@@ -266,6 +320,7 @@ async def _stream_task(
                                      "content": content or None, "tool_calls": tool_calls})
                 assistant_appended.set()
                 tool_calls_started.set()
+                await emit_assistant_with_tool_calls()
             if usage:
                 await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
             await ready_q.put(tool_calls[prev_index])

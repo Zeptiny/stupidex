@@ -126,6 +126,8 @@ def record_streamed_message(history: list[Message], msg: Message, state: StreamH
                 appended = True
             else:
                 state.content.content = msg.content
+        if msg.tool_calls and state.content:
+            state.content.tool_calls = msg.tool_calls
         if msg.usage and state.content:
             state.content.usage = msg.usage
         return appended

@@ -91,7 +91,36 @@ class StreamHistoryTest(unittest.TestCase):
         )
         self.assertEqual(history[-1].usage, Usage(1, 2, 3))
 
-    def test_api_history_excludes_display_only_stream_messages(self):
+    def test_record_streamed_message_attaches_tool_calls_to_assistant_text(self):
+        history = []
+        state = StreamHistoryState()
+
+        tool_calls = [{"id": "call-0", "type": "function",
+                       "function": {"name": "read", "arguments": '{"file_path":"README.md"}'}}]
+
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Let me check", MessageType.TEXT),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Let me check", MessageType.TEXT, tool_calls=tool_calls),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.TOOL, "contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            state,
+        )
+
+        self.assertEqual(len(history), 2)
+        assistant_msg = history[0]
+        self.assertEqual(assistant_msg.role, MessageRole.ASSISTANT)
+        self.assertEqual(assistant_msg.content, "Let me check")
+        self.assertEqual(assistant_msg.tool_calls, tool_calls)
+
+    def test_api_history_replays_thinking_and_drops_orphaned_tool_results(self):
         history = [
             Message(MessageRole.USER, "hello"),
             Message(MessageRole.ASSISTANT, "hidden reasoning", MessageType.THINKING),
@@ -105,7 +134,49 @@ class StreamHistoryTest(unittest.TestCase):
             llm_client._history_to_api_messages(history),
             [
                 {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hidden reasoning", "reasoning": "hidden reasoning"},
                 {"role": "assistant", "content": "final answer"},
+            ],
+        )
+
+    def test_api_history_includes_tool_calls_and_tool_results_with_matching_ids(self):
+        assistant_msg = Message(
+            MessageRole.ASSISTANT,
+            "Let me check",
+            MessageType.TEXT,
+            tool_calls=[{"id": "call-0", "type": "function",
+                         "function": {"name": "read", "arguments": '{"file_path":"README.md"}'}}],
+        )
+        history = [
+            Message(MessageRole.USER, "hello"),
+            assistant_msg,
+            Message(MessageRole.TOOL, "file contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            Message(MessageRole.ASSISTANT, "final answer", MessageType.TEXT),
+        ]
+
+        self.assertEqual(
+            llm_client._history_to_api_messages(history),
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "Let me check",
+                 "tool_calls": assistant_msg.tool_calls},
+                {"role": "tool", "content": "file contents", "tool_call_id": "call-0"},
+                {"role": "assistant", "content": "final answer"},
+            ],
+        )
+
+    def test_api_history_drops_orphaned_tool_result_without_matching_assistant(self):
+        history = [
+            Message(MessageRole.USER, "hello"),
+            Message(MessageRole.TOOL, "orphaned", MessageType.TOOL_RESULT, tool_call_id="call-9"),
+            Message(MessageRole.ASSISTANT, "answer", MessageType.TEXT),
+        ]
+
+        self.assertEqual(
+            llm_client._history_to_api_messages(history),
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "answer"},
             ],
         )
 
