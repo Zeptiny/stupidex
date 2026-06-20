@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any
 
 from textual.containers import ScrollableContainer
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
     from textual.app import App
 
 
+log = logging.getLogger(__name__)
+
+
 class SubagentUIManager:
     """Manages subagent tabs, widgets, and sidebar updates."""
 
@@ -28,6 +32,7 @@ class SubagentUIManager:
         self._timer: Timer | None = None
         self._sidebar_lock: asyncio.Lock = asyncio.Lock()
         self._sidebar_refresh_pending: bool = False
+        self._mount_locks: dict[str, asyncio.Lock] = {}
 
     def setup(self, manager) -> None:
         """Wire callbacks on the subagent manager."""
@@ -65,6 +70,7 @@ class SubagentUIManager:
         try:
             pane = self.app.query_one(f"#sub-{subagent_id}", TabPane)
         except Exception:
+            log.debug("on_message: pane not found for subagent_id=%r", subagent_id)
             return
         try:
             container = pane.query_one(ScrollableContainer)
@@ -72,18 +78,21 @@ class SubagentUIManager:
             container = ScrollableContainer()
             await pane.mount(container)
 
-        raw = self._widgets.setdefault(subagent_id, {"temp": []})
-        state = StreamWidgetState(
-            thinking=raw.get("thinking"),
-            content=raw.get("content"),
-            temp=raw.get("temp") if isinstance(raw.get("temp"), list) else [],
-        )
+        async with self._mount_locks.setdefault(subagent_id, asyncio.Lock()):
+            raw = self._widgets.setdefault(subagent_id, {"temp": []})
+            existing_temp = raw.get("temp")
+            temp_list = list(existing_temp) if isinstance(existing_temp, list) else []
+            state = StreamWidgetState(
+                thinking=raw.get("thinking"),
+                content=raw.get("content"),
+                temp=temp_list,
+            )
 
-        await mount_streamed_message(container, msg, state)
+            await mount_streamed_message(container, msg, state)
 
-        raw["thinking"] = state.thinking
-        raw["content"] = state.content
-        raw["temp"] = state.temp
+            raw["thinking"] = state.thinking
+            raw["content"] = state.content
+            raw["temp"] = state.temp
 
     async def on_state_change(self, subagent_id: str, state: SubagentState) -> None:
         try:

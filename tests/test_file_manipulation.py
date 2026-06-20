@@ -1,38 +1,17 @@
 import pytest
 
-from stupidex.tools.file_manipulation import execute_edit_tool
+from stupidex.tools.file_manipulation import execute_edit_tool, execute_write_tool
 
 
 @pytest.mark.asyncio
-async def test_edit_tool_display_summarizes_change_counts_and_compacts_diff(monkeypatch):
-    files = {"sample.txt": "one\ntwo\nthree\n"}
-
-    class FakeAsyncFile:
-        def __init__(self, file_path, mode="r"):
-            self.file_path = file_path
-            self.mode = mode
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def read(self):
-            return files[self.file_path]
-
-        async def write(self, content):
-            files[self.file_path] = content
-
-    def fake_open(file_path, mode="r", *_args, **_kwargs):
-        return FakeAsyncFile(file_path, mode)
-
-    monkeypatch.setattr("stupidex.tools.file_manipulation.aiofiles.open", fake_open)
+async def test_edit_tool_display_summarizes_change_counts_and_compacts_diff(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sample.txt").write_text("one\ntwo\nthree\n")
 
     result = await execute_edit_tool("sample.txt", "two\n", "TWO\nadded\n")
 
     assert result.display == "Edited sample.txt (+2 -1)"
-    assert files["sample.txt"] == "one\nTWO\nadded\nthree\n"
+    assert (tmp_path / "sample.txt").read_text() == "one\nTWO\nadded\nthree\n"
     assert result.content.startswith(
         '<edit_result path="sample.txt" success="true" replacements="1" '
         'replace_all="false" added="2" removed="1">'
@@ -53,21 +32,9 @@ async def test_edit_tool_display_summarizes_change_counts_and_compacts_diff(monk
 
 
 @pytest.mark.asyncio
-async def test_edit_tool_not_found_uses_structured_error(monkeypatch):
-    class FakeAsyncFile:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def read(self):
-            return "content\n"
-
-    def fake_open(file_path, mode="r", *_args, **_kwargs):
-        return FakeAsyncFile()
-
-    monkeypatch.setattr("stupidex.tools.file_manipulation.aiofiles.open", fake_open)
+async def test_edit_tool_not_found_uses_structured_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sample.txt").write_text("content\n")
 
     result = await execute_edit_tool("sample.txt", "missing", "replacement")
 
@@ -75,3 +42,58 @@ async def test_edit_tool_not_found_uses_structured_error(monkeypatch):
     assert '<edit_result path="sample.txt" success="false" replacements="0"' in result.content
     assert 'error="string_not_found"' in result.content
     assert '<diff format="unified" />' in result.content
+
+
+# ---------------------------------------------------------------------------
+# P1-14: atomic writes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_tool_writes_content(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = await execute_write_tool("out.txt", "hello\nworld\n")
+    assert (tmp_path / "out.txt").read_text() == "hello\nworld\n"
+    assert "Wrote 2 lines" in result.display
+
+
+@pytest.mark.asyncio
+async def test_edit_tool_preserves_file_mode_bits(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_text("a\nb\n")
+    os.chmod(target, 0o640)
+    original_mode = stat.S_IMODE(os.stat(target).st_mode)
+
+    await execute_edit_tool("f.txt", "a\n", "A\n")
+
+    assert target.read_text() == "A\nb\n"
+    assert stat.S_IMODE(os.stat(target).st_mode) == original_mode
+
+
+@pytest.mark.asyncio
+async def test_write_tool_fires_post_write_callbacks(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from stupidex.tools.ast import post_write_callbacks
+
+    monkeypatch.chdir(tmp_path)
+    cb = AsyncMock()
+    post_write_callbacks.append(cb)
+    try:
+        await execute_write_tool("cb.txt", "data\n")
+        cb.assert_called_once()
+    finally:
+        post_write_callbacks.remove(cb)
+
+
+@pytest.mark.asyncio
+async def test_write_tool_creates_parent_directories(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = await execute_write_tool("nested/deep/dir/file.txt", "content\n")
+    assert (tmp_path / "nested" / "deep" / "dir" / "file.txt").read_text() == "content\n"
+    assert "Wrote" in result.display
+

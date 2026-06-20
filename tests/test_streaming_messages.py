@@ -1352,5 +1352,253 @@ class StreamIdleTimeoutTest(unittest.IsolatedAsyncioTestCase):
         )
 
 
+def _tool_delta_split(index, *, id=None, name=None, arguments=None):
+    """Build a tool_calls delta with only the specified fields populated."""
+    function = SimpleNamespace(
+        name=name,
+        arguments=arguments,
+    )
+    return SimpleNamespace(
+        index=index,
+        id=id,
+        function=function,
+    )
+
+
+async def _run_stream(response, *, filtered_tools=None):
+    """Drive _stream_task + _executor_task to completion; return (messages, api_messages)."""
+    msg_q = asyncio.Queue(maxsize=10)
+    ready_q = asyncio.Queue()
+    api_messages: list[dict] = []
+    assistant_appended = asyncio.Event()
+    tool_calls_started = asyncio.Event()
+
+    stream_t = asyncio.create_task(
+        llm_client._stream_task(
+            response(), msg_q, ready_q, api_messages,
+            assistant_appended, tool_calls_started,
+        )
+    )
+    executor_t = asyncio.create_task(
+        llm_client._executor_task(
+            msg_q, ready_q, api_messages,
+            filtered_tools or {}, assistant_appended,
+        )
+    )
+
+    messages = []
+    while True:
+        msg = await msg_q.get()
+        if msg is None:
+            break
+        messages.append(msg)
+
+    await asyncio.gather(stream_t, executor_t)
+    return messages, api_messages
+
+
+class InterleavedToolCallIndexTest(unittest.IsolatedAsyncioTestCase):
+    """P1-6: interleaved tool_call deltas must enqueue each index exactly once."""
+
+    async def test_interleaved_indices_enqueue_each_index_once(self):
+        async def response():
+            yield chunk(tool_calls=[_tool_delta_split(0, id="call-0", name="read", arguments='{"a":1}')])
+            yield chunk(tool_calls=[_tool_delta_split(1, id="call-1", name="read", arguments='{"b":1}')])
+            yield chunk(tool_calls=[_tool_delta_split(0, arguments='{"a":2}')])
+            yield chunk(tool_calls=[_tool_delta_split(1, arguments='{"b":2}')])
+
+        recorded: list[dict] = []
+
+        async def fake_execute_tool(tc, filtered_tools):
+            recorded.append(tc)
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"r {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        original = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            messages, api_messages = await _run_stream(response)
+        finally:
+            llm_client._execute_tool = original
+
+        executed_ids = [tc["id"] for tc in recorded]
+        self.assertEqual(sorted(executed_ids), ["call-0", "call-1"])
+        self.assertEqual(len(executed_ids), 2, "each index enqueued exactly once")
+
+    async def test_monotonic_indices_enqueue_each_once_regression(self):
+        async def response():
+            yield chunk(tool_calls=[_tool_delta_split(0, id="call-0", name="read", arguments='{"a":1}')])
+            yield chunk(tool_calls=[_tool_delta_split(0, arguments='{"a":2}')])
+            yield chunk(tool_calls=[_tool_delta_split(1, id="call-1", name="read", arguments='{"b":1}')])
+            yield chunk(tool_calls=[_tool_delta_split(1, arguments='{"b":2}')])
+
+        recorded: list[dict] = []
+
+        async def fake_execute_tool(tc, filtered_tools):
+            recorded.append(tc)
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"r {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        original = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            messages, api_messages = await _run_stream(response)
+        finally:
+            llm_client._execute_tool = original
+
+        executed_ids = [tc["id"] for tc in recorded]
+        self.assertEqual(sorted(executed_ids), ["call-0", "call-1"])
+        self.assertEqual(len(executed_ids), 2)
+
+
+class MalformedToolCallTest(unittest.IsolatedAsyncioTestCase):
+    """P1-7: placeholder tool_calls (missing id/name) must not reach the provider."""
+
+    async def test_first_delta_without_id_yields_only_well_formed_entries(self):
+        async def response():
+            yield chunk(content="Hi")
+            yield chunk(tool_calls=[_tool_delta_split(0, name="read", arguments='{"f":"x"}')])
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL, content="r",
+                type=MessageType.TOOL_RESULT, tool_call_id=tc["id"],
+            )
+
+        original = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            messages, api_messages = await _run_stream(response)
+        finally:
+            llm_client._execute_tool = original
+
+        assistant_msgs = [m for m in api_messages if m["role"] == "assistant"]
+        tool_call_entries = [tc for m in assistant_msgs for tc in m.get("tool_calls", [])]
+        for tc in tool_call_entries:
+            self.assertTrue(tc["id"])
+            self.assertTrue(tc["function"]["name"])
+        tool_results = [m for m in api_messages if m["role"] == "tool"]
+        self.assertEqual(tool_results, [], "no tool result appended for malformed call")
+
+    async def test_stream_ends_without_function_name_yields_error_message(self):
+        async def response():
+            yield chunk(tool_calls=[_tool_delta_split(0, id="call-0", arguments='{"f":"x"}')])
+
+        async def fake_execute_tool(tc, filtered_tools):
+            self.fail("malformed tool call must not be executed")
+            return Message(role=MessageRole.TOOL, content="", type=MessageType.TOOL_RESULT)
+
+        original = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            messages, api_messages = await _run_stream(response)
+        finally:
+            llm_client._execute_tool = original
+
+        error_msgs = [m for m in messages if m.type == MessageType.ERROR]
+        self.assertTrue(any("Malformed tool call" in m.content for m in error_msgs))
+        tool_results = [m for m in api_messages if m["role"] == "tool"]
+        self.assertEqual(tool_results, [], "no empty tool result appended")
+
+        assistant_msgs = [m for m in api_messages if m["role"] == "assistant"]
+        for m in assistant_msgs:
+            self.assertNotIn("tool_calls", m)
+
+
+class PostCommitContentSyncTest(unittest.IsolatedAsyncioTestCase):
+    """P1-8: assistant content arriving after tool_calls must stay in sync with api_messages."""
+
+    async def test_single_tool_content_after_tool_call_reflected_in_api_messages(self):
+        async def response():
+            yield chunk(content="A")
+            yield chunk(tool_calls=[_tool_delta_split(0, id="call-0", name="read", arguments='{"f":"x"}')])
+            yield chunk(content="B")
+            yield chunk(tool_calls=[_tool_delta_split(0, arguments='{"f":"y"}')])
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL, content="r",
+                type=MessageType.TOOL_RESULT, tool_call_id=tc["id"],
+            )
+
+        original = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            messages, api_messages = await _run_stream(response)
+        finally:
+            llm_client._execute_tool = original
+
+        assistant_msgs = [m for m in api_messages if m["role"] == "assistant"]
+        self.assertTrue(assistant_msgs)
+        self.assertIn("AB", assistant_msgs[-1]["content"])
+
+    async def test_multi_tool_content_after_commit_updates_anchored_assistant(self):
+        async def response():
+            yield chunk(content="A")
+            yield chunk(tool_calls=[_tool_delta_split(0, id="call-0", name="read", arguments='{"f":"x"}')])
+            yield chunk(tool_calls=[_tool_delta_split(1, id="call-1", name="read", arguments='{"g":"x"}')])
+            yield chunk(content="B")
+            yield chunk(tool_calls=[_tool_delta_split(1, arguments='{"g":"y"}')])
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL, content="r",
+                type=MessageType.TOOL_RESULT, tool_call_id=tc["id"],
+            )
+
+        original = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            messages, api_messages = await _run_stream(response)
+        finally:
+            llm_client._execute_tool = original
+
+        assistant_msgs = [m for m in api_messages if m["role"] == "assistant" and m.get("tool_calls")]
+        self.assertTrue(assistant_msgs)
+        self.assertEqual(assistant_msgs[-1]["content"], "AB")
+
+    async def test_exactly_one_assistant_text_persisted_when_content_follows_tool_calls(self):
+        from stupidex.domain.message import StreamHistoryState, record_streamed_message
+
+        async def response():
+            yield chunk(content="A")
+            yield chunk(tool_calls=[_tool_delta_split(0, id="call-0", name="read", arguments='{"f":"x"}')])
+            yield chunk(content="B")
+            yield chunk(tool_calls=[_tool_delta_split(0, arguments='{"f":"y"}')])
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL, content="r",
+                type=MessageType.TOOL_RESULT, tool_call_id=tc["id"],
+            )
+
+        original = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            messages, api_messages = await _run_stream(response)
+        finally:
+            llm_client._execute_tool = original
+
+        history: list[Message] = []
+        state = StreamHistoryState()
+        for m in messages:
+            record_streamed_message(history, m, state)
+
+        assistant_text = [
+            m for m in history
+            if m.role == MessageRole.ASSISTANT and m.type == MessageType.TEXT
+        ]
+        self.assertEqual(len(assistant_text), 1)
+        self.assertIn("AB", assistant_text[0].content)
+
+
 if __name__ == "__main__":
     unittest.main()

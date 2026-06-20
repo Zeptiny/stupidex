@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +12,23 @@ from stupidex.agents.manager import (
 )
 from stupidex.domain.agent import Agent, AgentTypes, ModelTier
 from stupidex.domain.message import Message, MessageRole, MessageType
+
+
+class _DoneTaskStub:
+    """Stand-in for a finished asyncio.Task with a cancel spy."""
+
+    def __init__(self) -> None:
+        self.cancel_called = False
+
+    def done(self) -> bool:
+        return True
+
+    def cancelled(self) -> bool:
+        return False
+
+    def cancel(self) -> bool:
+        self.cancel_called = True
+        return False
 
 
 def make_agent() -> Agent:
@@ -376,6 +394,155 @@ class SubagentManagerTests(unittest.IsolatedAsyncioTestCase):
             record = SubagentRecord.from_storage_dict(data)
         self.assertEqual(record.state, SubagentState.INTERRUPTED)
         self.assertEqual(record.id, "abc123")
+
+    def test_from_storage_dict_pending_migrates_to_interrupted(self):
+        data = {
+            "id": "pend1",
+            "agent_name": "Subagent",
+            "agent_type": "subagent",
+            "state": "pending",
+            "label": "sub1",
+            "task": "do thing",
+            "result": None,
+            "error": None,
+            "start_time": 1.0,
+            "end_time": None,
+            "messages": [],
+        }
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(data)
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertIsNone(record.async_task)
+        self.assertIsNotNone(record.end_time)
+        self.assertEqual(record.end_time, 1.0)
+
+    def test_cancel_one_pending_task_none_transitions_and_returns_true(self):
+        agent = make_agent()
+        record = SubagentRecord(
+            id="pend1",
+            agent=agent,
+            state=SubagentState.PENDING,
+            label="sub1",
+            task="t",
+            start_time=time.time(),
+        )
+        manager = SubagentManager()
+        manager._subagents[record.id] = record
+
+        ok = manager.cancel_one(record.id)
+        self.assertTrue(ok)
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertEqual(record.error, "Interrupted by user")
+        self.assertIsNotNone(record.end_time)
+
+    def test_cancel_one_terminal_returns_false_no_mutation(self):
+        agent = make_agent()
+        record = SubagentRecord(
+            id="done1",
+            agent=agent,
+            state=SubagentState.COMPLETED,
+            label="sub1",
+            task="t",
+            start_time=1.0,
+            end_time=2.0,
+            result="ok",
+        )
+        manager = SubagentManager()
+        manager._subagents[record.id] = record
+
+        original = record.to_storage_dict()
+        ok = manager.cancel_one(record.id)
+        self.assertFalse(ok)
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+        self.assertEqual(record.end_time, 2.0)
+        self.assertEqual(record.result, "ok")
+        self.assertEqual(record.to_storage_dict(), original)
+
+    def test_cancel_running_transitions_restored_records_with_no_task(self):
+        agent = make_agent()
+        manager = SubagentManager()
+        r1 = SubagentRecord(
+            id="rest1",
+            agent=agent,
+            state=SubagentState.RUNNING,
+            label="s1",
+            task="t",
+            start_time=1.0,
+            end_time=None,
+        )
+        r2 = SubagentRecord(
+            id="rest2",
+            agent=agent,
+            state=SubagentState.PENDING,
+            label="s2",
+            task="t",
+            start_time=2.0,
+            end_time=None,
+        )
+        r3 = SubagentRecord(
+            id="rest3",
+            agent=agent,
+            state=SubagentState.COMPLETED,
+            label="s3",
+            task="t",
+            start_time=3.0,
+            end_time=4.0,
+        )
+        for rec in (r1, r2, r3):
+            manager._subagents[rec.id] = rec
+
+        cancelled = manager.cancel_running()
+        self.assertEqual(set(cancelled), {r1.id, r2.id})
+        self.assertEqual(r1.state, SubagentState.INTERRUPTED)
+        self.assertEqual(r2.state, SubagentState.INTERRUPTED)
+        self.assertIsNotNone(r1.end_time)
+        self.assertIsNotNone(r2.end_time)
+        self.assertEqual(r3.state, SubagentState.COMPLETED)
+
+    def test_cancel_one_done_task_pending_state_transitions_no_cancel_call(self):
+        agent = make_agent()
+        stub = _DoneTaskStub()
+
+        record = SubagentRecord(
+            id="done-task1",
+            agent=agent,
+            state=SubagentState.PENDING,
+            label="s1",
+            task="t",
+            start_time=time.time(),
+            async_task=stub,
+        )
+        manager = SubagentManager()
+        manager._subagents[record.id] = record
+
+        ok = manager.cancel_one(record.id)
+        self.assertTrue(ok)
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertIsNotNone(record.end_time)
+        self.assertFalse(stub.cancel_called)
+
+    def test_cancel_all_clears_on_spawn_side_effect(self):
+        agent = make_agent()
+        manager = SubagentManager()
+
+        async def on_spawn(rec):
+            pass
+
+        manager.on_spawn = on_spawn
+        record = SubagentRecord(
+            id="p1",
+            agent=agent,
+            state=SubagentState.PENDING,
+            label="s1",
+            task="t",
+            start_time=time.time(),
+        )
+        manager._subagents[record.id] = record
+
+        cancelled = manager.cancel_all()
+        self.assertEqual(cancelled, [record.id])
+        self.assertIsNone(manager.on_spawn)
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
 
     def test_to_storage_dict_round_trips_completed_record(self):
         agent = make_agent()

@@ -32,20 +32,25 @@ def resolve_skill_dependencies(
     name: str,
     registry: dict[str, Skill],
     allowed: list[str],
-    _visited: set[str] | None = None,
+    _stack: set[str] | None = None,
+    _resolved: set[str] | None = None,
 ) -> list[Skill]:
     """Resolve skill dependencies depth-first. Returns ordered list (deepest first)."""
-    if _visited is None:
-        _visited = set()
+    if _stack is None:
+        _stack = set()
+    if _resolved is None:
+        _resolved = set()
 
-    if name in _visited:
+    if name in _stack:
         raise ValueError(f"Circular dependency detected involving '{name}'")
-    _visited.add(name)
+    if name in _resolved:
+        return []
 
     if name not in registry:
         raise ValueError(f"Skill '{name}' not found")
 
     skill = registry[name]
+    _stack.add(name)
     result: list[Skill] = []
 
     for dep_name in skill.requires:
@@ -53,11 +58,13 @@ def resolve_skill_dependencies(
             raise ValueError(f"Skill '{name}' requires '{dep_name}' which does not exist")
         if not any(fnmatch(dep_name, p) for p in allowed):
             raise ValueError(f"Skill '{name}' requires '{dep_name}' which is not available for this agent")
-        dep_skills = resolve_skill_dependencies(dep_name, registry, allowed, _visited)
+        dep_skills = resolve_skill_dependencies(dep_name, registry, allowed, _stack, _resolved)
         for ds in dep_skills:
             if ds.name not in [s.name for s in result]:
                 result.append(ds)
 
+    _stack.discard(name)
+    _resolved.add(name)
     result.append(skill)
     return result
 

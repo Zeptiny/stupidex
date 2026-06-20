@@ -29,8 +29,8 @@ class TestConvertMCPTool(unittest.TestCase):
         )
         registry_name, tool, raw_schema = convert_mcp_tool("myserver", mcp_tool)
 
-        self.assertEqual(registry_name, "mcp_myserver_greet")
-        self.assertEqual(tool.name, "mcp_myserver_greet")
+        self.assertEqual(registry_name, "mcp::myserver::greet")
+        self.assertEqual(tool.name, "mcp::myserver::greet")
         self.assertEqual(tool.description, "Say hello")
         self.assertIn("name", tool.parameters.properties)
         self.assertEqual(tool.parameters.properties["name"].type, "string")
@@ -84,7 +84,7 @@ class TestConvertMCPTool(unittest.TestCase):
     def test_registry_name_format(self):
         mcp_tool = _FakeMCPTool(name="tool1", description="", input_schema={})
         registry_name, _, _ = convert_mcp_tool("server_a", mcp_tool)
-        self.assertEqual(registry_name, "mcp_server_a_tool1")
+        self.assertEqual(registry_name, "mcp::server_a::tool1")
 
     def test_empty_input_schema(self):
         mcp_tool = _FakeMCPTool(name="noop", description="Does nothing", input_schema={})

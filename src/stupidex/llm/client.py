@@ -1,16 +1,20 @@
 import asyncio
 import json
 import logging
+import os
 import random
+import re
 import time
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
 import httpx
 import litellm
 
-from stupidex.config import get_config
+from stupidex.config import HOME_CONFIG_DIR, get_config
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
+from stupidex.domain.session import get_current_session_id
 from stupidex.domain.tool import ExecutorResult, Tool
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
 from stupidex.llm.providers import ProviderResolutionError, resolve_model_ref
@@ -22,6 +26,14 @@ log = logging.getLogger(__name__)
 _YIELD_THROTTLE = 0.1
 _TOOL_TIMEOUT = 60
 _ERROR_DETAIL_MAX_LEN = 200
+_TOOL_OUTPUT_INLINE_THRESHOLD = 10_000
+_TOOLS_WITHOUT_OUTPUT_OFFLOAD = {
+    "read",
+    "grep",
+    "glob",
+    "directory_tree",
+    "web_fetch",
+}
 _TOOLS_WITHOUT_TIMEOUT = {
     "wait_for_subagent",
     "get_file_skeleton",
@@ -82,6 +94,81 @@ def _validate_tool_args(tool: Tool, args: dict) -> str | None:
         if req not in args:
             return f"Missing required parameter: {req}"
     return None
+
+
+def _tool_output_slug(tool_name: str, tool_call_id: str) -> str:
+    raw = f"{tool_name}_{tool_call_id}"
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+    slug = re.sub(r"_+", "_", slug)
+    slug = (slug or "output")[:120]
+    return f"{slug}.txt"
+
+
+def _tool_output_cache_dir(session_id: str) -> Path:
+    return HOME_CONFIG_DIR / "cache" / "tool-output" / session_id
+
+
+def _maybe_offload_tool_output(
+    tool_name: str, content: str, tool_call_id: str
+) -> str:
+    """Bound tool output size before it enters ``api_messages``.
+
+    Outputs at or below ``_TOOL_OUTPUT_INLINE_THRESHOLD`` and tools that
+    already self-limit (``_TOOLS_WITHOUT_OUTPUT_OFFLOAD``) pass through
+    unchanged. Larger outputs are written to a per-session cache file
+    (mirroring the web_fetch pattern) and replaced with a compact pointer
+    so the provider context window is not blown out. When no session is
+    active, the content is hard-truncated instead.
+    """
+    if (
+        len(content) <= _TOOL_OUTPUT_INLINE_THRESHOLD
+        or tool_name in _TOOLS_WITHOUT_OUTPUT_OFFLOAD
+    ):
+        return content
+
+    session_id = get_current_session_id()
+    if session_id is None:
+        truncated = content[:_TOOL_OUTPUT_INLINE_THRESHOLD]
+        return (
+            f"<{tool_name}_result length={len(content)}>\n"
+            f"<warning>Output exceeded {_TOOL_OUTPUT_INLINE_THRESHOLD} characters "
+            f"and was truncated because no active session is available for cache "
+            f"storage. Use the tool again with narrower scope (offset/limit) to "
+            f"inspect the full result.</warning>\n{truncated}\n</{tool_name}_result>"
+        )
+
+    cache_dir = _tool_output_cache_dir(session_id)
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(cache_dir, 0o700)
+        except OSError:
+            log.debug("Failed to chmod tool-output cache dir %s", cache_dir, exc_info=True)
+        path = cache_dir / _tool_output_slug(tool_name, tool_call_id)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            log.debug("Failed to chmod tool-output cache file %s", path, exc_info=True)
+    except OSError as e:
+        log.warning("Failed to offload tool output for %s: %s", tool_name, e, exc_info=True)
+        truncated = content[:_TOOL_OUTPUT_INLINE_THRESHOLD]
+        return (
+            f"<{tool_name}_result length={len(content)}>\n"
+            f"<warning>Output exceeded {_TOOL_OUTPUT_INLINE_THRESHOLD} characters "
+            f"and cache write failed ({e}). Truncated below; re-run the tool with "
+            f"narrower scope to inspect the full result.</warning>\n"
+            f"{truncated}\n</{tool_name}_result>"
+        )
+
+    return (
+        f"<{tool_name}_result length={len(content)} file=\"{path}\">\n"
+        f"<warning>Output exceeded {_TOOL_OUTPUT_INLINE_THRESHOLD} characters and "
+        f"was written to {path}. Use read (with offset/limit) or grep to inspect "
+        f"it.</warning>\n</{tool_name}_result>"
+    )
 
 
 def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
@@ -339,10 +426,12 @@ async def _stream_task(
         content = ""
         tool_calls: list[dict] = []
         emitted_tool_calls: set[int] = set()
+        enqueued_tool_calls: set[int] = set()
         usage = None
         last_thinking_yield: float = 0
         thinking_dirty: bool = False
         prev_index: int | None = None
+        assistant_api_msg: dict[str, Any] | None = None
 
         async def flush_thinking() -> None:
             nonlocal thinking_dirty, last_thinking_yield
@@ -373,17 +462,74 @@ async def _stream_task(
             the live `tool_calls` list continues to grow as more deltas
             arrive and the persisted history's reference sees those
             additions because we share the list, not snapshot it.
+
+            Tool-call entries lacking an `id` or `function.name` (placeholders
+            that never received their identifying delta) are dropped before
+            anchoring so strict providers don't 400 on an empty id/name. If
+            none survive the filter, an empty-assistant (content-only, no
+            tool_calls) message is anchored instead. The live `tool_calls`
+            list is filtered in place so the reference shared with the
+            anchored assistant dict/Message keeps growing as later deltas
+            append well-formed entries.
             """
-            api_messages.append({"role": "assistant",
-                                 "content": content or None, "tool_calls": tool_calls})
-            assistant_appended.set()
-            tool_calls_started.set()
+            nonlocal assistant_api_msg
+            tool_calls[:] = [
+                tc for tc in tool_calls
+                if tc.get("id") and tc["function"].get("name")
+            ]
+            if tool_calls:
+                assistant_api_msg = {
+                    "role": "assistant",
+                    "content": content or None,
+                    "tool_calls": tool_calls,
+                }
+                api_messages.append(assistant_api_msg)
+                assistant_appended.set()
+                tool_calls_started.set()
+                await msg_q.put(Message(
+                    role=MessageRole.ASSISTANT,
+                    content=content,
+                    type=MessageType.TEXT,
+                    tool_calls=tool_calls,
+                ))
+            else:
+                assistant_api_msg = {"role": "assistant", "content": content or None}
+                api_messages.append(assistant_api_msg)
+                assistant_appended.set()
+                tool_calls_started.set()
+                if content:
+                    await msg_q.put(Message(
+                        role=MessageRole.ASSISTANT,
+                        content=content,
+                        type=MessageType.TEXT,
+                    ))
+
+        async def emit_malformed_tool_call(prev_idx: int) -> None:
             await msg_q.put(Message(
                 role=MessageRole.ASSISTANT,
-                content=content,
-                type=MessageType.TEXT,
-                tool_calls=tool_calls,
+                content=(
+                    f"Malformed tool call: missing id or name for tool_call index {prev_idx}"
+                ),
+                type=MessageType.ERROR,
+                metadata={"error_title": "Malformed Tool Call"},
             ))
+
+        async def maybe_enqueue(prev_idx: int) -> None:
+            if prev_idx in enqueued_tool_calls:
+                return
+            if prev_idx >= len(tool_calls):
+                await emit_malformed_tool_call(prev_idx)
+                enqueued_tool_calls.add(prev_idx)
+                return
+            tc = tool_calls[prev_idx]
+            tc_id = tc.get("id")
+            tc_name = tc["function"].get("name")
+            if not tc_id or not tc_name:
+                await emit_malformed_tool_call(prev_idx)
+                enqueued_tool_calls.add(prev_idx)
+                return
+            enqueued_tool_calls.add(prev_idx)
+            await ready_q.put(tc)
 
         async for chunk in response:
             if not chunk.choices:
@@ -408,11 +554,14 @@ async def _stream_task(
             if delta.content:
                 await flush_thinking()
                 content += delta.content
-                await msg_q.put(Message(
-                    role=MessageRole.ASSISTANT,
-                    content=content,
-                    type=MessageType.TEXT,
-                ))
+                if assistant_api_msg is not None:
+                    assistant_api_msg["content"] = content
+                if not tool_calls_started.is_set():
+                    await msg_q.put(Message(
+                        role=MessageRole.ASSISTANT,
+                        content=content,
+                        type=MessageType.TEXT,
+                    ))
 
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
@@ -442,7 +591,7 @@ async def _stream_task(
                         await flush_thinking()
                         if not tool_calls_started.is_set():
                             await commit_assistant_with_tool_calls()
-                        await ready_q.put(tool_calls[prev_index])
+                        await maybe_enqueue(prev_index)
                     prev_index = tc_delta.index
 
             if hasattr(chunk, "usage") and chunk.usage:
@@ -459,7 +608,7 @@ async def _stream_task(
                 await commit_assistant_with_tool_calls()
             if usage:
                 await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
-            await ready_q.put(tool_calls[prev_index])
+            await maybe_enqueue(prev_index)
 
         if not tool_calls and usage:
             await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
@@ -483,10 +632,13 @@ async def _executor_task(
             result_msg = await _execute_tool(tc, filtered_tools)
             await msg_q.put(result_msg)
             await assistant_appended.wait()
+            trimmed = _maybe_offload_tool_output(
+                tc["function"]["name"], result_msg.content, tc["id"]
+            )
             api_messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
-                "content": result_msg.content,
+                "content": trimmed,
             })
     finally:
         await msg_q.put(None)

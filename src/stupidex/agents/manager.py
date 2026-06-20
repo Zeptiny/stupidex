@@ -60,6 +60,13 @@ SUBAGENT_INDICATORS: dict[SubagentState, str] = {
 }
 
 
+TERMINAL: set[SubagentState] = {
+    SubagentState.COMPLETED,
+    SubagentState.FAILED,
+    SubagentState.INTERRUPTED,
+}
+
+
 def format_subagent_attrs(
     id: str, name: str, type: str, state: str, elapsed: float | None = None
 ) -> str:
@@ -148,8 +155,10 @@ class SubagentRecord:
                 system_prompt="",
             )
         state = SubagentState(data.get("state", "completed"))
-        if state == SubagentState.RUNNING:
+        if state in (SubagentState.PENDING, SubagentState.RUNNING):
             state = SubagentState.INTERRUPTED
+        start_time = data.get("start_time", 0.0)
+        end_time = data.get("end_time") or start_time or time.time()
         return cls(
             id=data["id"],
             agent=agent,
@@ -158,8 +167,8 @@ class SubagentRecord:
             task=data.get("task", ""),
             result=data.get("result"),
             error=data.get("error"),
-            start_time=data.get("start_time", 0.0),
-            end_time=data.get("end_time"),
+            start_time=start_time,
+            end_time=end_time,
             messages=[Message.from_storage_dict(m) for m in data.get("messages", [])],
         )
 
@@ -170,31 +179,42 @@ class SubagentManager:
         self.on_spawn: Callable[[SubagentRecord],
                                 Coroutine[Any, Any, None]] | None = None
 
+    def _cancel_record(self, record: SubagentRecord) -> bool:
+        if record.state in TERMINAL:
+            return False
+        record.state = SubagentState.INTERRUPTED
+        record.error = record.error or "Interrupted by user"
+        record.end_time = record.end_time or time.time()
+        task = record.async_task
+        if task is not None and not task.done():
+            task.cancel()
+        if record.on_state_change:
+            _fire_and_forget(record.on_state_change(record.state))
+        return True
+
     def cancel_one(self, subagent_id: str) -> bool:
         """Cancel a single subagent by ID. Returns True if cancelled."""
         record = self._subagents.get(subagent_id)
-        if record and record.async_task and not record.async_task.done():
-            record.async_task.cancel()
-            return True
-        return False
+        if record is None:
+            return False
+        return self._cancel_record(record)
 
     def cancel_all(self) -> list[str]:
         """Cancel all running subagents. Returns list of cancelled IDs."""
         cancelled = []
         for record in self._subagents.values():
-            if record.async_task and not record.async_task.done():
-                record.async_task.cancel()
+            if self._cancel_record(record):
                 cancelled.append(record.id)
         self.on_spawn = None
         return cancelled
 
     def cancel_running(self) -> list[str]:
         """Cancel all non-terminal subagents. Returns list of cancelled IDs."""
-        terminal = {SubagentState.COMPLETED, SubagentState.FAILED, SubagentState.INTERRUPTED}
         cancelled = []
         for record in self._subagents.values():
-            if record.state not in terminal and record.async_task and not record.async_task.done():
-                record.async_task.cancel()
+            if record.state in TERMINAL:
+                continue
+            if self._cancel_record(record):
                 cancelled.append(record.id)
         return cancelled
 

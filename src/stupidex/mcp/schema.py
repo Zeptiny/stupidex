@@ -15,14 +15,14 @@ def convert_mcp_tool(server_name: str, mcp_tool: Any) -> tuple[str, Tool, dict]:
 
     Returns:
         Tuple of (registry_name, Tool, raw_schema) where registry_name is
-        ``mcp_{server_name}_{tool_name}`` and raw_schema is the original
+        ``mcp::{server_name}::{tool_name}`` and raw_schema is the original
         inputSchema dict kept for LLM pass-through.
     """
     tool_name: str = mcp_tool.name
     description: str = mcp_tool.description or ""
     input_schema: dict[str, Any] = mcp_tool.inputSchema or {}
 
-    registry_name = f"mcp_{server_name}_{tool_name}"
+    registry_name = f"mcp::{server_name}::{tool_name}"
 
     properties: dict[str, ToolParameterProperties] = {}
     for param_name, param_schema in input_schema.get("properties", {}).items():

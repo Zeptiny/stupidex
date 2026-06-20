@@ -38,32 +38,34 @@
 ## P1 — High-impact / Should fix (~30 deduplicated)
 
 > P1-5, P1-9, P1-10, P1-11 have been **fixed** by the P0-5 stream idle-timeout + retries work (see `docs/plans/2026-06-20-p0-verification-and-fix-plan.md`).
+> P1-1, P1-2, P1-3, P1-4, P1-6, P1-7, P1-8, P1-13, P1-14, P1-15, P1-16, P1-18, P1-19, P1-20, P1-21 have been **fixed** (see `docs/plans/2026-06-20-001-fix-p1-code-review-findings-plan.md`).
+> P1-12, P1-17, P1-22 moved to `README.md` → "P1 - Code Review".
 
 ### Correctness / Reliability
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P1-1 | agents | agents/manager.py:150 | Restored PENDING subagents never transition to terminal state (RUNNING→INTERRUPTED fix missed PENDING) — sidebar polls 1Hz forever | correctness, maintainability, adversarial, kieran-python | 75/50 | gated_auto | N |
-| P1-2 | agents | agents/manager.py:173 | Cancelling a not-yet-started _run task leaves record stuck in PENDING; saved state diverges silently | correctness | 60 | gated_auto | N |
-| P1-3 | agents | agents/manager.py:281 | _run and on_spawn can concurrently mount the same streamed message (race, shared StreamWidgetState) | correctness | 50 | manual | Y |
-| P1-4 | llm | llm/client.py:438 | Context-window exhaustion — while-True re-submission loop has no token budget; large tool outputs blow context mid-turn | correctness, adversarial, reliability | 75 | manual | Y |
+| P1-1 | agents | agents/manager.py:150 | Restored PENDING subagents never transition to terminal state (RUNNING→INTERRUPTED fix missed PENDING) — sidebar polls 1Hz forever **[FIXED — U9: PENDING→INTERRUPTED migration]** | correctness, maintainability, adversarial, kieran-python | 75/50 | gated_auto | N |
+| P1-2 | agents | agents/manager.py:173 | Cancelling a not-yet-started _run task leaves record stuck in PENDING; saved state diverges silently **[FIXED — U9: cancel decoupled from task liveness]** | correctness | 60 | gated_auto | N |
+| P1-3 | agents | agents/manager.py:281 | _run and on_spawn can concurrently mount the same streamed message (race, shared StreamWidgetState) **[FIXED — U9: per-subagent mount lock]** | correctness | 50 | manual | Y |
+| P1-4 | llm | llm/client.py:438 | Context-window exhaustion — while-True re-submission loop has no token budget; large tool outputs blow context mid-turn **[FIXED — U8: tool output offload to cache file]** | correctness, adversarial, reliability | 75 | manual | Y |
 | P1-5 | llm | llm/client.py:24 | wait_for_subagent and excluded tools can hang the stream indefinitely; msg_q backpressure deadlocks **[FIXED — P0-5 stream idle-timeout + retries]** | adversarial | 75 | manual | Y |
-| P1-6 | llm | llm/client.py:348 | Interleaved tool_call index deltas cause a tool_call to be queued for execution multiple times → strict providers 400 | correctness | 50 | gated_auto | Y |
-| P1-7 | llm | llm/client.py:338 | commit_assistant_with_tool_calls may emit a tool_call with empty id/name if first delta for an index lacks them → strict providers 400 | correctness, adversarial | 50/75 | gated_auto | Y |
-| P1-8 | llm | llm/client.py:284 | Committed assistant message's content in api_messages diverges from persisted history if content deltas arrive after tool_calls started | correctness | 50 | gated_auto | Y |
+| P1-6 | llm | llm/client.py:348 | Interleaved tool_call index deltas cause a tool_call to be queued for execution multiple times → strict providers 400 **[FIXED — U10: enqueued_tool_calls dedup set]** | correctness | 50 | gated_auto | Y |
+| P1-7 | llm | llm/client.py:338 | commit_assistant_with_tool_calls may emit a tool_call with empty id/name if first delta for an index lacks them → strict providers 400 **[FIXED — U10: filter empty id/name at commit]** | correctness, adversarial | 50/75 | gated_auto | Y |
+| P1-8 | llm | llm/client.py:284 | Committed assistant message's content in api_messages diverges from persisted history if content deltas arrive after tool_calls started **[FIXED — U10: mutable content holder + no stacked TEXT]** | correctness | 50 | gated_auto | Y |
 | P1-9 | llm | llm/client.py:439 | litellm.acompletion streaming call has no explicit timeout — provider stall blocks _stream_task forever **[FIXED — P0-5 stream idle-timeout]** | reliability | 90 | manual | N |
 | P1-10 | llm | llm/client.py:295 | Streaming response object never closed via async context manager / aclose — connection pool exhausts under repeated escape **[FIXED — P0-5 _safe_aclose()]** | reliability | 80 | manual | N |
 | P1-11 | llm | llm/client.py:467 | No retry, backoff, or jitter on transient LLM errors — single 429/502 aborts the entire agent turn **[FIXED — P0-5 exponential backoff + jitter]** | reliability | 85 | manual | N |
 | P1-12 | llm | llm/client.py:483 | Outer while-True agent loop has no iteration cap — runaway tool loop burns tokens forever | reliability, adversarial | 75 | manual | N | → README TODO |
-| P1-13 | tools | tools/exec.py:71 | Memory-exhaustion abuse — process.communicate() buffers unbounded stdout/stderr until timeout; yes/cat /dev/urandom OOM-kills the TUI | adversarial, performance | 75/50 | manual | Y |
-| P1-14 | tools | tools/file_manipulation.py:206 | edit/write tools are non-atomic and have a read-modify-write TOCTOU; concurrent subagents cause lost updates. Contrast ast.py's existing _atomic_write | adversarial, reliability | 75/80 | manual | N |
-| P1-15 | tools | tools/search.py:122 | Grep runs user-supplied regex synchronously in the event loop → ReDoS freezes the TUI. Naive glob→regex mishandles ?/[abc] | adversarial, kieran-python | 75/85 | manual | Y |
-| P1-16 | tools | tools/skill.py:41 | resolve_skill_dependencies false-positives circular dependency on diamond/shared transitive deps — shared _visited set across siblings | correctness, kieran-python | 75/90 | gated_auto | Y |
+| P1-13 | tools | tools/exec.py:71 | Memory-exhaustion abuse — process.communicate() buffers unbounded stdout/stderr until timeout; yes/cat /dev/urandom OOM-kills the TUI **[FIXED — U4: incremental bounded reads, 1MB cap]** | adversarial, performance | 75/50 | manual | Y |
+| P1-14 | tools | tools/file_manipulation.py:206 | edit/write tools are non-atomic and have a read-modify-write TOCTOU; concurrent subagents cause lost updates. Contrast ast.py's existing _atomic_write **[FIXED — U3: reuse _atomic_write]** | adversarial, reliability | 75/80 | manual | N |
+| P1-15 | tools | tools/search.py:122 | Grep runs user-supplied regex synchronously in the event loop → ReDoS freezes the TUI. Naive glob→regex mishandles ?/[abc] **[FIXED — U5: executor + fnmatch.translate]** | adversarial, kieran-python | 75/85 | manual | Y |
+| P1-16 | tools | tools/skill.py:41 | resolve_skill_dependencies false-positives circular dependency on diamond/shared transitive deps — shared _visited set across siblings **[FIXED — U2: separate stack vs resolved]** | correctness, kieran-python | 75/90 | gated_auto | Y |
 | P1-17 | tools | tools/subagent.py:64 | Subagent tier override lets the LLM escalate to most expensive model — no least-privilege enforcement | adversarial | 75 | manual | Y | → README TODO |
-| P1-18 | tools | tools/ast.py:679 | find_symbol_references reports 0-indexed line numbers, inconsistent with other AST tools (off-by-one line edits) | correctness | 75 | safe_auto | Y |
-| P1-19 | mcp | mcp/schema.py:25 / mcp/__init__.py:144 | Registry name `mcp_{server_name}_{tool_name}` is not injective — silent executor shadowing | correctness, adversarial, kieran-python | 75/100 | manual | N |
-| P1-20 | mcp | mcp/__init__.py:176 | call_tool silently discards all non-text content blocks (images, embedded resources) — agent gets empty string with no error | correctness | 100 | safe_auto | N |
-| P1-21 | mcp | mcp/__init__.py:193 | read_resource joins raw base64 BlobResourceContents.blob into text string — TypeError or garbled output at runtime | correctness, maintainability, kieran-python | 75/50 | manual | Y |
+| P1-18 | tools | tools/ast.py:679 | find_symbol_references reports 0-indexed line numbers, inconsistent with other AST tools (off-by-one line edits) **[FIXED — U1: +1 at display time]** | correctness | 75 | safe_auto | Y |
+| P1-19 | mcp | mcp/schema.py:25 / mcp/__init__.py:144 | Registry name `mcp_{server_name}_{tool_name}` is not injective — silent executor shadowing **[FIXED — U7: mcp::server::tool separator + shadow warning]** | correctness, adversarial, kieran-python | 75/100 | manual | N |
+| P1-20 | mcp | mcp/__init__.py:176 | call_tool silently discards all non-text content blocks (images, embedded resources) — agent gets empty string with no error **[FIXED — U6: partition blocks + placeholders + warning]** | correctness | 100 | safe_auto | N |
+| P1-21 | mcp | mcp/__init__.py:193 | read_resource joins raw base64 BlobResourceContents.blob into text string — TypeError or garbled output at runtime **[FIXED (false-positive on TypeError; blob is str) — U6: readable placeholder]** | correctness, maintainability, kieran-python | 75/50 | manual | Y |
 | P1-22 | mcp | mcp/__init__.py:130 | Project-level MCP server configs spawn arbitrary commands with no trust prompt or attestation → workspace-trust RCE | security | 75 | manual | N | → README TODO |
 | P1-23 | mcp | mcp/__init__.py:128/187 | SSE MCP server URLs unvalidated; no scheme/host allowlist; read_resource trusts server-advertised URIs (file://, redirect-to-private-host) | adversarial, security | 100/75 | manual/gated_auto | N |
 
@@ -87,17 +89,17 @@
 | P1-32 | llm | llm/client.py:174 | _execute_tool error-path branches have zero direct tests (JSONDecodeError, args-not-a-dict, unknown tool, _validate_tool_args failure, TimeoutError, generic Exception) | testing | 75 | gated_auto | N |
 | P1-33 | llm | llm/client.py:74 | _validate_tool_args has no tests despite branching logic (pure function, ideal unit-test target) | testing | 75 | gated_auto | N |
 | P1-34 | llm | llm/dynamic_system_prompt.py:17 | build_dynamic_system_prompt has no tests — TTL cache, directory_tree execution, XML escaping of subagents/todos | testing | 75 | gated_auto | N |
-| P1-35 | agents | agents/manager.py:150 | SubagentRecord persistence round-trip and RUNNING→INTERRUPTED migration untested — the persistence-replay entry point | testing | 100 | gated_auto | Y |
-| P1-36 | agents | agents/manager.py:173 | cancel_one / cancel_all / cancel_running have no tests; behavioral differences unverifiable | testing | 100 | gated_auto | Y |
+| P1-35 | agents | agents/manager.py:150 | SubagentRecord persistence round-trip and RUNNING→INTERRUPTED migration untested — the persistence-replay entry point **[FIXED — U9 tests]** | testing | 100 | gated_auto | Y |
+| P1-36 | agents | agents/manager.py:173 | cancel_one / cancel_all / cancel_running have no tests; behavioral differences unverifiable **[FIXED — U9 tests]** | testing | 100 | gated_auto | Y |
 | P1-37 | agents | agents/manager.py:285 | wait() semantics — already-done and unknown-id handling untested | testing | 100 | gated_auto | N |
 | P1-38 | agents | agents/manager.py:246 | on_message and on_state_change callback failure-isolation behavior untested | testing | 100 | gated_auto | Y |
-| P1-39 | mcp | mcp/__init__.py:169 | MCPManager.call_tool has zero test coverage — both branches (session None + happy path joining block.text) | testing | 75 | gated_auto | N |
-| P1-40 | mcp | mcp/__init__.py:192 | read_resource BlobResourceContents branch untested (and behaviorally suspect) | testing | 75 | gated_auto | N |
+| P1-39 | mcp | mcp/__init__.py:169 | MCPManager.call_tool has zero test coverage — both branches (session None + happy path joining block.text) **[FIXED — U6/U7 tests]** | testing | 75 | gated_auto | N |
+| P1-40 | mcp | mcp/__init__.py:192 | read_resource BlobResourceContents branch untested (and behaviorally suspect) **[FIXED — U6 tests]** | testing | 75 | gated_auto | N |
 | P1-41 | mcp | mcp/__init__.py:128 | SSE transport branch in _start_server is never exercised | testing | 75 | gated_auto | N |
 | P1-42 | mcp | mcp/__init__.py:81 | Per-server failure recovery in _run is untested | testing | 75 | gated_auto | N |
 | P1-43 | mcp | mcp/__init__.py:68 | start_all startup-error propagation branch untested | testing | 75 | gated_auto | N |
-| P1-44 | tools | tools/exec.py:41 | execute_command has zero test coverage — timeout/SIGKILL, shell=False, nonzero exit, exception paths | testing | 90 | gated_auto | Y |
-| P1-45 | tools | tools/search.py:52 | execute_grep_tool has zero test coverage — invalid regex, dir-not-found, binary skip, include_pattern translation, max_results truncation | testing | 90 | gated_auto | Y |
+| P1-44 | tools | tools/exec.py:41 | execute_command has zero test coverage — timeout/SIGKILL, shell=False, nonzero exit, exception paths **[FIXED — U4 tests]** | testing | 90 | gated_auto | Y |
+| P1-45 | tools | tools/search.py:52 | execute_grep_tool has zero test coverage — invalid regex, dir-not-found, binary skip, include_pattern translation, max_results truncation **[FIXED — U5 tests]** | testing | 90 | gated_auto | Y |
 | P1-46 | tools | tools/skill.py:197 | execute_skill resource-read path traversal guard is security-critical and untested | testing | 90 | gated_auto | Y |
 | P1-47 | tools | tools/subagent.py:53 | All four subagent executors (delegate, wait, list, interrupt) have zero test coverage | testing | 90 | gated_auto | Y |
 | P1-48 | tools | tools/todo.py:112 | All four todo executors (create, update, list, delete) have zero test coverage | testing | 90 | gated_auto | Y |

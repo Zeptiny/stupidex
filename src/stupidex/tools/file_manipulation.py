@@ -9,7 +9,7 @@ import aiofiles
 
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
-from stupidex.tools.ast import post_write_callbacks
+from stupidex.tools.ast import atomic_write, post_write_callbacks
 from stupidex.utils import directory_tree
 
 logger = logging.getLogger(__name__)
@@ -203,8 +203,8 @@ async def execute_edit_tool(
         else:
             new_content = content.replace(old_string, new_string, 1)
 
-        async with aiofiles.open(file_path, "w") as f:
-            await f.write(new_content)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, atomic_write, file_path, new_content)
 
         # Generate and show the diff
         diff = list(
@@ -381,12 +381,12 @@ async def execute_write_tool(file_path: str, content: str) -> ExecutorResult:
         path = Path(file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        async with aiofiles.open(path, "w", encoding="utf-8") as f:
-            await f.write(content)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, atomic_write, str(path), content)
 
         for cb in post_write_callbacks:
             try:
-                await cb(file_path)
+                await cb(str(path))
             except Exception as e:
                 logger.warning("Post-write callback failed for %s: %s", file_path, e)
 

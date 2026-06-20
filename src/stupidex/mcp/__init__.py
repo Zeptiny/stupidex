@@ -10,6 +10,7 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.types import BlobResourceContents, TextResourceContents
 
+from stupidex.config import _MCP_SERVER_NAME_RE
 from stupidex.domain.tool import ExecutorResult
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,7 @@ class MCPManager:
             for server_name, config in servers.items():
                 try:
                     await self._start_server(server_name, config)
-                    tool_count = sum(1 for k in self._tools if k.startswith(f"mcp_{server_name}_"))
+                    tool_count = sum(1 for k in self._tools if k.startswith(f"mcp::{server_name}::"))
                     self._server_status[server_name] = {"status": "connected", "tool_count": tool_count, "error": None}
                 except Exception as e:
                     self._server_status[server_name] = {"status": "failed", "tool_count": 0, "error": str(e)[:80]}
@@ -166,6 +167,17 @@ class MCPManager:
         self._runner = None
 
     async def _start_server(self, server_name: str, config: dict) -> None:
+        if not _MCP_SERVER_NAME_RE.match(server_name):
+            logger.warning(
+                "Skipping MCP server '%s': name does not match [a-z0-9-]+",
+                server_name,
+            )
+            self._server_status[server_name] = {
+                "status": "failed",
+                "tool_count": 0,
+                "error": "invalid server name (must match [a-z0-9-]+)",
+            }
+            return
         # Wrap the whole connect+initialize+enumerate sequence in one
         # per-server budget. Any hung RPC (or a slow transport
         # ``enter_async_context``) raises ``TimeoutError`` which propagates
@@ -202,6 +214,12 @@ class MCPManager:
         tools_result = await session.list_tools()
         for tool in tools_result.tools:
             registry_name, tool_obj, raw_schema = convert_mcp_tool(server_name, tool)
+            if registry_name in self._tools:
+                logger.warning(
+                    "MCP tool '%s' from server '%s' shadows existing registration",
+                    registry_name,
+                    server_name,
+                )
             self._tools[registry_name] = {
                 "tool": tool_obj,
                 "executor": make_mcp_executor(self.call_tool, server_name, tool.name),
@@ -235,7 +253,28 @@ class MCPManager:
                 content=f"Error: MCP server '{server_name}' is not connected.",
             )
         result = await session.call_tool(tool_name, arguments)
-        content = "\n".join(block.text for block in result.content if block.type == "text")
+        text_parts: list[str] = []
+        placeholders: list[str] = []
+        for block in result.content:
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                text_parts.append(getattr(block, "text", ""))
+            elif btype == "image":
+                placeholders.append(f"[image: {getattr(block, 'mimeType', 'application/octet-stream')}]")
+            elif btype == "resource":
+                resource = getattr(block, "resource", None)
+                uri = getattr(resource, "uri", None) if resource is not None else None
+                placeholders.append(f"[embedded resource: {uri}]")
+            else:
+                placeholders.append(f"[{btype} block]")
+        dropped_count = len(placeholders)
+        if dropped_count:
+            logger.warning(
+                "MCP tool '%s' returned %d non-text blocks that were dropped",
+                tool_name,
+                dropped_count,
+            )
+        content = "\n".join([*text_parts, *placeholders])
         return ExecutorResult(display=content, content=content)
 
     async def read_resource(self, server_name: str, uri: str) -> ExecutorResult:
@@ -251,6 +290,13 @@ class MCPManager:
             if isinstance(item, TextResourceContents):
                 parts.append(item.text)
             elif isinstance(item, BlobResourceContents):
-                parts.append(item.blob)
+                mime = getattr(item, "mimeType", None) or "application/octet-stream"
+                parts.append(f"[binary resource: {mime}, {len(item.blob)} base64 chars]")
+                logger.debug(
+                    "MCP read_resource returned binary blob for '%s' (%s, %d base64 chars)",
+                    uri,
+                    mime,
+                    len(item.blob),
+                )
         content = "\n".join(parts)
         return ExecutorResult(display=content, content=content)

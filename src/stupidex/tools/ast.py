@@ -251,6 +251,9 @@ def _atomic_write(file_path: str, content: str) -> None:
         raise
 
 
+atomic_write = _atomic_write
+
+
 async def _trigger_post_write_callbacks(file_path: str) -> list[str]:
     """Run all post-write callbacks and return a list of failure messages."""
     failures: list[str] = []
@@ -675,9 +678,9 @@ async def execute_find_symbol_references(
                 f'type="{s["type"]}" '
                 f'kind="{s["kind"]}" '
                 f'file="{_xml_attr(s["file_path"])}" '
-                f'start_line="{s["start_line"]}" '
+                f'start_line="{s["start_line"] + 1}" '
                 f'start_column="{s["start_column"]}" '
-                f'end_line="{s["end_line"]}" '
+                f'end_line="{s["end_line"] + 1}" '
                 f'end_column="{s["end_column"]}" />'
             )
 
