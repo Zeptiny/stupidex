@@ -40,6 +40,7 @@
 > P1-5, P1-9, P1-10, P1-11 have been **fixed** by the P0-5 stream idle-timeout + retries work (see `docs/plans/2026-06-20-p0-verification-and-fix-plan.md`).
 > P1-1, P1-2, P1-3, P1-4, P1-6, P1-7, P1-8, P1-13, P1-14, P1-15, P1-16, P1-18, P1-19, P1-20, P1-21 have been **fixed** (see `docs/plans/2026-06-20-001-fix-p1-code-review-findings-plan.md`).
 > P1-12, P1-17, P1-22 moved to `README.md` → "P1 - Code Review".
+> P1-25, P1-27 **fixed**; P1-24 **false-positive** (intentional design, deep-copied at persist time); P1-26 **false-positive** (rebind was already done at all transition sites) — context binding centralized into `SessionManager._bind_context` for maintainability.
 
 ### Correctness / Reliability
 
@@ -73,10 +74,10 @@
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P1-24 | domain | domain/message.py:143 | Shared-reference mutation: `state.content.tool_calls = msg.tool_calls` aliases caller's list into persisted history | adversarial | 75 | gated_auto | Y |
-| P1-25 | domain | domain/todo.py:76 | Cascade: 8-hex TodoTask ID collision (32-bit entropy) silently overwrites prior task under birthday pressure ~65k tasks | adversarial, correctness | 100/75 | manual | Y |
-| P1-26 | domain | domain/todo.py:162 | _current_store ContextVar not re-bound on SessionManager.switch/load/create — tool handlers operate on stale store | adversarial | 50 | manual | Y |
-| P1-27 | domain | domain/message.py:78 | Deserialization fails open: Usage(**data['usage']) rejects forward-compatible extra fields, aborts entire Session load → data loss | adversarial, reliability, testing | 75 | gated_auto | Y |
+| P1-24 | domain | domain/message.py:143 | Shared-reference mutation: `state.content.tool_calls = msg.tool_calls` aliases caller's list into persisted history **[FALSE-POSITIVE — aliasing is intentional, documented at client.py:459-464; to_storage_dict deep-copies at persist time; each subagent's tool_calls list is independent]** | adversarial | 75 | gated_auto | Y |
+| P1-25 | domain | domain/todo.py:76 | Cascade: 8-hex TodoTask ID collision (32-bit entropy) silently overwrites prior task under birthday pressure ~65k tasks **[FIXED — retry loop + RuntimeError on exhaustion]** | adversarial, correctness | 100/75 | manual | Y |
+| P1-26 | domain | domain/todo.py:162 | _current_store ContextVar not re-bound on SessionManager.switch/load/create — tool handlers operate on stale store **[FALSE-POSITIVE — rebind was already at all transition sites; centralized into SessionManager._bind_context for maintainability]** | adversarial | 50 | manual | Y |
+| P1-27 | domain | domain/message.py:78 | Deserialization fails open: Usage(**data['usage']) rejects forward-compatible extra fields, aborts entire Session load → data loss **[FIXED — explicit .get() extraction with 0 defaults]** | adversarial, reliability, testing | 75 | gated_auto | Y |
 
 ### Testing gaps (P1-class)
 

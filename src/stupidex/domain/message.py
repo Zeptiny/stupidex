@@ -80,7 +80,18 @@ class Message:
     def from_storage_dict(cls, data: dict[str, Any]) -> "Message":
         usage = None
         if "usage" in data and data["usage"] is not None:
-            usage = Usage(**data["usage"])
+            # Forward-compat: persisted usage may carry extra keys (e.g.
+            # reasoning_tokens, prompt_tokens_details) from a newer writer
+            # or a different provider, or be missing keys after partial
+            # corruption. Explicitly extract the known fields with .get()
+            # defaults so a drifted usage dict never raises TypeError and
+            # aborts the whole session load (session.py:56/130).
+            src = data["usage"]
+            usage = Usage(
+                prompt_tokens=src.get("prompt_tokens", 0),
+                completion_tokens=src.get("completion_tokens", 0),
+                total_tokens=src.get("total_tokens", 0),
+            )
         return cls(
             role=MessageRole(data["role"]),
             content=data.get("content", ""),

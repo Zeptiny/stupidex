@@ -9,7 +9,7 @@ from stupidex.agents.manager import SubagentManager, SubagentRecord
 from stupidex.config import get_config
 from stupidex.domain.chain import Chain
 from stupidex.domain.message import Message
-from stupidex.domain.todo import TodoStore
+from stupidex.domain.todo import TodoStore, set_todo_store
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +76,18 @@ class SessionManager:
         self.sessions: dict[str, Session] = {}
         self.active: Session | None = None
 
+    @staticmethod
+    def _bind_context(session: Session) -> None:
+        """Rebind the session-scoped ContextVars to `session`.
+
+        Centralizes the invariant (previously duplicated across app.on_mount,
+        /new, /sessions, /delete) so future transition sites cannot forget to
+        rebind. Both vars are paired in every existing caller — binding them
+        together here keeps them coherent.
+        """
+        set_todo_store(session.todo_store)
+        set_current_session_id(session.id)
+
     def create(self) -> Session:
         cfg = get_config()
         session = Session(
@@ -84,11 +96,13 @@ class SessionManager:
         )
         self.sessions[session.id] = session
         self.active = session
+        self._bind_context(session)
         return session
 
     def switch(self, id: str) -> Session | None:
         if id in self.sessions:
             self.active = self.sessions[id]
+            self._bind_context(self.active)
             return self.active
         return None
 
@@ -132,6 +146,7 @@ class SessionManager:
             return None
         self.sessions[session.id] = session
         self.active = session
+        self._bind_context(session)
         return session
 
     def list_saved(self) -> list[dict]:

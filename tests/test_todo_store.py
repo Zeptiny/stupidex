@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from stupidex.domain import todo as todo_mod
 from stupidex.domain.todo import (
     TERMINAL_STATUSES,
     TodoStatus,
@@ -242,3 +243,95 @@ def test_get_todo_store_lazy_init_and_set_todo_store():
     finally:
         _current_store.reset(token)
         assert _current_store.get() is prior
+
+
+# ---------------------------------------------------------------------------
+# P1-25: ID-collision avoidance in TodoStore.create
+# ---------------------------------------------------------------------------
+
+
+class _FakeUUID:
+    """Stand-in for uuid.UUID exposing only the .hex attribute the code reads."""
+
+    def __init__(self, hex_value: str) -> None:
+        self.hex = hex_value
+
+
+def test_create_does_not_silently_overwrite_on_id_collision(monkeypatch, fresh_store):
+    """On a single ID collision, create() retries and must not destroy the prior task."""
+    first = fresh_store.create("keep-me")
+
+    # Force uuid4 to return the same id once, then a fresh different one.
+    fresh_hex = "deadbeef"
+    if fresh_hex == first.id:
+        fresh_hex = "cafef00d"
+    seq = iter([first.id, fresh_hex])
+    monkeypatch.setattr(
+        todo_mod.uuid,
+        "uuid4",
+        lambda: _FakeUUID(next(seq)),
+    )
+
+    second = fresh_store.create("new-task")
+
+    assert second.id == fresh_hex
+    # The original task is untouched.
+    assert fresh_store.get(first.id) is first
+    assert first.title == "keep-me"
+    assert len(fresh_store.list()) == 2
+
+
+def test_create_retries_across_multiple_collisions(monkeypatch, fresh_store):
+    """create() keeps retrying across multiple consecutive collisions."""
+    # Seed the store with a few tasks to collide against.
+    existing_ids = {t.id for t in (fresh_store.create(f"seed-{i}") for i in range(3))}
+    # Cycle through existing ids, then finally yield a fresh one.
+    fresh_hex = "fffffffe"
+    while fresh_hex in existing_ids:
+        fresh_hex = "fffffffd"
+    seq = iter(list(existing_ids) + [fresh_hex])
+    monkeypatch.setattr(
+        todo_mod.uuid,
+        "uuid4",
+        lambda: _FakeUUID(next(seq)),
+    )
+
+    task = fresh_store.create("after-collisions")
+    assert task.id == fresh_hex
+    assert task.title == "after-collisions"
+    assert len(fresh_store.list()) == 4
+
+
+def test_create_raises_when_all_retries_collide(monkeypatch, fresh_store):
+    """If every retry collides, create() raises RuntimeError instead of overwriting."""
+    existing = fresh_store.create("first")
+    # Always return the same id → guaranteed to exhaust the retry budget.
+    monkeypatch.setattr(
+        todo_mod.uuid,
+        "uuid4",
+        lambda: _FakeUUID(existing.id),
+    )
+
+    with pytest.raises(RuntimeError, match="unique todo ID"):
+        fresh_store.create("doomed")
+
+    # State untouched — no silent overwrite, no partial task added.
+    assert len(fresh_store.list()) == 1
+    assert fresh_store.get(existing.id) is existing
+    assert existing.title == "first"
+
+
+def test_create_id_still_8_hex_after_retry(monkeypatch, fresh_store):
+    """The retry path preserves the 8-hex length contract from the happy path."""
+    colliding = fresh_store.create("seed").id
+    fresh_hex = "abcdef12"
+    seq = iter([colliding, fresh_hex])
+    monkeypatch.setattr(
+        todo_mod.uuid,
+        "uuid4",
+        lambda: _FakeUUID(next(seq)),
+    )
+    task = fresh_store.create("retry-survivor")
+    assert len(task.id) == 8
+    assert all(c in "0123456789abcdef" for c in task.id)
+    assert task.id == fresh_hex

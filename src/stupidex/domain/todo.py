@@ -30,6 +30,13 @@ class TodoStatus(Enum):
 
 TERMINAL_STATUSES: set[TodoStatus] = {TodoStatus.DONE, TodoStatus.ABANDONED}
 
+# Retry budget for ID-collision avoidance in TodoStore.create. Each attempt
+# has per-attempt collision probability ~k/4.3e9 with k existing tasks; 8
+# independent retries multiply failure probability by (k/4.3e9)^8,which is
+# effectively zero for any realistic k (<10^6). Bounds worst-case latency
+# while making the silent-overwrite failure mode impossible-by-construction.
+_MAX_ID_RETRIES = 8
+
 VALID_TRANSITIONS: dict[TodoStatus, set[TodoStatus]] = {
     TodoStatus.OPEN: {TodoStatus.IN_PROGRESS, TodoStatus.ABANDONED},
     TodoStatus.IN_PROGRESS: {TodoStatus.BLOCKED, TodoStatus.DONE, TodoStatus.NEEDS_REVIEW, TodoStatus.ABANDONED},
@@ -72,17 +79,28 @@ class TodoStore:
         subagent_id: str = "",
     ) -> TodoTask:
         now = time.time()
-        task = TodoTask(
-            id=uuid.uuid4().hex[:8],
-            title=title,
-            description=description,
-            status=TodoStatus.OPEN,
-            subagent_id=subagent_id,
-            created_at=now,
-            updated_at=now,
+        # 8-hex IDs give 32 bits of entropy (4.3e9 space). Collisions are
+        # astronomically unlikely per-session but would silently overwrite the
+        # prior task via dict assignment. Retry a handful of times and raise
+        # loudly if we can't get a fresh ID, rather than corrupting state.
+        for _ in range(_MAX_ID_RETRIES):
+            candidate = uuid.uuid4().hex[:8]
+            if candidate not in self._tasks:
+                task = TodoTask(
+                    id=candidate,
+                    title=title,
+                    description=description,
+                    status=TodoStatus.OPEN,
+                    subagent_id=subagent_id,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._tasks[task.id] = task
+                return task
+        raise RuntimeError(
+            "Failed to generate a unique todo ID after "
+            f"{_MAX_ID_RETRIES} attempts (store has {len(self._tasks)} tasks)"
         )
-        self._tasks[task.id] = task
-        return task
 
     def get(self, task_id: str) -> TodoTask | None:
         return self._tasks.get(task_id)

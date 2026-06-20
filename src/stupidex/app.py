@@ -12,7 +12,7 @@ from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
 from stupidex.domain.session import Session, SessionManager, set_current_session_id
-from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
+from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback
 from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
@@ -112,8 +112,6 @@ class Stupidex(App):
 
     async def on_mount(self) -> None:
         self.sessions.create()
-        set_todo_store(self.sessions.active.todo_store)
-        set_current_session_id(self.sessions.active.id)
         set_todo_refresh_callback(self.refresh_todos)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
