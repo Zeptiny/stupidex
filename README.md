@@ -6,7 +6,11 @@
 - [ ] **P0-2: Cascade prompt-injection → shell RCE** (`tools/exec.py:52` + `llm/client.py:393`) — conteúdo não-confiável de `web_fetch`/`rag`/`read`/MCP flui verbatim ao LLM; `execute_command` padrão é `shell=True`, sem sandbox/allowlist. Repo malicioso clonado = primitiva de RCE.
 - [ ] **P0-3: Sem confinamento de path em read/write/edit/glob/replace_symbol** (`tools/file_manipulation.py:44`) — agente (prompt-injected ou não) pode ler `~/.ssh/id_rsa`, `/etc/passwd`, `.env`, escrever `~/.bashrc`, plantar symlinks. Não existe verificação de limite de workspace.
 
+### P1 - Code Review
+- [ ] **P1-17: Subagent tier override permite escalação de modelo** (`tools/subagent.py:64`) — o LLM pode escalar para o modelo mais caro via override de tier no delegate_to_subagent, sem least-privilege enforcement. Deve ser corrigido depois.
+
 ### TODOs geral
+- Permitir textual serve (Atualmente tem problema com AST)
 - Controle de concorrência para travamento de arquivos
 - LSP
 - Tratamento de AGENTS.md

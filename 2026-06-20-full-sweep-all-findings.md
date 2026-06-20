@@ -59,7 +59,7 @@
 | P1-14 | tools | tools/file_manipulation.py:206 | edit/write tools are non-atomic and have a read-modify-write TOCTOU; concurrent subagents cause lost updates. Contrast ast.py's existing _atomic_write | adversarial, reliability | 75/80 | manual | N |
 | P1-15 | tools | tools/search.py:122 | Grep runs user-supplied regex synchronously in the event loop → ReDoS freezes the TUI. Naive glob→regex mishandles ?/[abc] | adversarial, kieran-python | 75/85 | manual | Y |
 | P1-16 | tools | tools/skill.py:41 | resolve_skill_dependencies false-positives circular dependency on diamond/shared transitive deps — shared _visited set across siblings | correctness, kieran-python | 75/90 | gated_auto | Y |
-| P1-17 | tools | tools/subagent.py:64 | Subagent tier override lets the LLM escalate to most expensive model — no least-privilege enforcement | adversarial | 75 | manual | Y |
+| P1-17 | tools | tools/subagent.py:64 | Subagent tier override lets the LLM escalate to most expensive model — no least-privilege enforcement | adversarial | 75 | manual | Y | → README TODO |
 | P1-18 | tools | tools/ast.py:679 | find_symbol_references reports 0-indexed line numbers, inconsistent with other AST tools (off-by-one line edits) | correctness | 75 | safe_auto | Y |
 | P1-19 | mcp | mcp/schema.py:25 / mcp/__init__.py:144 | Registry name `mcp_{server_name}_{tool_name}` is not injective — silent executor shadowing | correctness, adversarial, kieran-python | 75/100 | manual | N |
 | P1-20 | mcp | mcp/__init__.py:176 | call_tool silently discards all non-text content blocks (images, embedded resources) — agent gets empty string with no error | correctness | 100 | safe_auto | N |
