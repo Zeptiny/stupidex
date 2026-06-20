@@ -213,7 +213,7 @@ class RAGStore:
         file_pattern: str | None = None,
     ) -> list[SearchResult]:
         if top_k is None:
-            top_k = get_config().rag_top_k
+            top_k = get_config().rag.top_k
 
         vectors = self._load_vectors()
         if not vectors:

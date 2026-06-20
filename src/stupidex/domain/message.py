@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -37,11 +38,20 @@ class Message:
     tool_calls: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"role": self.role.value, "content": self.content}
+        # OpenAI convention: assistant messages carrying only tool_calls
+        # should use `content: null` rather than an empty string; strict
+        # validators reject empty-string content on tool-call-only turns.
+        # Tool result messages (role "tool") must keep their string content
+        # (even when empty) to satisfy the chat-message contract.
+        if self.role == MessageRole.ASSISTANT and self.tool_calls:
+            content = self.content if self.content else None
+        else:
+            content = self.content
+        d: dict[str, Any] = {"role": self.role.value, "content": content}
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         if self.tool_calls:
-            d["tool_calls"] = self.tool_calls
+            d["tool_calls"] = [copy.deepcopy(tc) for tc in self.tool_calls]
         return d
 
     def to_storage_dict(self) -> dict[str, Any]:
@@ -63,7 +73,7 @@ class Message:
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         if self.tool_calls:
-            d["tool_calls"] = self.tool_calls
+            d["tool_calls"] = [copy.deepcopy(tc) for tc in self.tool_calls]
         return d
 
     @classmethod
@@ -126,6 +136,16 @@ def record_streamed_message(history: list[Message], msg: Message, state: StreamH
                 appended = True
             else:
                 state.content.content = msg.content
+        # tool_calls can appear WITHOUT prior content (model calls a tool
+        # immediately). In that case anchor a new empty assistant message
+        # so the tool_calls block is persisted instead of silently dropped,
+        # which would otherwise orphan the matching TOOL_RESULT on replay.
+        if msg.tool_calls:
+            if state.content is None:
+                history.append(msg)
+                state.content = msg
+                appended = True
+            state.content.tool_calls = msg.tool_calls
         if msg.usage and state.content:
             state.content.usage = msg.usage
         return appended

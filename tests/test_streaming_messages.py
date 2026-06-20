@@ -91,7 +91,71 @@ class StreamHistoryTest(unittest.TestCase):
         )
         self.assertEqual(history[-1].usage, Usage(1, 2, 3))
 
-    def test_api_history_excludes_display_only_stream_messages(self):
+    def test_record_streamed_message_attaches_tool_calls_to_assistant_text(self):
+        history = []
+        state = StreamHistoryState()
+
+        tool_calls = [{"id": "call-0", "type": "function",
+                       "function": {"name": "read", "arguments": '{"file_path":"README.md"}'}}]
+
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Let me check", MessageType.TEXT),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "Let me check", MessageType.TEXT, tool_calls=tool_calls),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.TOOL, "contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            state,
+        )
+
+        self.assertEqual(len(history), 2)
+        assistant_msg = history[0]
+        self.assertEqual(assistant_msg.role, MessageRole.ASSISTANT)
+        self.assertEqual(assistant_msg.content, "Let me check")
+        self.assertEqual(assistant_msg.tool_calls, tool_calls)
+
+    def test_record_streamed_message_anchors_tool_calls_without_content(self):
+        """When the model calls a tool with no prior text content, the
+        tool_calls block must still persist as an assistant message so the
+        matching TOOL_RESULT is not orphaned on replay."""
+        history = []
+        state = StreamHistoryState()
+
+        tool_calls = [{"id": "call-0", "type": "function",
+                       "function": {"name": "read", "arguments": '{"file_path":"README.md"}'}}]
+
+        # model goes straight to a tool call, no content
+        appended = record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "", MessageType.TEXT, tool_calls=tool_calls),
+            state,
+        )
+        self.assertTrue(appended)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].tool_calls, tool_calls)
+        self.assertEqual(history[0].content, "")
+
+        record_streamed_message(
+            history,
+            Message(MessageRole.TOOL, "contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            state,
+        )
+        self.assertEqual(len(history), 2)
+
+        # Verify replay can pair the tool result with its assistant tool_calls message.
+        api_messages = llm_client._history_to_api_messages(history)
+        self.assertEqual(api_messages[0]["role"], "assistant")
+        self.assertEqual(api_messages[0]["tool_calls"], tool_calls)
+        self.assertEqual(api_messages[1]["role"], "tool")
+        self.assertEqual(api_messages[1]["tool_call_id"], "call-0")
+
+    def test_api_history_replays_thinking_and_drops_orphaned_tool_results(self):
         history = [
             Message(MessageRole.USER, "hello"),
             Message(MessageRole.ASSISTANT, "hidden reasoning", MessageType.THINKING),
@@ -105,7 +169,49 @@ class StreamHistoryTest(unittest.TestCase):
             llm_client._history_to_api_messages(history),
             [
                 {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hidden reasoning"},
                 {"role": "assistant", "content": "final answer"},
+            ],
+        )
+
+    def test_api_history_includes_tool_calls_and_tool_results_with_matching_ids(self):
+        assistant_msg = Message(
+            MessageRole.ASSISTANT,
+            "Let me check",
+            MessageType.TEXT,
+            tool_calls=[{"id": "call-0", "type": "function",
+                         "function": {"name": "read", "arguments": '{"file_path":"README.md"}'}}],
+        )
+        history = [
+            Message(MessageRole.USER, "hello"),
+            assistant_msg,
+            Message(MessageRole.TOOL, "file contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            Message(MessageRole.ASSISTANT, "final answer", MessageType.TEXT),
+        ]
+
+        self.assertEqual(
+            llm_client._history_to_api_messages(history),
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "Let me check",
+                 "tool_calls": assistant_msg.tool_calls},
+                {"role": "tool", "content": "file contents", "tool_call_id": "call-0"},
+                {"role": "assistant", "content": "final answer"},
+            ],
+        )
+
+    def test_api_history_drops_orphaned_tool_result_without_matching_assistant(self):
+        history = [
+            Message(MessageRole.USER, "hello"),
+            Message(MessageRole.TOOL, "orphaned", MessageType.TOOL_RESULT, tool_call_id="call-9"),
+            Message(MessageRole.ASSISTANT, "answer", MessageType.TEXT),
+        ]
+
+        self.assertEqual(
+            llm_client._history_to_api_messages(history),
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "answer"},
             ],
         )
 
@@ -294,6 +400,202 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertLess(full_thinking_index, first_tool_result_index)
+
+    async def test_assistant_text_message_with_tool_calls_is_emitted_to_msg_q(self):
+        """Verify _stream_task emits a TEXT assistant message carrying the
+        actual tool_calls payload (the fix's whole point). A regression that
+        deletes the commit_assistant_with_tool_calls emit would still pass
+        every other test because they only assert ordering, not the payload."""
+
+        async def response():
+            yield chunk(content="Let me check.")
+            yield chunk(tool_calls=[tool_delta(0)])
+
+        msg_q = asyncio.Queue(maxsize=1)
+        ready_q = asyncio.Queue()
+        api_messages = []
+        assistant_appended = asyncio.Event()
+        tool_calls_started = asyncio.Event()
+
+        stream_t = asyncio.create_task(
+            llm_client._stream_task(
+                response(), msg_q, ready_q, api_messages,
+                assistant_appended, tool_calls_started,
+            )
+        )
+        executor_t = asyncio.create_task(
+            llm_client._executor_task(
+                msg_q, ready_q, api_messages, {}, assistant_appended,
+            )
+        )
+
+        messages = []
+        while True:
+            msg = await msg_q.get()
+            if msg is None:
+                break
+            messages.append(msg)
+
+        await asyncio.gather(stream_t, executor_t)
+
+        text_with_tool_calls = [
+            m for m in messages
+            if m.type == MessageType.TEXT and m.tool_calls
+        ]
+        self.assertEqual(len(text_with_tool_calls), 1)
+        self.assertEqual(text_with_tool_calls[0].role, MessageRole.ASSISTANT)
+        self.assertEqual(text_with_tool_calls[0].content, "Let me check.")
+        tc = text_with_tool_calls[0].tool_calls[0]
+        self.assertEqual(tc["id"], "call-0")
+        self.assertEqual(tc["function"]["name"], "read")
+
+    async def test_three_parallel_tool_calls_all_persisted_in_assistant_message(self):
+        """Regression test for bug #1: with 3+ parallel tool_calls, the
+        shallow-copy snapshot used to freeze the list at length 2; the third
+        tool_call_id was never persisted, so its TOOL_RESULT was orphaned
+        on the next turn. The fix passes the live list reference so all
+        tool_call_ids land on disk by end-of-stream.
+        """
+        async def response():
+            yield chunk(content="Reading three files")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[tool_delta(1)])
+            yield chunk(tool_calls=[tool_delta(2)])
+            await asyncio.sleep(0.01)
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"result {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        original_execute_tool = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            msg_q = asyncio.Queue(maxsize=1)
+            ready_q = asyncio.Queue()
+            api_messages = []
+            assistant_appended = asyncio.Event()
+            tool_calls_started = asyncio.Event()
+
+            stream_t = asyncio.create_task(
+                llm_client._stream_task(
+                    response(), msg_q, ready_q, api_messages,
+                    assistant_appended, tool_calls_started,
+                )
+            )
+            executor_t = asyncio.create_task(
+                llm_client._executor_task(
+                    msg_q, ready_q, api_messages, {}, assistant_appended,
+                )
+            )
+
+            messages = []
+            while True:
+                msg = await msg_q.get()
+                if msg is None:
+                    break
+                messages.append(msg)
+
+            await asyncio.gather(stream_t, executor_t)
+        finally:
+            llm_client._execute_tool = original_execute_tool
+
+        # Exactly one assistant TEXT message should carry the full set of tool_calls
+        text_with_tool_calls = [
+            m for m in messages
+            if m.type == MessageType.TEXT and m.tool_calls
+        ]
+        self.assertEqual(len(text_with_tool_calls), 1, "emit should fire exactly once")
+        assistant_msg = text_with_tool_calls[0]
+        ids = {tc["id"] for tc in assistant_msg.tool_calls}
+        self.assertEqual(ids, {"call-0", "call-1", "call-2"},
+                         "all three tool_call_ids must be in the persisted assistant message")
+
+        # The persisted history, when replayed, must pair every TOOL_RESULT with its assistant.
+        history = [Message(MessageRole.USER, "hello"), assistant_msg]
+        for m in messages:
+            if m.type == MessageType.TOOL_RESULT:
+                history.append(m)
+
+        replayed = llm_client._history_to_api_messages(history)
+        # Expect: user, assistant(with all 3 tool_calls), tool(call-0), tool(call-1), tool(call-2)
+        self.assertEqual(replayed[0]["role"], "user")
+        self.assertEqual(replayed[1]["role"], "assistant")
+        self.assertEqual({tc["id"] for tc in replayed[1]["tool_calls"]}, {"call-0", "call-1", "call-2"})
+        tool_msgs = [m for m in replayed if m["role"] == "tool"]
+        self.assertEqual(len(tool_msgs), 3,
+                         "all three tool results must be paired with the assistant tool_calls on replay")
+
+    def test_round_trip_persists_tool_calls_through_storage_dict(self):
+        """End-to-end: record_streamed_message -> to_storage_dict ->
+        from_storage_dict -> _history_to_api_messages must round-trip the
+        tool_calls block. A regression that drops tool_calls at any layer
+        would otherwise be caught only by the integration test.
+        """
+        history = []
+        state = StreamHistoryState()
+        tool_calls = [{"id": "call-0", "type": "function",
+                       "function": {"name": "read", "arguments": '{"file_path":"a"}'}}]
+
+        record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "checking", MessageType.TEXT, tool_calls=tool_calls),
+            state,
+        )
+        record_streamed_message(
+            history,
+            Message(MessageRole.TOOL, "result", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            state,
+        )
+
+        serialized = [m.to_storage_dict() for m in history]
+        restored = [Message.from_storage_dict(d) for d in serialized]
+
+        replayed = llm_client._history_to_api_messages(restored)
+        self.assertEqual(replayed[0]["role"], "assistant")
+        self.assertEqual(replayed[0]["tool_calls"], tool_calls)
+        self.assertEqual(replayed[1]["role"], "tool")
+        self.assertEqual(replayed[1]["tool_call_id"], "call-0")
+
+    def test_display_only_tool_call_hint_without_tool_calls_is_dropped(self):
+        """Explicit coverage for the bare-TOOL_CALL-display-hint branch."""
+        history = [
+            Message(MessageRole.USER, "hi"),
+            Message(MessageRole.ASSISTANT, "Calling tool: read", MessageType.TOOL_CALL,
+                    metadata={"tool_name": "read"}),
+            Message(MessageRole.ASSISTANT, "answer", MessageType.TEXT),
+        ]
+        replayed = llm_client._history_to_api_messages(history)
+        self.assertEqual(replayed, [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "answer"},
+        ])
+
+    def test_cancelled_tool_calls_block_filtered_out_on_replay(self):
+        """When the user cancels before any tool result arrives, the
+        persisted assistant message carries unserviced tool_calls. Replay
+        must drop those tool_calls so the provider doesn't see a dangling
+        tool_calls block (which strict OpenAI providers reject with 400).
+        """
+        history = [
+            Message(MessageRole.USER, "hi"),
+            Message(
+                MessageRole.ASSISTANT, "", MessageType.TEXT,
+                tool_calls=[{"id": "call-9", "type": "function",
+                             "function": {"name": "read", "arguments": '{}'}}],
+            ),
+            Message(MessageRole.ASSISTANT, "[Interrupted by user]", MessageType.TEXT),
+        ]
+        replayed = llm_client._history_to_api_messages(history)
+        # The cancelled assistant entry (no content, no surviving tool_calls) is dropped entirely;
+        # only the user message and the "[Interrupted by user]" reply survive replay.
+        self.assertEqual(replayed, [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "[Interrupted by user]"},
+        ])
 
     async def test_whitespace_reasoning_is_not_emitted(self):
         async def response():

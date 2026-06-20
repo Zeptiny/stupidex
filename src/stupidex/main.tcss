@@ -206,3 +206,8 @@ OptionPicker {
     color: $text-muted;
     text-style: italic;
 }
+
+Button.settings-add-btn {
+    content-align: center middle;
+    text-align: center;
+}

@@ -234,7 +234,10 @@ class ThinkingMessageWidget(Static):
             title = f"Thought: {Chain.format_elapsed(self._stored_duration)}" if self._stored_duration is not None else "Thought"
         else:
             title = "Thinking..."
-        self._content_widget = Static(self.msg.content if self._loaded else "", classes="thinking-content")
+        self._content_widget = Static(
+            Text(self.msg.content) if self._loaded else Text(""),
+            classes="thinking-content",
+        )
         self._collapsible = Collapsible(
             self._content_widget,
             title=title,
@@ -261,7 +264,7 @@ class ThinkingMessageWidget(Static):
     def _do_update(self) -> None:
         if self._content_widget is None:
             return
-        self._content_widget.update(self.msg.content)
+        self._content_widget.update(Text(self.msg.content))
 
     def _flush_update(self) -> None:
         self._flush_scheduled = False

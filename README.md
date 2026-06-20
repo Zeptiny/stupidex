@@ -61,6 +61,8 @@
 - Algo pode estar bloqueando/não paralelo - quando múltiplos subagentes são instanciados, a CPU usa apenas um núcleo
 - O tempo de indexação RAG e AST na barra lateral não é atualizado regularmente, ficando obsoleto
 - O agente parece repetir ações - será que ele está se confundindo com o que já fez?
+- Contexto não está sendo atualizado constantemente
+- Geração de título não está funcionando automaticamente
 
 ### Refatoração de configuração
 - Ainda precisa ser melhor analisada

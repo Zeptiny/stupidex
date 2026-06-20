@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import litellm
 
-from stupidex.config import Config, _validate_config
+from stupidex.config import Config
 from stupidex.llm import providers as providers_mod
 from stupidex.llm.providers import (
     ProviderResolutionError,
@@ -31,8 +31,8 @@ _RESERVED_ENV_KEYS = ("DEFINITELY_UNSET_TEST_ENV_VAR",)
 
 
 def _cfg(providers: dict) -> Config:
-    """Build a validated Config carrying the given provider entries."""
-    return _validate_config(Config(providers=providers))
+    """Build a Config carrying the given provider entries."""
+    return Config(providers=providers)
 
 
 def _litellm_info(

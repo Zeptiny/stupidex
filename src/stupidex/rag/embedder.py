@@ -34,7 +34,7 @@ class Embedder:
         """
         if not self.model:
             raise EmbeddingError(
-                "No embedding model configured. Set 'rag_embedding_model' in "
+                "No embedding model configured. Set 'rag.embedding_model' in "
                 "config.json or STUPIDEX_RAG_EMBEDDING_MODEL env var."
             )
         return resolve_embedding_ref(self.model)

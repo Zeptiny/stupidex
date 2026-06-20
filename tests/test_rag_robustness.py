@@ -224,7 +224,7 @@ def test_resolve_ref_fastembed_pseudo_provider():
 
 def test_resolve_ref_provider_alias_routes_to_litellm():
     """`alias/model` resolves through the providers dict to a litellm 4-tuple."""
-    from stupidex.config import Config, _validate_config
+    from stupidex.config import Config
     from stupidex.llm import providers as providers_mod
 
     providers = {
@@ -235,7 +235,7 @@ def test_resolve_ref_provider_alias_routes_to_litellm():
             "models": {"text-embedding-3-small": {}},
         }
     }
-    cfg = _validate_config(Config(providers=providers))
+    cfg = Config(providers=providers)
     e = Embedder("work-openai/text-embedding-3-small")
     with patch.object(providers_mod, "get_config", return_value=cfg):
         assert e._resolve_ref() == (
@@ -248,7 +248,7 @@ def test_resolve_ref_provider_alias_routes_to_litellm():
 
 def test_resolve_ref_explicit_model_id_preserved():
     """The model id portion of `alias/<model_id>` is preserved verbatim."""
-    from stupidex.config import Config, _validate_config
+    from stupidex.config import Config
     from stupidex.llm import providers as providers_mod
 
     providers = {
@@ -258,7 +258,7 @@ def test_resolve_ref_explicit_model_id_preserved():
             "api_key": "sk-test",
         }
     }
-    cfg = _validate_config(Config(providers=providers))
+    cfg = Config(providers=providers)
     e = Embedder("work-openai/custom-embedding-model")
     with patch.object(providers_mod, "get_config", return_value=cfg):
         ref = e._resolve_ref()

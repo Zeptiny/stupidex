@@ -28,6 +28,7 @@ COMMANDS = {
     "/model": "Change the model for the current session",
     "/theme": "Switch the application theme",
     "/personality": "Switch the agent personality",
+    "/settings": "Open the configuration settings screen",
     "/index-rag": "Index the project for RAG semantic search",
     "/index-ast": "Re-scan the project for AST symbol indexing",
     "/rag status": "Show RAG index status",
@@ -105,13 +106,17 @@ def _format_model_label(alias: str, model_id: str, metadata: dict) -> str:
     )
 
 
-def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
+def _build_model_picker_items(cfg: Config, mode: str = "chat") -> list[PickerItem]:
     """Build the picker-list for `/model` from configured providers + resolved metadata.
 
     Iterates each configured provider's declared `models` dict (per U1),
     hydrates capability metadata via `resolve_model_metadata` (per U2), and
     builds a `PickerItem` per `(alias, model_id)` pair with the `id` set to
     `f"{alias}/{model_id}"` -- the form `change_model` stores.
+
+    Only models whose resolved `mode` matches the `mode` argument are included,
+    so chat-model pickers (Tiers, default model, `/model`) show only chat
+    models and the embedding-model picker shows only embedding models.
 
     Never raises: malformed provider entries and metadata-resolution failures
     are logged and skipped, keeping the rest of the list intact. The validator
@@ -154,6 +159,8 @@ def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
         for model_id in models:
             try:
                 metadata = resolve_model_metadata(alias, model_id)
+                if metadata.get("mode") != mode:
+                    continue
                 label = _format_model_label(alias, model_id, metadata)
                 items.append(PickerItem(label=label, id=f"{alias}/{model_id}"))
             except Exception:  # noqa: BLE001 -- defensive; resolver never raises by design
@@ -280,6 +287,52 @@ async def execute_command(app: App, cmd: str) -> None:
                     set_current_personality(result)
 
             app.push_screen(OptionPicker(items), on_personality_picked)
+        case "/settings":
+            from stupidex.config import ConfigManager
+            from stupidex.screens.settings import SettingsScreen
+
+            cfg = get_config()
+
+            async def on_settings_result(result: Config | None):
+                # result is None when the modal closed without "save & close"
+                # (Cancel/Esc). But Ctrl+S saves internally to ConfigManager
+                # without dismissing, so a None result can still carry saved
+                # mcp_servers changes that warrant a restart prompt. Only short
+                # -circuit when result is None AND mcp_servers are unchanged.
+                if result is None:
+                    current = ConfigManager._instance
+                    if current is None or current.mcp_servers == cfg.mcp_servers:
+                        return
+                    saved = current
+                else:
+                    ConfigManager._instance = result
+                    ConfigManager.save()
+                    saved = result
+                needs_restart = saved.mcp_servers != cfg.mcp_servers
+                if needs_restart:
+                    from stupidex.screens.settings import ConfirmScreen
+
+                    async def on_restart_confirm(confirmed: bool | None) -> None:
+                        if confirmed:
+                            app.request_restart()
+                        else:
+                            app.notify(
+                                "Settings saved. Restart for MCP server changes to take effect.",
+                                severity="information",
+                            )
+
+                    app.push_screen(
+                        ConfirmScreen(
+                            "Restart required",
+                            "MCP server configuration changed and requires a restart to take effect.\nRestart now?",
+                        ),
+                        on_restart_confirm,
+                    )
+                else:
+                    app.notify("Settings saved.", severity="information")
+
+            app.push_screen(SettingsScreen(cfg), on_settings_result)
+
         case "/index-rag":
             from stupidex.rag.indexer import index_project
             from stupidex.rag.indexer import is_indexing as rag_is_indexing
