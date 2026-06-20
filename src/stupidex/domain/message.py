@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -37,11 +38,15 @@ class Message:
     tool_calls: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"role": self.role.value, "content": self.content}
+        # OpenAI convention: assistant messages carrying only tool_calls
+        # should use `content: null` rather than an empty string; strict
+        # validators reject empty-string content on tool-call-only turns.
+        content = self.content if self.content else None
+        d: dict[str, Any] = {"role": self.role.value, "content": content}
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         if self.tool_calls:
-            d["tool_calls"] = self.tool_calls
+            d["tool_calls"] = [copy.deepcopy(tc) for tc in self.tool_calls]
         return d
 
     def to_storage_dict(self) -> dict[str, Any]:
@@ -63,7 +68,7 @@ class Message:
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         if self.tool_calls:
-            d["tool_calls"] = self.tool_calls
+            d["tool_calls"] = [copy.deepcopy(tc) for tc in self.tool_calls]
         return d
 
     @classmethod

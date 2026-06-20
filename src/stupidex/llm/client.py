@@ -86,11 +86,24 @@ def _validate_tool_args(tool: Tool, args: dict) -> str | None:
 def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
     """Convert persisted display history to API history.
 
-    Enforces the OpenAI-shaped invariant: every `tool` message is immediately
-    preceded by an assistant message whose `tool_calls` contains the same
-    `tool_call_id`. Orphaned tool results (e.g. from sessions saved before the
-    fix) are dropped defensively so we never send a malformed sequence.
+    Enforces the OpenAI-shaped invariant both ways:
+    - every `tool` message is preceded by an assistant message whose
+      `tool_calls` contains the same `tool_call_id` (orphaned tool results
+      are dropped); and
+    - every assistant `tool_calls` block has at least one following matching
+      `tool` message (assistant tool_calls that never received a result --
+      e.g. after an interrupted turn -- are filtered so we don't send
+      dangling tool_calls, which would 400 on strict providers).
     """
+    # Pre-pass: collect tool_call_ids that have at least one matching
+    # TOOL_RESULT anywhere in the history. Assistant tool_calls entries that
+    # reference ids with no matching result will be filtered on emit so we
+    # don't send a tool_calls block that never receives its tool responses.
+    surviving_tool_call_ids: set[str] = set()
+    for msg in messages:
+        if msg.role == MessageRole.TOOL and msg.tool_call_id:
+            surviving_tool_call_ids.add(msg.tool_call_id)
+
     api_messages: list[dict[str, Any]] = []
     last_assistant_tool_call_ids: set[str] = set()
     for msg in messages:
@@ -99,20 +112,27 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
         if msg.type == MessageType.TOOL_CALL and not msg.tool_calls:
             continue
         if msg.type == MessageType.THINKING:
+            # Replay THINKING as plain assistant content so reasoning-capable
+            # models retain prior deliberation. The `reasoning` top-level
+            # field is intentionally NOT emitted here: strict OpenAI Chat
+            # Completions providers (gpt-4o etc.) reject unknown top-level
+            # fields with HTTP 400. We pass the thinking text as `content`
+            # because most providers tolerate it and it preserves context.
+            # The match-set is NOT reset on THINKING: an intervening THINKING
+            # between assistant(tool_calls=[A]) and tool(A) must not cause A
+            # to be dropped as orphaned.
             if not msg.content:
                 continue
             api_messages.append({
                 "role": "assistant",
                 "content": msg.content,
-                "reasoning": msg.content,
             })
-            last_assistant_tool_call_ids = set()
             continue
         if msg.role == MessageRole.TOOL:
             if not msg.tool_call_id:
                 continue
             if msg.tool_call_id not in last_assistant_tool_call_ids:
-                log.warning(
+                log.debug(
                     "Dropping orphaned tool result for tool_call_id=%s "
                     "(no preceding assistant tool_calls message in history)",
                     msg.tool_call_id,
@@ -122,7 +142,26 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
             continue
         if not msg.content and not msg.tool_calls:
             continue
-        api_messages.append(msg.to_dict())
+        d = msg.to_dict()
+        # Filter assistant tool_calls to only those that received a tool
+        # result, and drop the field entirely if none survived. Avoids sending
+        # dangling assistant tool_calls (e.g. after a cancelled turn) that
+        # strict providers reject with 400.
+        if msg.tool_calls:
+            surviving = [
+                tc for tc in msg.tool_calls
+                if tc.get("id") in surviving_tool_call_ids
+            ]
+            if surviving:
+                d["tool_calls"] = surviving
+            else:
+                d.pop("tool_calls", None)
+                # If the assistant message has no content AND its tool_calls
+                # were all unserviced, skip it entirely (empty assistant turn).
+                if not msg.content:
+                    last_assistant_tool_call_ids = set()
+                    continue
+        api_messages.append(d)
         if msg.tool_calls:
             last_assistant_tool_call_ids = {
                 tc.get("id") for tc in msg.tool_calls if tc.get("id")
@@ -225,20 +264,32 @@ async def _stream_task(
                     type=MessageType.THINKING,
                 ))
 
-        async def emit_assistant_with_tool_calls() -> None:
-            """Persist the assistant message that carries the tool_calls block.
+        async def commit_assistant_with_tool_calls() -> None:
+            """Anchor the assistant tool_calls block once.
 
-            This must flow through msg_q so record_streamed_message attaches
-            `tool_calls` to the persisted assistant message on disk, not only
-            to the ephemeral api_messages list. Without this, a saved/reloaded
-            session loses the tool-call block and the model sees orphaned tool
-            results on the next turn.
+            Appends the assistant message to the ephemeral `api_messages`
+            (so the executor sees it follow by its tool results in the same
+            list), signals `assistant_appended` so the executor is unblocked,
+            marks `tool_calls_started` so the end-of-stream flush knows not
+            to repeat this, and emits the same assistant message through
+            `msg_q` so record_streamed_message persists it on disk.
+
+            Called at most once per stream: at the first mid-stream index
+            transition (multi-tool) or at end-of-stream (single tool).
+            Subsequent transitions re-use the same anchored assistant entry;
+            the live `tool_calls` list continues to grow as more deltas
+            arrive and the persisted history's reference sees those
+            additions because we share the list, not snapshot it.
             """
+            api_messages.append({"role": "assistant",
+                                 "content": content or None, "tool_calls": tool_calls})
+            assistant_appended.set()
+            tool_calls_started.set()
             await msg_q.put(Message(
                 role=MessageRole.ASSISTANT,
                 content=content,
                 type=MessageType.TEXT,
-                tool_calls=[dict(tc) for tc in tool_calls],
+                tool_calls=tool_calls,
             ))
 
         async for chunk in response:
@@ -297,11 +348,7 @@ async def _stream_task(
                     if prev_index is not None and prev_index != tc_delta.index:
                         await flush_thinking()
                         if not tool_calls_started.is_set():
-                            api_messages.append({"role": "assistant",
-                                                 "content": content or None, "tool_calls": tool_calls})
-                            assistant_appended.set()
-                            tool_calls_started.set()
-                            await emit_assistant_with_tool_calls()
+                            await commit_assistant_with_tool_calls()
                         await ready_q.put(tool_calls[prev_index])
                     prev_index = tc_delta.index
 
@@ -316,11 +363,7 @@ async def _stream_task(
 
         if prev_index is not None:
             if not tool_calls_started.is_set():
-                api_messages.append({"role": "assistant",
-                                     "content": content or None, "tool_calls": tool_calls})
-                assistant_appended.set()
-                tool_calls_started.set()
-                await emit_assistant_with_tool_calls()
+                await commit_assistant_with_tool_calls()
             if usage:
                 await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
             await ready_q.put(tool_calls[prev_index])

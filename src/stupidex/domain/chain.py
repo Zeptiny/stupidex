@@ -1,9 +1,12 @@
+import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from stupidex.domain.message import Message
+
+log = logging.getLogger(__name__)
 
 
 class ChainStatus(Enum):
@@ -53,11 +56,55 @@ class Chain:
 
     @classmethod
     def from_storage_dict(cls, data: dict[str, Any]) -> "Chain":
+        messages = [Message.from_storage_dict(m) for m in data.get("messages", [])]
+        _reconcile_orphan_tool_results(messages)
         chain = cls(
             model=data.get("model"),
-            messages=[Message.from_storage_dict(m) for m in data.get("messages", [])],
+            messages=messages,
             start_time=data.get("start_time", 0.0),
             end_time=data.get("end_time"),
             status=ChainStatus(data.get("status", "completed")),
         )
         return chain
+
+
+def _reconcile_orphan_tool_results(messages: list[Message]) -> None:
+    """Prune TOOL_RESULT messages whose tool_call_id has no preceding
+    assistant tool_calls partner in this list. Pre-fix sessions
+    persisted TOOL_RESULT without the matching assistant tool_calls
+    (the bug fixed in the persistence layer); these are dropped at
+    replay by `_history_to_api_messages` but otherwise remain on disk,
+    producing repeated orphan-drop log noise each turn.
+
+    Mutates `messages` in place so the next save converges on a clean
+    state. Displayed-only orphan TOOL_RESULTs (no preceding assistant
+    with tool_calls) cannot be paired by replay, so their content is
+    effectively dead context at the API layer; removing them avoids
+    carrying the legacy corruption forward.
+    """
+    if not messages:
+        return
+    seen_tool_call_ids: set[str] = set()
+    keep: list[Message] = []
+    for msg in messages:
+        if (
+            msg.role.value == "tool"
+            and msg.tool_call_id
+            and msg.tool_call_id not in seen_tool_call_ids
+        ):
+            log.debug(
+                "Reconciling chain: dropping orphan TOOL_RESULT "
+                "for tool_call_id=%s (no preceding assistant tool_calls)",
+                msg.tool_call_id,
+            )
+            continue
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                tid = tc.get("id")
+                if tid:
+                    seen_tool_call_ids.add(tid)
+        keep.append(msg)
+
+    if len(keep) != len(messages):
+        del messages[:]
+        messages.extend(keep)
