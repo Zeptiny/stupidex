@@ -126,7 +126,15 @@ def record_streamed_message(history: list[Message], msg: Message, state: StreamH
                 appended = True
             else:
                 state.content.content = msg.content
-        if msg.tool_calls and state.content:
+        # tool_calls can appear WITHOUT prior content (model calls a tool
+        # immediately). In that case anchor a new empty assistant message
+        # so the tool_calls block is persisted instead of silently dropped,
+        # which would otherwise orphan the matching TOOL_RESULT on replay.
+        if msg.tool_calls:
+            if state.content is None:
+                history.append(msg)
+                state.content = msg
+                appended = True
             state.content.tool_calls = msg.tool_calls
         if msg.usage and state.content:
             state.content.usage = msg.usage

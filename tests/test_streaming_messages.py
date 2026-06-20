@@ -120,6 +120,41 @@ class StreamHistoryTest(unittest.TestCase):
         self.assertEqual(assistant_msg.content, "Let me check")
         self.assertEqual(assistant_msg.tool_calls, tool_calls)
 
+    def test_record_streamed_message_anchors_tool_calls_without_content(self):
+        """When the model calls a tool with no prior text content, the
+        tool_calls block must still persist as an assistant message so the
+        matching TOOL_RESULT is not orphaned on replay."""
+        history = []
+        state = StreamHistoryState()
+
+        tool_calls = [{"id": "call-0", "type": "function",
+                       "function": {"name": "read", "arguments": '{"file_path":"README.md"}'}}]
+
+        # model goes straight to a tool call, no content
+        appended = record_streamed_message(
+            history,
+            Message(MessageRole.ASSISTANT, "", MessageType.TEXT, tool_calls=tool_calls),
+            state,
+        )
+        self.assertTrue(appended)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].tool_calls, tool_calls)
+        self.assertEqual(history[0].content, "")
+
+        record_streamed_message(
+            history,
+            Message(MessageRole.TOOL, "contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            state,
+        )
+        self.assertEqual(len(history), 2)
+
+        # Verify replay can pair the tool result with its assistant tool_calls message.
+        api_messages = llm_client._history_to_api_messages(history)
+        self.assertEqual(api_messages[0]["role"], "assistant")
+        self.assertEqual(api_messages[0]["tool_calls"], tool_calls)
+        self.assertEqual(api_messages[1]["role"], "tool")
+        self.assertEqual(api_messages[1]["tool_call_id"], "call-0")
+
     def test_api_history_replays_thinking_and_drops_orphaned_tool_results(self):
         history = [
             Message(MessageRole.USER, "hello"),
