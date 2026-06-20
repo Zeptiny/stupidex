@@ -1,0 +1,477 @@
+from __future__ import annotations
+
+import asyncio
+import unittest
+from unittest.mock import patch
+
+from stupidex.agents.manager import (
+    SubagentManager,
+    SubagentRecord,
+    SubagentState,
+)
+from stupidex.domain.agent import Agent, AgentTypes, ModelTier
+from stupidex.domain.message import Message, MessageRole, MessageType
+
+
+def make_agent() -> Agent:
+    return Agent(
+        name="Subagent",
+        type=AgentTypes.SUBAGENT,
+        tier=ModelTier.PAPUDO,
+        description="test agent",
+        system_prompt="",
+        allowed_tools=["read"],
+        allowed_skills=[],
+    )
+
+
+def stream_yielding(messages: list[Message]):
+    """Fake stream_response that yields the given messages in order."""
+
+    async def _gen(*args, **kwargs):
+        for m in messages:
+            yield m
+
+    return _gen
+
+
+def stream_stalled(messages: list[Message], proceed: asyncio.Event):
+    """Fake stream_response that stalls until `proceed` is set, then yields."""
+
+    async def _gen(*args, **kwargs):
+        await proceed.wait()
+        for m in messages:
+            yield m
+
+    return _gen
+
+
+def stream_raising(exc: BaseException):
+    """Fake stream_response that raises on first iteration."""
+
+    async def _gen(*args, **kwargs):
+        raise exc
+        yield  # pragma: no cover - makes this an async generator function
+
+    return _gen
+
+
+def stream_dispatch(*gen_fns):
+    """Return a side-effect factory serving each gen function in call order."""
+    remaining = list(gen_fns)
+
+    def factory(*args, **kwargs):
+        if not remaining:
+            raise AssertionError("stream_response called more times than expected")
+        gen_fn = remaining.pop(0)
+        return gen_fn(*args, **kwargs)
+
+    return factory
+
+
+def patch_registry(agent: Agent | None = None):
+    """Patch stupidex.agents.get_agent_registry to return {name: agent}."""
+    agent = agent if agent is not None else make_agent()
+    return patch(
+        "stupidex.agents.get_agent_registry",
+        return_value={agent.name: agent},
+    )
+
+
+def patch_stream(factory):
+    """Patch stupidex.llm.client.stream_response with `factory`."""
+    return patch("stupidex.llm.client.stream_response", side_effect=factory)
+
+
+async def drain(n: int = 8) -> None:
+    """Yield control to the loop so fire-and-forget tasks can complete."""
+    for _ in range(n):
+        await asyncio.sleep(0)
+
+
+async def _await_cancelled(task: asyncio.Task) -> None:
+    """Await a cancelled task, suppressing CancelledError."""
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+class SubagentManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_spawn_happy_path_transitions_pending_running_completed(self):
+        messages = [
+            Message(MessageRole.ASSISTANT, "thinking...", MessageType.THINKING),
+            Message(MessageRole.ASSISTANT, "Hello", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, "Hello world", MessageType.TEXT),
+        ]
+        with patch_registry(), patch_stream(stream_yielding(messages)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            await record.async_task
+            await drain()
+
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+        self.assertGreater(record.start_time, 0.0)
+        self.assertIsNotNone(record.end_time)
+        self.assertGreater(record.end_time, record.start_time)
+        self.assertEqual(record.result, "Hello world")
+
+    async def test_spawn_fires_on_spawn_callback_with_record(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "hi", MessageType.TEXT)])):
+            manager = SubagentManager()
+            seen: list[tuple[SubagentRecord, SubagentState]] = []
+
+            async def on_spawn(rec):
+                seen.append((rec, rec.state))
+
+            manager.on_spawn = on_spawn
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            await drain()
+            self.assertEqual(len(seen), 1)
+            self.assertIs(seen[0][0], record)
+            self.assertEqual(seen[0][1], SubagentState.PENDING)
+            await record.async_task
+            await drain()
+
+    async def test_run_fires_on_state_change_running_then_completed(self):
+        messages = [Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)]
+        with patch_registry(), patch_stream(stream_yielding(messages)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            transitions: list[SubagentState] = []
+
+            async def on_state_change(state):
+                transitions.append(state)
+
+            record.on_state_change = on_state_change
+            await record.async_task
+            await drain()
+
+        self.assertEqual(transitions, [SubagentState.RUNNING, SubagentState.COMPLETED])
+
+    async def test_on_message_invoked_for_user_msg_and_each_streamed_msg(self):
+        stream_msgs = [
+            Message(MessageRole.ASSISTANT, "a", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, "ab", MessageType.TEXT),
+            Message(MessageRole.TOOL, "result", MessageType.TOOL_RESULT, tool_call_id="c0"),
+        ]
+        with patch_registry(), patch_stream(stream_yielding(stream_msgs)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            calls: list[Message] = []
+
+            async def on_message(msg):
+                calls.append(msg)
+
+            record.on_message = on_message
+            await record.async_task
+            await drain()
+
+        self.assertEqual(len(calls), 1 + len(stream_msgs))
+        self.assertIs(calls[0], record.messages[0])
+        self.assertEqual(calls[0].role, MessageRole.USER)
+        self.assertEqual(calls[1], stream_msgs[0])
+
+    async def test_messages_mounted_counter_increments_per_appended_message(self):
+        stream_msgs = [
+            Message(MessageRole.ASSISTANT, "thinking", MessageType.THINKING),
+            Message(MessageRole.ASSISTANT, "Calling tool", MessageType.TOOL_CALL),
+            Message(MessageRole.ASSISTANT, "Answer", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, "Answer updated", MessageType.TEXT),
+        ]
+        with patch_registry(), patch_stream(stream_yielding(stream_msgs)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            calls: list[Message] = []
+
+            async def on_message(msg):
+                calls.append(msg)
+
+            record.on_message = on_message
+            await record.async_task
+            await drain()
+
+        self.assertEqual(record.messages_mounted, len(record.messages))
+        self.assertGreater(len(calls), record.messages_mounted)
+
+    async def test_finally_block_fires_on_state_change_on_completion(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            end_times_at_callback: list[float | None] = []
+
+            async def on_state_change(state):
+                if state == SubagentState.COMPLETED:
+                    end_times_at_callback.append(record.end_time)
+
+            record.on_state_change = on_state_change
+            await record.async_task
+            await drain()
+
+        self.assertEqual(len(end_times_at_callback), 1)
+        self.assertIsNotNone(end_times_at_callback[0])
+        self.assertGreater(end_times_at_callback[0], 0.0)
+
+    async def test_finally_block_fires_on_state_change_on_cancel(self):
+        proceed = asyncio.Event()
+        with patch_registry(), patch_stream(stream_stalled([Message(MessageRole.ASSISTANT, "x", MessageType.TEXT)], proceed)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            transitions: list[SubagentState] = []
+
+            async def on_state_change(state):
+                transitions.append(state)
+
+            record.on_state_change = on_state_change
+            for _ in range(20):
+                if record.state == SubagentState.RUNNING:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(record.state, SubagentState.RUNNING)
+
+            record.async_task.cancel()
+            try:
+                await record.async_task
+            except asyncio.CancelledError:
+                pass
+            await drain()
+
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertEqual(record.error, "Interrupted by user")
+        self.assertIsNotNone(record.end_time)
+        self.assertIn(SubagentState.INTERRUPTED, transitions)
+
+    async def test_finally_block_fires_on_state_change_on_exception(self):
+        with patch_registry(), patch_stream(stream_raising(RuntimeError("boom"))):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            transitions: list[SubagentState] = []
+
+            async def on_state_change(state):
+                transitions.append(state)
+
+            record.on_state_change = on_state_change
+            await record.async_task
+            await drain()
+
+        self.assertEqual(record.state, SubagentState.FAILED)
+        self.assertEqual(record.error, "boom")
+        self.assertIsNotNone(record.end_time)
+        self.assertIn(SubagentState.FAILED, transitions)
+
+    async def test_cancel_one_cancels_running_task_returns_true(self):
+        proceed = asyncio.Event()
+        with patch_registry(), patch_stream(stream_stalled([Message(MessageRole.ASSISTANT, "x", MessageType.TEXT)], proceed)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            for _ in range(20):
+                if record.state == SubagentState.RUNNING:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(record.state, SubagentState.RUNNING)
+
+            ok = manager.cancel_one(record.id)
+            self.assertTrue(ok)
+            await _await_cancelled(record.async_task)
+            self.assertTrue(record.async_task.cancelled())
+
+    async def test_cancel_one_returns_false_for_missing_or_done(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            await record.async_task
+
+            self.assertFalse(manager.cancel_one("nope-id"))
+            self.assertFalse(manager.cancel_one(record.id))
+
+    async def test_cancel_all_cancels_running_and_clears_on_spawn(self):
+        proceed = asyncio.Event()
+        with patch_registry(), patch_stream(stream_stalled([Message(MessageRole.ASSISTANT, "x", MessageType.TEXT)], proceed)):
+            manager = SubagentManager()
+            r1 = await manager.spawn("sub1", "t1", "Subagent")
+            r2 = await manager.spawn("sub2", "t2", "Subagent")
+            manager.on_spawn = None
+
+            async def on_spawn(rec):
+                pass
+
+            manager.on_spawn = on_spawn
+
+            for _ in range(20):
+                if r1.state == SubagentState.RUNNING and r2.state == SubagentState.RUNNING:
+                    break
+                await asyncio.sleep(0)
+
+            cancelled = manager.cancel_all()
+            self.assertEqual(set(cancelled), {r1.id, r2.id})
+            self.assertIsNone(manager.on_spawn)
+
+    async def test_cancel_running_skips_terminal_records(self):
+        proceed = asyncio.Event()
+        stalled = stream_stalled([Message(MessageRole.ASSISTANT, "x", MessageType.TEXT)], proceed)
+        yielding = stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])
+        with patch_registry(), patch_stream(stream_dispatch(stalled, yielding)):
+            manager = SubagentManager()
+            running = await manager.spawn("sub1", "t1", "Subagent")
+            completed = await manager.spawn("sub2", "t2", "Subagent")
+            await completed.async_task
+
+            for _ in range(20):
+                if running.state == SubagentState.RUNNING:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(running.state, SubagentState.RUNNING)
+            self.assertEqual(completed.state, SubagentState.COMPLETED)
+
+            cancelled = manager.cancel_running()
+            self.assertEqual(cancelled, [running.id])
+            await _await_cancelled(running.async_task)
+            self.assertTrue(running.async_task.cancelled())
+            self.assertFalse(completed.async_task.cancelled())
+
+    async def test_wait_returns_records_for_valid_ids_and_skips_unknown(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            r1 = await manager.spawn("sub1", "t1", "Subagent")
+            r2 = await manager.spawn("sub2", "t2", "Subagent")
+            await r1.async_task
+            await r2.async_task
+
+            result = await manager.wait([r1.id, r2.id, "unknown-id"])
+            self.assertEqual(set(result.keys()), {r1.id, r2.id})
+            self.assertIs(result[r1.id], r1)
+            self.assertIs(result[r2.id], r2)
+            self.assertNotIn("unknown-id", result)
+
+    async def test_wait_awaits_inflight_tasks(self):
+        proceed = asyncio.Event()
+        with patch_registry(), patch_stream(stream_stalled([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)], proceed)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+
+            wait_task = asyncio.create_task(manager.wait([record.id]))
+            await asyncio.sleep(0.01)
+            self.assertFalse(wait_task.done())
+
+            proceed.set()
+            result = await asyncio.wait_for(wait_task, timeout=2.0)
+            self.assertIn(record.id, result)
+            self.assertEqual(record.state, SubagentState.COMPLETED)
+
+    def test_from_storage_dict_running_migrates_to_interrupted(self):
+        data = {
+            "id": "abc123",
+            "agent_name": "Subagent",
+            "agent_type": "subagent",
+            "state": "running",
+            "label": "sub1",
+            "task": "do thing",
+            "result": None,
+            "error": None,
+            "start_time": 1.0,
+            "end_time": None,
+            "messages": [],
+        }
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(data)
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertEqual(record.id, "abc123")
+
+    def test_to_storage_dict_round_trips_completed_record(self):
+        agent = make_agent()
+        msgs = [
+            Message(MessageRole.USER, "do thing"),
+            Message(MessageRole.ASSISTANT, "Answer", MessageType.TEXT),
+        ]
+        record = SubagentRecord(
+            id="deadbeef",
+            agent=agent,
+            state=SubagentState.COMPLETED,
+            label="sub1",
+            task="do thing",
+            result="Answer",
+            error=None,
+            start_time=10.0,
+            end_time=11.5,
+            messages=msgs,
+            messages_mounted=2,
+        )
+        d = record.to_storage_dict()
+        with patch("stupidex.agents.get_agent_registry", return_value={agent.name: agent}):
+            restored = SubagentRecord.from_storage_dict(d)
+
+        self.assertEqual(restored.id, record.id)
+        self.assertEqual(restored.agent.name, agent.name)
+        self.assertEqual(restored.state, SubagentState.COMPLETED)
+        self.assertEqual(restored.label, record.label)
+        self.assertEqual(restored.task, record.task)
+        self.assertEqual(restored.result, record.result)
+        self.assertEqual(restored.error, record.error)
+        self.assertEqual(restored.start_time, record.start_time)
+        self.assertEqual(restored.end_time, record.end_time)
+        self.assertEqual(len(restored.messages), len(msgs))
+        self.assertEqual(restored.messages[0].content, "do thing")
+        self.assertEqual(restored.messages[1].content, "Answer")
+        self.assertIsNone(restored.async_task)
+        self.assertIsNone(restored.on_message)
+        self.assertIsNone(restored.on_state_change)
+
+    def test_from_storage_dict_falls_back_to_pseudoagent_when_registry_misses(self):
+        data = {
+            "id": "ghost1",
+            "agent_name": "Ghost",
+            "agent_type": "subagent",
+            "state": "completed",
+            "label": "",
+            "task": "",
+            "result": None,
+            "error": None,
+            "start_time": 0.0,
+            "end_time": None,
+            "messages": [],
+        }
+        empty_registry = {}
+        with patch("stupidex.agents.get_agent_registry", return_value=empty_registry):
+            record = SubagentRecord.from_storage_dict(data)
+        self.assertEqual(record.agent.name, "Ghost")
+        self.assertEqual(record.agent.type, AgentTypes.from_str("subagent"))
+        self.assertEqual(record.type, "Subagent")
+
+    async def test_spawn_unknown_agent_type_raises_valueerror(self):
+        with patch_registry(), patch_stream(stream_yielding([])):
+            manager = SubagentManager()
+            with self.assertRaises(ValueError) as ctx:
+                await manager.spawn("sub1", "do thing", "nope")
+            self.assertIn("Available:", str(ctx.exception))
+
+    async def test_get_states_all_records_get_record(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            r1 = await manager.spawn("sub1", "t1", "Subagent")
+            r2 = await manager.spawn("sub2", "t2", "Subagent")
+
+            states = manager.get_states()
+            self.assertEqual(len(states), 2)
+            entry = states[0]
+            self.assertEqual(
+                set(entry.keys()),
+                {"id", "name", "type", "task", "state", "elapsed"},
+            )
+            self.assertEqual(entry["id"], r1.id)
+            self.assertEqual(entry["name"], r1.name)
+            self.assertEqual(entry["type"], r1.type)
+            self.assertEqual(entry["task"], r1.task)
+            self.assertEqual(entry["state"], r1.state.value)
+
+            records = manager.all_records()
+            self.assertEqual(records, [r1, r2])
+
+            self.assertIs(manager.get_record(r1.id), r1)
+            self.assertIsNone(manager.get_record("nope-id"))
+
+            await r1.async_task
+            await r2.async_task
+
+
+if __name__ == "__main__":
+    unittest.main()

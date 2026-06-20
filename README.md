@@ -1,6 +1,11 @@
 # Stupidex
 
 ## TODO - Remover esta seção antes da entrega final
+### P0 - Code Review (https://github.com/Zeptiny/stupidex)
+- [ ] **P0-1: SSRF em `web_fetch`** (`tools/web_fetch.py:94`) — sem filtro de IP privado / cloud-metadata, `follow_redirects=True`. AWS IMDSv1 em `http://169.254.169.254/` retorna credenciais IAM; agente (via prompt injection) pode coletar e exfiltrar.
+- [ ] **P0-2: Cascade prompt-injection → shell RCE** (`tools/exec.py:52` + `llm/client.py:393`) — conteúdo não-confiável de `web_fetch`/`rag`/`read`/MCP flui verbatim ao LLM; `execute_command` padrão é `shell=True`, sem sandbox/allowlist. Repo malicioso clonado = primitiva de RCE.
+- [ ] **P0-3: Sem confinamento de path em read/write/edit/glob/replace_symbol** (`tools/file_manipulation.py:44`) — agente (prompt-injected ou não) pode ler `~/.ssh/id_rsa`, `/etc/passwd`, `.env`, escrever `~/.bashrc`, plantar symlinks. Não existe verificação de limite de workspace.
+
 ### TODOs geral
 - Controle de concorrência para travamento de arquivos
 - LSP

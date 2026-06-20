@@ -322,6 +322,19 @@ class RAGStore:
         finally:
             conn.close()
 
+    def touch_last_indexed(self) -> None:
+        """Mark last_indexed timestamp without modifying chunks/vectors."""
+        conn = self._get_conn()
+        try:
+            now = datetime.now(UTC).isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed', ?)",
+                (now,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def upsert_file(
         self,
         file_path: str,

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from stupidex.config import get_config
 
-from .chunker import Chunk, chunk_file
+from .chunker import chunk_file
 from .embedder import Embedder
 from .store import RAGStore
 
@@ -156,7 +156,8 @@ async def _index_project_impl(
     if not files:
         store = RAGStore(project_path)
         store.init_db()
-        await loop.run_in_executor(None, _flush_store, store, [], [])
+        await loop.run_in_executor(None, store.clear)
+        await loop.run_in_executor(None, store.touch_last_indexed)
         if embedder is None:
             embedder = Embedder(model=cfg.rag.embedding_model or None)
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
@@ -175,8 +176,6 @@ async def _index_project_impl(
         )
 
     indexed_files: set[str] = set()
-    all_chunks: list[Chunk] = []
-    all_embeddings: list[list[float]] = []
     file_hashes: dict[str, str] = {}
 
     # Check embedder availability before processing files to avoid N identical errors
@@ -240,8 +239,7 @@ async def _index_project_impl(
             texts = [c.content for c in chunks]
             embeddings = await embedder.embed(texts)
 
-            all_chunks.extend(chunks)
-            all_embeddings.extend(embeddings)
+            await loop.run_in_executor(None, store.upsert_file, rel, chunks, embeddings)
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
             indexed_files.add(rel)
@@ -253,25 +251,13 @@ async def _index_project_impl(
             logger.warning("Indexing error: %s", msg)
             stats.errors.append(msg)
 
-    # flush everything to store at once (always, so last_indexed is set)
-    await loop.run_in_executor(None, _flush_store, store, all_chunks, all_embeddings)
-
     # update per-file hashes using captured hashes from initial read
+    # (upsert_file writes hash='' so the real hash must be set explicitly)
     for rel, h in file_hashes.items():
         if rel in indexed_files:
             try:
                 await loop.run_in_executor(
                     None, store.update_file_hash, rel, h
-                )
-            except Exception:
-                pass
-
-    # restore hashes for skipped (unchanged) files that were cleared by upsert
-    for rel in indexed_files:
-        if rel not in file_hashes and rel in existing_hashes:
-            try:
-                await loop.run_in_executor(
-                    None, store.update_file_hash, rel, existing_hashes[rel]
                 )
             except Exception:
                 pass
@@ -403,12 +389,3 @@ def _read_and_hash(filepath: Path) -> tuple[str | None, str | None]:
         return content, h
     except Exception:
         return None, None
-
-
-def _flush_store(
-    store: RAGStore,
-    chunks: list[Chunk],
-    embeddings: list[list[float]],
-) -> None:
-    """Batch-upsert all chunks + embeddings into the store."""
-    store.upsert(chunks, embeddings)

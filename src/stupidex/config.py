@@ -79,6 +79,8 @@ class Config:
     personality: str = "default"
     rag: RAGConfig = field(default_factory=RAGConfig)
     ast_max_file_size: int = 1_048_576
+    mcp_startup_timeout: float = 60.0
+    mcp_per_server_timeout: float = 10.0
     mcp_servers: dict[str, dict] = field(
         default_factory=lambda: {
             "context7": {
@@ -100,6 +102,8 @@ class Config:
             }
         }
     )
+    llm_stream_idle_timeout: float = 300.0
+    llm_stream_retries: int = 3
 
     def __post_init__(self) -> None:
         """Normalise nested dataclass fields after construction.
@@ -123,6 +127,10 @@ _ENV_MAP = {
     "STUPIDEX_THEME": "theme",
     "STUPIDEX_PERSONALITY": "personality",
     "STUPIDEX_AST_MAX_FILE_SIZE": "ast_max_file_size",
+    "STUPIDEX_LLM_STREAM_IDLE_TIMEOUT": "llm_stream_idle_timeout",
+    "STUPIDEX_LLM_STREAM_RETRIES": "llm_stream_retries",
+    "STUPIDEX_MCP_STARTUP_TIMEOUT": "mcp_startup_timeout",
+    "STUPIDEX_MCP_PER_SERVER_TIMEOUT": "mcp_per_server_timeout",
 }
 
 _RAG_ENV_MAP = {
@@ -166,6 +174,8 @@ def _cast_value(value: str, target_type):
         return value.lower() in ("true", "1", "yes")
     if target_type is int:
         return int(value)
+    if target_type is float:
+        return float(value)
     if target_type is list:
         return [s.strip() for s in value.split(",")]
     return value
@@ -227,6 +237,15 @@ def validate_config(cfg: Config) -> list[str]:
     _check_positive_int(cfg, "grep_max_results", errors)
     _check_positive_int(cfg, "directory_tree_depth", errors)
     _check_positive_int(cfg, "ast_max_file_size", errors)
+
+    if not isinstance(cfg.llm_stream_idle_timeout, (int, float)) or isinstance(cfg.llm_stream_idle_timeout, bool):
+        errors.append(f"'llm_stream_idle_timeout' must be a positive number, got {type(cfg.llm_stream_idle_timeout).__name__}")
+    elif cfg.llm_stream_idle_timeout <= 0:
+        errors.append(f"'llm_stream_idle_timeout' must be a positive number, got {cfg.llm_stream_idle_timeout}")
+    _check_nonneg_int(cfg, "llm_stream_retries", errors)
+
+    _check_positive_float(cfg, "mcp_startup_timeout", errors)
+    _check_positive_float(cfg, "mcp_per_server_timeout", errors)
 
     # Validate RAG
     if not isinstance(cfg.rag, RAGConfig):
@@ -321,6 +340,15 @@ def _check_nonneg_int(obj, field: str, errors: list[str], prefix: str | None = N
         errors.append(f"{key} must be a non-negative integer, got {type(val).__name__}")
     elif val < 0:
         errors.append(f"{key} must be a non-negative integer, got {val}")
+
+
+def _check_positive_float(obj, field: str, errors: list[str], prefix: str | None = None) -> None:
+    val = getattr(obj, field)
+    key = f"{prefix}.{field}" if prefix else f"'{field}'"
+    if not isinstance(val, (int, float)) or isinstance(val, bool):
+        errors.append(f"{key} must be a positive number, got {type(val).__name__}")
+    elif val <= 0:
+        errors.append(f"{key} must be a positive number, got {val}")
 
 
 def _deep_merge_provider_dict(home: dict, project: dict) -> dict:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import random
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -258,6 +259,72 @@ async def _execute_tool(
     )
 
 
+_BACKOFF_BASE = 0.2
+
+
+class _StreamIdleTimeoutError(Exception):
+    """Raised when the LLM stream produces no chunk for the configured idle timeout.
+
+    The timeout is scoped to the streaming loop only — it measures
+    time-since-last-delta-received and is reset on every chunk. Tool-execution
+    time (which happens outside the stream iteration, in ``_executor_task``)
+    does NOT count against it. A retry with exponential backoff is attempted up
+    to ``cfg.llm_stream_retries`` times before this propagates to the caller.
+    """
+
+    def __init__(self, idle_timeout: float) -> None:
+        super().__init__(
+            f"LLM stream was idle for more than {idle_timeout:.1f}s with no deltas"
+        )
+
+
+async def _safe_aclose(response: Any) -> None:
+    """Best-effort ``aclose()`` on a streaming response object.
+
+    Ensures the underlying HTTP stream is released on timeout/retry/finish
+    (addresses the P1-10 stream-leak concern). Litellm streaming responses are
+    async generators that expose ``aclose()``; fake/test iterables may not, so
+    the attribute is checked dynamically.
+    """
+    aclose = getattr(response, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:
+        log.debug("aclose() on stream response failed", exc_info=True)
+
+
+async def _idle_timed_stream(response: Any, idle_timeout: float) -> AsyncGenerator[Any, None]:
+    """Re-yield chunks from ``response`` with a per-chunk idle deadline.
+
+    The deadline is measured from the last received chunk — each chunk resets
+    the timer. If no chunk arrives within ``idle_timeout`` seconds,
+    ``_StreamIdleTimeoutError`` is raised after the underlying response is closed.
+    """
+    try:
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    response.__anext__(), timeout=idle_timeout
+                )
+            except StopAsyncIteration:
+                return
+            except TimeoutError:
+                await _safe_aclose(response)
+                raise _StreamIdleTimeoutError(idle_timeout) from None
+            yield chunk
+    finally:
+        await _safe_aclose(response)
+
+
+async def _backoff_sleep(attempt: int) -> None:
+    """Exponential backoff with jitter between stream-idle retries."""
+    delay = _BACKOFF_BASE * (2 ** attempt)
+    jitter = random.uniform(0, _BACKOFF_BASE)
+    await asyncio.sleep(delay + jitter)
+
+
 async def _stream_task(
     response: Any,
     msg_q: asyncio.Queue[Message | None],
@@ -461,50 +528,68 @@ async def stream_response(
     )
     litellm_model = f"{litellm_provider}/{model_id}" if litellm_provider else model_id
 
+    idle_timeout = cfg.llm_stream_idle_timeout
+    retries = max(0, cfg.llm_stream_retries)
+
     while True:
-        response = await litellm.acompletion(
-            model=litellm_model,
-            messages=api_messages,
-            tools=tools_list,
-            base_url=base_url,
-            api_key=api_key,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
+        attempt = 0
+        while True:
+            response = await litellm.acompletion(
+                model=litellm_model,
+                messages=api_messages,
+                tools=tools_list,
+                base_url=base_url,
+                api_key=api_key,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
 
-        msg_q: asyncio.Queue[Message | None] = asyncio.Queue(maxsize=1)
-        ready_q: asyncio.Queue[dict | None] = asyncio.Queue()
-        assistant_appended = asyncio.Event()
-        tool_calls_started = asyncio.Event()
+            msg_q: asyncio.Queue[Message | None] = asyncio.Queue(maxsize=1)
+            ready_q: asyncio.Queue[dict | None] = asyncio.Queue()
+            assistant_appended = asyncio.Event()
+            tool_calls_started = asyncio.Event()
 
-        stream_t = asyncio.create_task(_stream_task(
-            response, msg_q, ready_q, api_messages, assistant_appended, tool_calls_started,
-        ))
-        executor_t = asyncio.create_task(_executor_task(
-            msg_q, ready_q, api_messages, filtered_tools, assistant_appended,
-        ))
+            stream_t = asyncio.create_task(_stream_task(
+                _idle_timed_stream(response, idle_timeout),
+                msg_q, ready_q, api_messages, assistant_appended, tool_calls_started,
+            ))
+            executor_t = asyncio.create_task(_executor_task(
+                msg_q, ready_q, api_messages, filtered_tools, assistant_appended,
+            ))
 
-        try:
-            while True:
-                msg = await msg_q.get()
-                if msg is None:
-                    break
-                yield msg
-        except asyncio.CancelledError:
-            stream_t.cancel()
-            executor_t.cancel()
-            _raise_first_task_exception(
-                await asyncio.gather(stream_t, executor_t, return_exceptions=True))
-            raise
-        except BaseException:
-            stream_t.cancel()
-            executor_t.cancel()
-            _raise_first_task_exception(
-                await asyncio.gather(stream_t, executor_t, return_exceptions=True))
-            raise
-        else:
-            _raise_first_task_exception(
-                await asyncio.gather(stream_t, executor_t, return_exceptions=True))
+            try:
+                try:
+                    while True:
+                        msg = await msg_q.get()
+                        if msg is None:
+                            break
+                        yield msg
+                except asyncio.CancelledError:
+                    stream_t.cancel()
+                    executor_t.cancel()
+                    _raise_first_task_exception(
+                        await asyncio.gather(stream_t, executor_t, return_exceptions=True))
+                    raise
+                except BaseException:
+                    stream_t.cancel()
+                    executor_t.cancel()
+                    _raise_first_task_exception(
+                        await asyncio.gather(stream_t, executor_t, return_exceptions=True))
+                    raise
+                else:
+                    _raise_first_task_exception(
+                        await asyncio.gather(stream_t, executor_t, return_exceptions=True))
+            except _StreamIdleTimeoutError:
+                if attempt < retries:
+                    log.warning(
+                        "LLM stream idle for >%.1fs; retry %d/%d",
+                        idle_timeout, attempt + 1, retries,
+                    )
+                    await _backoff_sleep(attempt)
+                    attempt += 1
+                    continue
+                raise
+            break
 
         if not tool_calls_started.is_set():
             return

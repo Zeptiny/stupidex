@@ -1237,5 +1237,120 @@ class StreamResponseProviderResolutionTest(unittest.IsolatedAsyncioTestCase):
         acompletion_mock.assert_not_called()
 
 
+class StreamIdleTimeoutTest(unittest.IsolatedAsyncioTestCase):
+    """P0-5 -- stream_response wraps the LLM stream in an idle-timeout retry
+    loop. The timeout measures time-since-last-delta-received (reset on every
+    chunk) and does not fire while a stream keeps producing, even if the total
+    stream duration exceeds the idle deadline. On a silent stall, the call is
+    retried up to ``cfg.llm_stream_retries`` times; on exhaustion the error
+    propagates to the caller so the subagent's ``_run`` records it.
+    """
+
+    def _providers(self):
+        return {
+            "default": {
+                "base_url": "https://example.test/v1",
+                "litellm_provider": "openai",
+                "models": {"mimo-v2.5": {}},
+            }
+        }
+
+    def _run_stream_response(self, *, cfg, fake_acompletion):
+        acompletion_mock = AsyncMock(side_effect=fake_acompletion)
+        dummy_dynamic = Message(MessageRole.SYSTEM, "<dynamic/>", MessageType.TEXT)
+        patches = [
+            patch("stupidex.llm.client.get_config", return_value=cfg),
+            patch("stupidex.llm.providers.get_config", return_value=cfg),
+            patch("stupidex.llm.client.build_dynamic_system_prompt",
+                  new=AsyncMock(return_value=dummy_dynamic)),
+            patch("stupidex.llm.client.get_tool_registry", return_value={}),
+            patch("stupidex.llm.client.litellm.acompletion", new=acompletion_mock),
+            patch("stupidex.llm.client._backoff_sleep", new=AsyncMock()),
+        ]
+        stack = contextlib.ExitStack()
+        for p in patches:
+            stack.enter_context(p)
+        stack.__enter__()
+        gen = llm_client.stream_response(
+            messages=[],
+            model="default/mimo-v2.5",
+            allowed_tools=[],
+            system_prompt="",
+        )
+        return stack, gen
+
+    async def test_stream_idle_timeout_retries_on_silent_stall(self):
+        cfg = Config(
+            providers=self._providers(),
+            llm_stream_idle_timeout=0.05,
+            llm_stream_retries=2,
+        )
+        call_count = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            call_count["n"] += 1
+
+            async def _stream():
+                await asyncio.sleep(10)  # silent stall: never yields
+                yield chunk(content="unreachable")
+
+            return _stream()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            with self.assertRaises(llm_client._StreamIdleTimeoutError):
+                async for _ in gen:
+                    pass
+        finally:
+            stack.__exit__(None, None, None)
+            await gen.aclose()
+
+        self.assertEqual(call_count["n"], cfg.llm_stream_retries + 1)
+
+    async def test_stream_resets_timer_on_each_delta(self):
+        cfg = Config(
+            providers=self._providers(),
+            llm_stream_idle_timeout=0.2,
+            llm_stream_retries=3,
+        )
+        call_count = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            call_count["n"] += 1
+
+            async def _stream():
+                for i in range(5):
+                    await asyncio.sleep(0.05)  # < idle_timeout (0.2) per gap
+                    yield chunk(
+                        content=f"seg{i}",
+                        usage=Usage(1, 2, 3) if i == 4 else None,
+                    )
+
+            return _stream()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            messages = []
+            async for msg in gen:
+                messages.append(msg)
+        finally:
+            stack.__exit__(None, None, None)
+
+        self.assertEqual(call_count["n"], 1, "no retry should occur while the stream keeps producing")
+        text_messages = [m for m in messages if m.type == MessageType.TEXT]
+        self.assertTrue(text_messages, "stream must emit assistant text messages")
+        non_empty = [m for m in text_messages if m.content]
+        last_content = non_empty[-1].content if non_empty else None
+        self.assertTrue(
+            non_empty and non_empty[-1].content.endswith("seg4"),
+            "stream must complete normally with all deltas appended; "
+            "last non-empty content was " + repr(last_content),
+        )
+        self.assertTrue(
+            any(m.usage == Usage(1, 2, 3) for m in text_messages),
+            "usage from the final delta must be carried through",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -47,10 +47,34 @@ class MCPManager:
         self._ready: asyncio.Event = asyncio.Event()
         self._stop: asyncio.Event = asyncio.Event()
         self._start_error: BaseException | None = None
+        # Per-server budget wrapping every blocking RPC/transport entry in
+        # ``_start_server``; overall budget guarding ``start_all`` against a
+        # hung runner. Overridden by ``start_all`` from config.
+        self._per_server_timeout: float = 10.0
+        self._startup_timeout: float = 60.0
 
-    async def start_all(self, servers: dict[str, dict]) -> None:
+    async def start_all(
+        self,
+        servers: dict[str, dict],
+        *,
+        per_server_timeout: float | None = None,
+        startup_timeout: float | None = None,
+    ) -> None:
         if self._runner is not None and not self._runner.done():
             raise RuntimeError("MCPManager.start_all already in progress")
+        if per_server_timeout is None or startup_timeout is None:
+            try:
+                from stupidex.config import get_config
+
+                cfg = get_config()
+            except Exception:
+                cfg = None
+            if per_server_timeout is None:
+                per_server_timeout = float(getattr(cfg, "mcp_per_server_timeout", 10.0) if cfg else 10.0)
+            if startup_timeout is None:
+                startup_timeout = float(getattr(cfg, "mcp_startup_timeout", 60.0) if cfg else 60.0)
+        self._per_server_timeout = per_server_timeout
+        self._startup_timeout = startup_timeout
         # Reinitialize the one-shot lifecycle state so a manager can be
         # restarted after shutdown: the Events were set by the prior run and
         # the exit stack was closed by shutdown, which would otherwise make the
@@ -64,7 +88,27 @@ class MCPManager:
         # The runner owns the exit stack; transports are entered AND exited in
         # this task, avoiding anyio's cross-task cancel-scope error.
         self._runner = asyncio.create_task(self._run(servers))
-        await self._ready.wait()
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout=self._startup_timeout)
+        except TimeoutError:
+            # Overall budget exhausted. Best-effort skip-and-continue: tear
+            # the runner down (closes any half-open transports via the exit
+            # stack finally), mark non-terminal servers unavailable, and
+            # return so the app stays usable without MCP. Matches the
+            # per-server "failed + continue" design in ``_run``.
+            logger.warning(
+                "MCP startup timed out after %.1fs; continuing with reduced MCP availability",
+                self._startup_timeout,
+            )
+            await self._await_runner()
+            for _name, status in self._server_status.items():
+                if status["status"] not in ("connected", "failed"):
+                    status["status"] = "unavailable"
+                    status["error"] = f"startup timed out after {self._startup_timeout:.0f}s"
+            # Transports were torn down by ``_await_runner``; drop dead session
+            # handles so ``call_tool``/``read_resource`` report cleanly.
+            self._sessions.clear()
+            return
         if self._start_error is not None:
             # Startup itself failed; ensure the runner has torn down.
             await self._await_runner()
@@ -122,6 +166,23 @@ class MCPManager:
         self._runner = None
 
     async def _start_server(self, server_name: str, config: dict) -> None:
+        # Wrap the whole connect+initialize+enumerate sequence in one
+        # per-server budget. Any hung RPC (or a slow transport
+        # ``enter_async_context``) raises ``TimeoutError`` which propagates
+        # to ``_run``'s ``except Exception`` -> server marked "failed" and
+        # the loop continues. Transports already entered via ``self._exit_stack``
+        # are torn down later by ``_run``'s ``finally`` -> ``aclose()``.
+        try:
+            await asyncio.wait_for(
+                self._connect_server(server_name, config),
+                timeout=self._per_server_timeout,
+            )
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"MCP server '{server_name}' startup timed out after {self._per_server_timeout}s"
+            ) from e
+
+    async def _connect_server(self, server_name: str, config: dict) -> None:
         from stupidex.mcp.schema import convert_mcp_tool, make_mcp_executor
 
         if "url" in config:
