@@ -294,11 +294,21 @@ async def execute_command(app: App, cmd: str) -> None:
             cfg = get_config()
 
             async def on_settings_result(result: Config | None):
+                # result is None when the modal closed without "save & close"
+                # (Cancel/Esc). But Ctrl+S saves internally to ConfigManager
+                # without dismissing, so a None result can still carry saved
+                # mcp_servers changes that warrant a restart prompt. Only short
+                # -circuit when result is None AND mcp_servers are unchanged.
                 if result is None:
-                    return
-                ConfigManager._instance = result
-                ConfigManager.save()
-                needs_restart = result.mcp_servers != cfg.mcp_servers
+                    current = ConfigManager._instance
+                    if current is None or current.mcp_servers == cfg.mcp_servers:
+                        return
+                    saved = current
+                else:
+                    ConfigManager._instance = result
+                    ConfigManager.save()
+                    saved = result
+                needs_restart = saved.mcp_servers != cfg.mcp_servers
                 if needs_restart:
                     from stupidex.screens.settings import ConfirmScreen
 

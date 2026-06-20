@@ -4,6 +4,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
+
 from stupidex.config import (
     Config,
     ConfigManager,
@@ -17,7 +19,11 @@ from stupidex.screens.settings import NewMCPServerForm, NewProviderForm, Setting
 
 
 class TestConvertFromDict:
-    def test_flat_rag_fields_are_nested(self):
+    def test_flat_rag_fields_are_not_converted(self):
+        """No backward compatibility: legacy flat RAG fields pass through
+        unchanged and are NOT synthesized into a nested `rag` key. They are
+        later ignored by ConfigManager.load (unknown top-level keys), so the
+        RAG config falls back to RAGConfig defaults."""
         data = {
             "rag_chunk_size": 1000,
             "rag_chunk_overlap": 100,
@@ -27,22 +33,25 @@ class TestConvertFromDict:
             "default_model": "default/test",
         }
         result = _convert_from_dict(data)
-        assert result["rag"]["chunk_size"] == 1000
-        assert result["rag"]["chunk_overlap"] == 100
-        assert result["rag"]["top_k"] == 10
-        assert result["rag"]["max_file_size"] == 99999
-        assert result["rag"]["embedding_model"] == "test/model"
+        # Flat keys remain as-is (no conversion to nested `rag`)
+        assert result["rag_chunk_size"] == 1000
+        assert result["rag_top_k"] == 10
+        assert "rag" not in result
         assert result["default_model"] == "default/test"
 
-    def test_nested_rag_preserved_flat_removed(self):
+    def test_nested_rag_preserved_flat_not_removed(self):
+        """Nested `rag` is preserved; legacy flat keys are NOT stripped
+        (no special-case handling). They are simply ignored downstream by
+        ConfigManager.load since they don't match a Config field."""
         data = {
             "rag": {"chunk_size": 500, "embedding_model": "new/model"},
-            "rag_chunk_size": 999,  # should be removed
+            "rag_chunk_size": 999,
         }
         result = _convert_from_dict(data)
         assert result["rag"]["chunk_size"] == 500
         assert result["rag"]["embedding_model"] == "new/model"
-        assert "rag_chunk_size" not in result
+        # Flat key is NOT removed (no backward-compat stripping)
+        assert result["rag_chunk_size"] == 999
 
     def test_no_rag_data_leaves_absent(self):
         result = _convert_from_dict({"default_model": "test/model"})
@@ -55,7 +64,9 @@ class TestConvertFromDict:
     def test_flat_none_values_handled(self):
         data = {"rag_chunk_size": None, "default_model": "test/model"}
         result = _convert_from_dict(data)
-        assert "rag" not in result  # None stripped, no rag keys left
+        # None values stripped; no `rag` synthesized from flat fields
+        assert "rag_chunk_size" not in result
+        assert "rag" not in result
         assert result["default_model"] == "test/model"
 
 
@@ -804,7 +815,11 @@ class TestMainStartupGate:
             patch.object(main.ConfigManager, "ensure_home_config"),
             patch.object(main, "sys") as mock_sys,
         ):
-            main.main()
+            # A real sys.exit raises SystemExit; without this the mocked call
+            # is a no-op and execution would continue past the gate.
+            mock_sys.exit.side_effect = SystemExit
+            with pytest.raises(SystemExit):
+                main.main()
 
         mock_sys.exit.assert_called_once_with(1)
         # Should have printed to stderr

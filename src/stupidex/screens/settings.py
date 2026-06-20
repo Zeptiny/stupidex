@@ -1,6 +1,7 @@
 """Full-screen settings modal with tabbed navigation for all config sections."""
 
 from dataclasses import asdict
+from functools import partial
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -770,10 +771,9 @@ class SettingsScreen(ModalScreen[Config | None]):
             yield Static("Settings", id="settings-header")
             yield Tabs(*[Tab(name, id=name.lower().replace(" ", "-")) for name in self.TABS], id="settings-tabs")
             yield ScrollableContainer(id="settings-content")
-            with Vertical(id="settings-footer"):
-                with Horizontal(id="settings-footer-info"):
-                    yield Static("Ctrl+S save • Esc close without saving", id="settings-hint")
-                    yield Static("", id="settings-error")
+            with Vertical(id="settings-footer"), Horizontal(id="settings-footer-info"):
+                yield Static("Ctrl+S save • Esc close without saving", id="settings-hint")
+                yield Static("", id="settings-error")
 
     def on_mount(self) -> None:
         self._render_tab("providers")
@@ -842,16 +842,18 @@ class SettingsScreen(ModalScreen[Config | None]):
             initial = {"_alias": alias, **entry}
             self.app.push_screen(
                 NewProviderForm(f"Edit Provider: {alias}", initial),
-                self._on_edit_provider_result,
+                partial(self._on_edit_provider_result, original_alias=alias),
             )
         elif action == "delete":
             self._config.providers.pop(alias, None)
             self._refresh_tab()
             self._mark_dirty("providers")
 
-    def _on_edit_provider_result(self, result: dict | None) -> None:
+    def _on_edit_provider_result(self, result: dict | None, original_alias: str | None = None) -> None:
         if result is not None:
             alias = result.pop("_alias")
+            if original_alias and original_alias != alias:
+                self._config.providers.pop(original_alias, None)
             self._config.providers[alias] = result
             self._refresh_tab()
             self._mark_dirty("providers")
@@ -958,16 +960,18 @@ class SettingsScreen(ModalScreen[Config | None]):
             initial = {"_name": name, **entry}
             self.app.push_screen(
                 NewMCPServerForm(f"Edit MCP Server: {name}", initial),
-                self._on_edit_mcp_result,
+                partial(self._on_edit_mcp_result, original_name=name),
             )
         elif action == "delete":
             self._config.mcp_servers.pop(name, None)
             self._refresh_tab()
             self._mark_dirty("mcp_servers")
 
-    def _on_edit_mcp_result(self, result: dict | None) -> None:
+    def _on_edit_mcp_result(self, result: dict | None, original_name: str | None = None) -> None:
         if result is not None:
             name = result.pop("_name")
+            if original_name and original_name != name:
+                self._config.mcp_servers.pop(original_name, None)
             self._config.mcp_servers[name] = result
             self._refresh_tab()
             self._mark_dirty("mcp_servers")

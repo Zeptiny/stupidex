@@ -143,34 +143,20 @@ def _load_json(path: Path) -> dict:
 
 
 def _convert_from_dict(data: dict) -> dict:
-    """Convert flat or mixed dict data to the nested Config representation.
+    """Normalize a raw dict before constructing Config.
 
-    Handles both old-style flat RAG fields (`rag_chunk_size`, etc.) and
-    new-style nested `rag` key. Never mutates the input.
+    Strips None values so they don't shadow dataclass defaults. Legacy
+    flat RAG fields (`rag_chunk_size`, etc.) are NOT converted to the
+    nested ``rag`` form: there is no backward compatibility, so configs
+    still carrying flat RAG fields simply fall back to ``RAGConfig``
+    defaults (unknown top-level keys are ignored by ``ConfigManager.load``).
+    Never mutates the input.
     """
     result = dict(data)
 
-    # Strip None values so they don't shadow defaults
     for k in list(result.keys()):
         if result[k] is None:
             del result[k]
-
-    flat_rag_keys = {"rag_chunk_size", "rag_chunk_overlap", "rag_top_k", "rag_max_file_size", "rag_embedding_model"}
-    has_flat_rag = bool(flat_rag_keys & result.keys())
-    has_nested_rag = "rag" in result and isinstance(result.get("rag"), dict)
-
-    if has_flat_rag and not has_nested_rag:
-        result["rag"] = {
-            "chunk_size": result.pop("rag_chunk_size", RAGConfig.chunk_size),
-            "chunk_overlap": result.pop("rag_chunk_overlap", RAGConfig.chunk_overlap),
-            "top_k": result.pop("rag_top_k", RAGConfig.top_k),
-            "max_file_size": result.pop("rag_max_file_size", RAGConfig.max_file_size),
-            "embedding_model": result.pop("rag_embedding_model", RAGConfig.embedding_model),
-        }
-    elif has_nested_rag:
-        # Remove any lingering flat keys in favor of nested
-        for k in flat_rag_keys:
-            result.pop(k, None)
 
     return result
 
@@ -383,7 +369,7 @@ class ConfigManager:
     @classmethod
     def errors(cls) -> list[str]:
         """Return validation errors from the last load."""
-        return cls._errors
+        return list(cls._errors)
 
     @classmethod
     def load(cls) -> Config:
@@ -400,6 +386,11 @@ class ConfigManager:
                 continue
             if k in _DEEP_MERGE_KEYS and isinstance(v, dict) and isinstance(merged.get(k), dict):
                 merged[k] = _deep_merge_provider_dict(merged[k], v)
+            elif isinstance(v, dict) and isinstance(merged.get(k), dict):
+                # Deep-merge nested dicts even outside _DEEP_MERGE_KEYS so
+                # partial nested configs (e.g. project setting only `rag.top_k`)
+                # merge with home-level values instead of replacing them wholesale.
+                merged[k] = _deep_merge_provider_dict(merged[k], v)
             else:
                 merged[k] = v
 
@@ -410,6 +401,11 @@ class ConfigManager:
             if k not in merged:
                 continue
             if k in _DEEP_MERGE_KEYS and isinstance(v, dict) and isinstance(merged.get(k), dict):
+                merged[k] = _deep_merge_provider_dict(merged[k], v)
+            elif isinstance(v, dict) and isinstance(merged.get(k), dict):
+                # Deep-merge nested dicts even outside _DEEP_MERGE_KEYS so
+                # partial nested configs (e.g. project setting only `rag.top_k`)
+                # merge with home-level values instead of replacing them wholesale.
                 merged[k] = _deep_merge_provider_dict(merged[k], v)
             else:
                 merged[k] = v
@@ -445,6 +441,7 @@ class ConfigManager:
     @classmethod
     def reset(cls) -> None:
         cls._instance = None
+        cls._errors = []
 
     @classmethod
     def save(cls) -> None:

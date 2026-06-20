@@ -95,14 +95,40 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
       e.g. after an interrupted turn -- are filtered so we don't send
       dangling tool_calls, which would 400 on strict providers).
     """
-    # Pre-pass: collect tool_call_ids that have at least one matching
-    # TOOL_RESULT anywhere in the history. Assistant tool_calls entries that
-    # reference ids with no matching result will be filtered on emit so we
-    # don't send a tool_calls block that never receives its tool responses.
+    # Pre-pass: collect tool_call_ids that have a properly-sequenced matching
+    # TOOL_RESULT — i.e. the result follows its preceding assistant tool_calls
+    # block before any intervening non-thinking/non-tool message. Assistant
+    # tool_calls entries whose ids have no *sequenced* result are filtered on
+    # emit so we don't send a tool_calls block that never receives its tool
+    # responses. A global "anywhere" presence check is too broad: it would
+    # mark an id as surviving based on an orphan result that appears in a
+    # later turn after the sequence was already broken, emitting a dangling
+    # tool_calls block with no paired result in message order.
     surviving_tool_call_ids: set[str] = set()
+    pending_tool_call_ids: set[str] = set()
     for msg in messages:
-        if msg.role == MessageRole.TOOL and msg.tool_call_id:
-            surviving_tool_call_ids.add(msg.tool_call_id)
+        if msg.type == MessageType.ERROR:
+            continue
+        if msg.type == MessageType.TOOL_CALL and not msg.tool_calls:
+            continue
+        if msg.type == MessageType.THINKING:
+            # THINKING never breaks the tool_call/tool_result pairing (mirrors
+            # the main loop's non-reset-on-thinking guarantee below).
+            continue
+        if msg.role == MessageRole.TOOL:
+            if msg.tool_call_id and msg.tool_call_id in pending_tool_call_ids:
+                surviving_tool_call_ids.add(msg.tool_call_id)
+            continue
+        if not msg.content and not msg.tool_calls:
+            continue
+        # An emitted non-tool message breaks the sequence: results from a
+        # later turn can no longer legitimately pair with earlier tool_calls.
+        # A new assistant tool_calls block resets pending to its own ids.
+        pending_tool_call_ids = (
+            {tc.get("id") for tc in msg.tool_calls if tc.get("id")}
+            if msg.tool_calls
+            else set()
+        )
 
     api_messages: list[dict[str, Any]] = []
     last_assistant_tool_call_ids: set[str] = set()

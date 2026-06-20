@@ -49,6 +49,7 @@ class TestMCPConfigValidation(unittest.TestCase):
         home_servers = {"shared": {"command": "home-cmd"}}
         project_servers = {"shared": {"command": "project-cmd"}}
         merged = {**home_servers, **project_servers}
+        self.assertEqual(merged["shared"]["command"], "project-cmd")
         cfg = Config(mcp_servers=merged)
         errors = validate_config(cfg)
         self.assertEqual(errors, [])
@@ -57,6 +58,8 @@ class TestMCPConfigValidation(unittest.TestCase):
         home_servers = {"home-only": {"command": "home-cmd"}, "shared": {"command": "home-cmd"}}
         project_servers = {"shared": {"command": "project-cmd"}}
         merged = {**home_servers, **project_servers}
+        self.assertIn("home-only", merged)
+        self.assertEqual(merged["home-only"]["command"], "home-cmd")
         cfg = Config(mcp_servers=merged)
         errors = validate_config(cfg)
         self.assertEqual(errors, [])

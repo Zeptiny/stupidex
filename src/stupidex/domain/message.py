@@ -41,7 +41,12 @@ class Message:
         # OpenAI convention: assistant messages carrying only tool_calls
         # should use `content: null` rather than an empty string; strict
         # validators reject empty-string content on tool-call-only turns.
-        content = self.content if self.content else None
+        # Tool result messages (role "tool") must keep their string content
+        # (even when empty) to satisfy the chat-message contract.
+        if self.role == MessageRole.ASSISTANT and self.tool_calls:
+            content = self.content if self.content else None
+        else:
+            content = self.content
         d: dict[str, Any] = {"role": self.role.value, "content": content}
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
