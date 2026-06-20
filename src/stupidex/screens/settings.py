@@ -13,15 +13,22 @@ from stupidex.config import (
     RAGConfig,
     validate_config,
 )
-from stupidex.screens.picker import OptionPicker
+from stupidex.screens.picker import OptionPicker, PickerItem
+
+
+def _list_fastembed_models() -> list[str]:
+    try:
+        from fastembed import TextEmbedding
+
+        return [m["model"] for m in TextEmbedding.list_supported_models()]
+    except Exception:
+        return []
 
 
 class NewProviderForm(ModalScreen[dict | None]):
     """Modal form to add or edit a provider entry.
 
-    Per-model attributes are edited inline via a dynamic list of model rows.
-    Each row captures ``model_id`` plus the four supported override fields:
-    ``max_input_tokens``, ``max_output_tokens``, ``supports_vision``, ``mode``.
+    Per-model attributes are edited inline in a table-like grid.
     """
 
     CSS = """
@@ -29,61 +36,88 @@ class NewProviderForm(ModalScreen[dict | None]):
         align: center middle;
     }
     #provider-form-container {
-        width: 76;
+        width: 110;
         height: auto;
         max-height: 85%;
         border: thick $primary;
         background: $surface;
         padding: 1 2;
     }
-    #provider-form-container Input {
-        margin-bottom: 1;
+    #provider-form-scroll {
+        height: 1fr;
+        max-height: 55;
+        overflow-y: auto;
     }
     #provider-form-container Label {
-        margin-top: 1;
         text-style: bold;
+        height: 1;
+        margin-top: 1;
+    }
+    #provider-form-container Input {
+        height: 3;
     }
     #provider-form-buttons {
         width: 100%;
         height: auto;
-        align: center middle;
+        align-horizontal: center;
         margin-top: 1;
     }
     #provider-form-buttons Button {
         margin: 0 1;
+        height: 3;
     }
     #provider-form-error {
         color: $error;
-        margin-bottom: 1;
+        height: 1;
     }
     #pf-models-list {
-        margin-top: 1;
+        margin-top: 0;
         height: auto;
+    }
+    .pf-model-table-header {
+        height: 1;
+        margin-top: 1;
+    }
+    #provider-form-container .pf-model-table-header Label {
+        text-style: bold;
+        color: $text-muted;
+        height: 1;
+        margin-top: 0;
+        padding: 0 1;
+    }
+    .pf-model-table-rule {
+        height: 1;
+        color: $surface-lighten-2;
     }
     .pf-model-row {
-        height: auto;
+        height: 5;
         border: solid $surface-lighten-1;
         padding: 0 1;
-        margin-bottom: 1;
+        margin-bottom: 0;
+        align-vertical: middle;
     }
-    .pf-model-row-input {
+    .pf-model-row Input {
+        height: 3;
+    }
+    .pf-model-row Select {
+        height: 3;
+    }
+    .pf-col-id {
         width: 1fr;
-        margin: 0 1 0 0;
     }
-    .pf-model-row-small {
-        width: 12;
-        margin: 0 1 0 0;
-    }
-    .pf-model-row-vision {
+    .pf-col-small {
         width: 16;
-        margin: 0 1 0 0;
     }
-    .pf-model-row-remove {
-        width: auto;
+    .pf-col-vision {
+        width: 14;
     }
-    .pf-model-row-label {
-        text-style: bold;
-        margin-bottom: 1;
+    .pf-col-mode {
+        width: 14;
+    }
+    .pf-col-remove {
+        width: 5;
+        min-width: 0;
+        content-align: center middle;
     }
     """
 
@@ -91,78 +125,76 @@ class NewProviderForm(ModalScreen[dict | None]):
         super().__init__()
         self._title = title
         self._initial = initial or {}
-        # Tracking list of model entries for dynamic add/remove.
-        # Each entry is a dict: {"model_id": str, "max_input_tokens": str,
-        # "max_output_tokens": str, "supports_vision": bool, "mode": str}
-        # Values are kept as strings (tokens) / bool / str to round-trip through Inputs.
         self._model_entries: list[dict] = []
-        # Track the next available index for unique widget IDs.
         self._model_seq = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="provider-form-container"):
             yield Static(self._title, id="provider-form-title")
             yield Static("", id="provider-form-error")
-            yield Label("Alias (e.g. 'work-openai'):")
-            yield Input(
-                placeholder="my-provider",
-                value=self._initial.get("_alias", ""),
-                id="pf-alias",
-            )
-            yield Label("Base URL:")
-            yield Input(
-                placeholder="https://api.openai.com/v1",
-                value=self._initial.get("base_url", ""),
-                id="pf-base-url",
-            )
-            yield Label("API Key:")
-            yield Input(
-                placeholder="sk-...",
-                value=self._initial.get("api_key", ""),
-                password=True,
-                id="pf-api-key",
-            )
-            yield Label("API Key Env Var:")
-            yield Input(
-                placeholder="OPENAI_API_KEY",
-                value=self._initial.get("api_key_env", ""),
-                id="pf-api-key-env",
-            )
-            yield Label("LiteLLM Provider:")
-            yield Input(
-                placeholder="openai",
-                value=self._initial.get("litellm_provider", ""),
-                id="pf-litellm-provider",
-            )
-            yield Label("Models:")
-            yield Vertical(id="pf-models-list")
+            with ScrollableContainer(id="provider-form-scroll"):
+                yield Label("Alias (e.g. 'work-openai')")
+                yield Input(
+                    placeholder="my-provider",
+                    value=self._initial.get("_alias", ""),
+                    id="pf-alias",
+                )
+                yield Label("Base URL")
+                yield Input(
+                    placeholder="https://api.openai.com/v1",
+                    value=self._initial.get("base_url", ""),
+                    id="pf-base-url",
+                )
+                yield Label("API Key")
+                yield Input(
+                    placeholder="sk-...",
+                    value=self._initial.get("api_key", ""),
+                    password=True,
+                    id="pf-api-key",
+                )
+                yield Label("API Key Env Var")
+                yield Input(
+                    placeholder="OPENAI_API_KEY",
+                    value=self._initial.get("api_key_env", ""),
+                    id="pf-api-key-env",
+                )
+                yield Label("LiteLLM Provider")
+                yield Input(
+                    placeholder="openai",
+                    value=self._initial.get("litellm_provider", ""),
+                    id="pf-litellm-provider",
+                )
+                yield Label("Models")
+                with Horizontal(classes="pf-model-table-header"):
+                    yield Label("Model ID", classes="pf-col-id")
+                    yield Label("Max Input", classes="pf-col-small")
+                    yield Label("Max Output", classes="pf-col-small")
+                    yield Label("Vision", classes="pf-col-vision")
+                    yield Label("Mode", classes="pf-col-mode")
+                    yield Label("", classes="pf-col-remove")
+                yield Static("─" * 108, classes="pf-model-table-rule")
+                yield Vertical(id="pf-models-list")
             with Horizontal(id="provider-form-buttons"):
                 yield Button("Add Model", id="pf-add-model")
                 yield Button("Save", variant="primary", id="pf-save")
                 yield Button("Cancel", variant="default", id="pf-cancel")
 
     def on_mount(self) -> None:
-        # Seed the models list from the initial config.
         initial_models = self._initial.get("models", {}) if isinstance(self._initial, dict) else {}
         if isinstance(initial_models, dict):
             for model_id, overrides in initial_models.items():
                 if not isinstance(overrides, dict):
                     overrides = {}
                 self._add_model_entry(model_id=model_id, overrides=overrides)
-        # Always ensure at least one empty row when adding a new provider with
-        # no models, so the user has a visible place to type.
         if not self._model_entries:
             self._add_model_entry()
         self.query_one("#pf-alias", Input).focus()
-
-    # ── Dynamic model entries ──────────────────────────────────────────
 
     def _add_model_entry(
         self,
         model_id: str = "",
         overrides: dict | None = None,
     ) -> None:
-        """Append a new model row to the form and mount its widgets."""
         overrides = overrides or {}
         idx = self._model_seq
         self._model_seq += 1
@@ -182,57 +214,55 @@ class NewProviderForm(ModalScreen[dict | None]):
         self._model_entries.append(entry)
         models_list = self.query_one("#pf-models-list", Vertical)
         models_list.mount(self._build_model_row(entry))
-        # Focus the freshly added model_id input to make the entry point obvious.
         try:
             self.query_one(f"#pf-model-id-{idx}", Input).focus()
         except Exception:
             pass
 
-    def _build_model_row(self, entry: dict) -> Vertical:
+    def _build_model_row(self, entry: dict) -> Horizontal:
         idx = entry["idx"]
         vision_select = Select(
             [("false", False), ("true", True)],
             value=entry["supports_vision"],
             id=f"pf-model-vision-{idx}",
-            classes="pf-model-row-vision",
+            classes="pf-col-vision",
+            allow_blank=False,
         )
-        return Vertical(
-            Label("Model ID:", classes="pf-model-row-label"),
+        mode_value = entry["mode"] if entry["mode"] in ("chat", "embeddings") else "chat"
+        mode_select = Select(
+            [("Chat", "chat"), ("Embeddings", "embeddings")],
+            value=mode_value,
+            id=f"pf-model-mode-{idx}",
+            classes="pf-col-mode",
+            allow_blank=False,
+        )
+        return Horizontal(
             Input(
-                placeholder="gpt-4o",
+                placeholder="model id",
                 value=entry["model_id"],
                 id=f"pf-model-id-{idx}",
-                classes="pf-model-row-input",
+                classes="pf-col-id",
             ),
-            Horizontal(
-                Input(
-                    placeholder="max_input_tokens",
-                    value=entry["max_input_tokens"],
-                    id=f"pf-model-mit-{idx}",
-                    classes="pf-model-row-small",
-                ),
-                Input(
-                    placeholder="max_output_tokens",
-                    value=entry["max_output_tokens"],
-                    id=f"pf-model-mot-{idx}",
-                    classes="pf-model-row-small",
-                ),
-                vision_select,
-                Input(
-                    placeholder="mode (chat)",
-                    value=entry["mode"],
-                    id=f"pf-model-mode-{idx}",
-                    classes="pf-model-row-small",
-                ),
-                Button("Remove", id=f"pf-model-rm-{idx}", classes="pf-model-row-remove"),
+            Input(
+                placeholder="max_input",
+                value=entry["max_input_tokens"],
+                id=f"pf-model-mit-{idx}",
+                classes="pf-col-small",
             ),
+            Input(
+                placeholder="max_output",
+                value=entry["max_output_tokens"],
+                id=f"pf-model-mot-{idx}",
+                classes="pf-col-small",
+            ),
+            vision_select,
+            mode_select,
+            Button("✕", id=f"pf-model-rm-{idx}", classes="pf-col-remove"),
             classes="pf-model-row",
         )
 
     def _remove_model_entry(self, idx: int) -> None:
-        # Drop the entry from the tracking list and unmount its row.
         self._model_entries = [e for e in self._model_entries if e["idx"] != idx]
-        # Find the row container that owns the matching remove button and remove it.
         for row in self.query(".pf-model-row"):
             try:
                 row.query_one(f"#pf-model-rm-{idx}", Button)
@@ -240,8 +270,6 @@ class NewProviderForm(ModalScreen[dict | None]):
                 continue
             row.remove()
             break
-
-    # ── Event handlers ─────────────────────────────────────────────────
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id or ""
@@ -256,7 +284,6 @@ class NewProviderForm(ModalScreen[dict | None]):
             self._remove_model_entry(idx)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        # Keep the in-memory entry dict in sync so save reflects edits.
         input_id = event.input.id or ""
         for entry in self._model_entries:
             i = entry["idx"]
@@ -266,8 +293,6 @@ class NewProviderForm(ModalScreen[dict | None]):
                 entry["max_input_tokens"] = event.value
             elif input_id == f"pf-model-mot-{i}":
                 entry["max_output_tokens"] = event.value
-            elif input_id == f"pf-model-mode-{i}":
-                entry["mode"] = event.value
 
     def on_select_changed(self, event: Select.Changed) -> None:
         select_id = event.select.id or ""
@@ -275,6 +300,11 @@ class NewProviderForm(ModalScreen[dict | None]):
             i = entry["idx"]
             if select_id == f"pf-model-vision-{i}":
                 entry["supports_vision"] = bool(event.value)
+            elif select_id == f"pf-model-mode-{i}":
+                entry["mode"] = str(event.value)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
 
     def _do_save(self) -> None:
         alias = self.query_one("#pf-alias", Input).value.strip()
@@ -300,7 +330,6 @@ class NewProviderForm(ModalScreen[dict | None]):
         if litellm_provider:
             entry["litellm_provider"] = litellm_provider
 
-        # Collect model entries into the models dict.
         models: dict[str, dict] = {}
         seen_ids: set[str] = set()
         for entry_data in self._model_entries:
@@ -308,9 +337,7 @@ class NewProviderForm(ModalScreen[dict | None]):
             if not model_id:
                 continue
             if model_id in seen_ids:
-                self.query_one(
-                    "#provider-form-error", Static
-                ).update(f"Duplicate model id: {model_id}")
+                self.query_one("#provider-form-error", Static).update(f"Duplicate model id: {model_id}")
                 return
             seen_ids.add(model_id)
             overrides: dict = {}
@@ -319,18 +346,18 @@ class NewProviderForm(ModalScreen[dict | None]):
                 try:
                     overrides["max_input_tokens"] = int(mit)
                 except ValueError:
-                    self.query_one(
-                        "#provider-form-error", Static
-                    ).update(f"max_input_tokens must be an integer for {model_id!r}.")
+                    self.query_one("#provider-form-error", Static).update(
+                        f"max_input_tokens must be an integer for {model_id!r}."
+                    )
                     return
             mot = entry_data["max_output_tokens"].strip()
             if mot:
                 try:
                     overrides["max_output_tokens"] = int(mot)
                 except ValueError:
-                    self.query_one(
-                        "#provider-form-error", Static
-                    ).update(f"max_output_tokens must be an integer for {model_id!r}.")
+                    self.query_one("#provider-form-error", Static).update(
+                        f"max_output_tokens must be an integer for {model_id!r}."
+                    )
                     return
             if entry_data["supports_vision"]:
                 overrides["supports_vision"] = True
@@ -348,9 +375,40 @@ class NewProviderForm(ModalScreen[dict | None]):
 class NewMCPServerForm(ModalScreen[dict | None]):
     """Modal form to add or edit an MCP server entry."""
 
-    CSS = NewProviderForm.CSS.replace("#provider-form-container", "#mcp-form-container").replace(
-        "#provider-form-error", "#mcp-form-error"
-    )
+    CSS = """
+    NewMCPServerForm {
+        align: center middle;
+    }
+    #mcp-form-container {
+        width: 60;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    #mcp-form-container Label {
+        text-style: bold;
+        height: 1;
+        margin-top: 1;
+    }
+    #mcp-form-container Input {
+        height: 3;
+    }
+    #mcp-form-buttons {
+        width: 100%;
+        height: auto;
+        align-horizontal: center;
+        margin-top: 1;
+    }
+    #mcp-form-buttons Button {
+        margin: 0 1;
+        height: 3;
+    }
+    #mcp-form-error {
+        color: $error;
+        height: 1;
+    }
+    """
 
     def __init__(self, title: str, initial: dict | None = None) -> None:
         super().__init__()
@@ -361,31 +419,31 @@ class NewMCPServerForm(ModalScreen[dict | None]):
         with Vertical(id="mcp-form-container"):
             yield Static(self._title, id="mcp-form-title")
             yield Static("", id="mcp-form-error")
-            yield Label("Name (e.g. 'my-server'):")
+            yield Label("Name (e.g. 'my-server')")
             yield Input(
                 placeholder="my-server",
                 value=self._initial.get("_name", ""),
                 id="mf-name",
             )
-            yield Label("Command:")
+            yield Label("Command")
             yield Input(
                 placeholder="node",
                 value=self._initial.get("command", ""),
                 id="mf-command",
             )
-            yield Label("Args (comma-separated):")
+            yield Label("Args (comma-separated)")
             yield Input(
                 placeholder="server.js, --port, 3000",
                 value=", ".join(self._initial.get("args", [])) if self._initial.get("args") else "",
                 id="mf-args",
             )
-            yield Label("URL (for SSE servers, leave command/args blank):")
+            yield Label("URL (for SSE servers, leave command/args blank)")
             yield Input(
                 placeholder="http://localhost:3000/sse",
                 value=self._initial.get("url", ""),
                 id="mf-url",
             )
-            with Horizontal(id="provider-form-buttons"):
+            with Horizontal(id="mcp-form-buttons"):
                 yield Button("Save", variant="primary", id="mf-save")
                 yield Button("Cancel", variant="default", id="mf-cancel")
 
@@ -397,6 +455,9 @@ class NewMCPServerForm(ModalScreen[dict | None]):
             self._do_save()
         else:
             self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
 
     def _do_save(self) -> None:
         name = self.query_one("#mf-name", Input).value.strip()
@@ -425,10 +486,75 @@ class NewMCPServerForm(ModalScreen[dict | None]):
         self.dismiss(result)
 
 
+class ConfirmScreen(ModalScreen[str | None]):
+    """Confirmation modal used for discarding/saving unsaved settings.
+
+    Dismisses with one of:
+      - "discard"     → discard changes and close settings
+      - "save_close"  → save changes and close settings
+      - None          → keep editing (cancel)
+    """
+
+    CSS = """
+    ConfirmScreen {
+        align: center middle;
+    }
+    #settings-confirm-container {
+        width: 72;
+        height: auto;
+        max-height: 20;
+        background: $surface;
+        padding: 1 2;
+    }
+    #settings-confirm-container Label {
+        text-align: center;
+        margin-bottom: 1;
+    }
+    #settings-confirm-buttons {
+        height: 3;
+        align-horizontal: center;
+        align-vertical: middle;
+    }
+    #settings-confirm-buttons Button {
+        margin: 0 1;
+        height: 3;
+    }
+    """
+
+    def __init__(self, title: str, message: str) -> None:
+        super().__init__()
+        self._title = title
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings-confirm-container"):
+            yield Label(self._title)
+            yield Label(self._message)
+            with Horizontal(id="settings-confirm-buttons"):
+                yield Button("Discard", variant="error", id="settings-confirm-yes")
+                yield Button("Keep Editing", variant="default", id="settings-confirm-no")
+                yield Button("Close and Save", variant="success", id="settings-confirm-save")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "settings-confirm-yes":
+            self.dismiss("discard")
+        elif event.button.id == "settings-confirm-save":
+            self.dismiss("save_close")
+        else:
+            self.dismiss(None)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 class SettingsScreen(ModalScreen[Config | None]):
     """Full-screen settings modal with tabbed navigation.
 
     Returns the modified `Config` on Save, or `None` on Cancel.
+
+    Esc behavior:
+      - On a sub-form (provider/MCP) → dismisses the sub-form back to settings
+      - On the settings tabs → closes the settings modal
     """
 
     CSS = """
@@ -439,21 +565,22 @@ class SettingsScreen(ModalScreen[Config | None]):
     #settings-container {
         width: 90%;
         height: 90%;
-        border: thick $primary;
         background: $surface;
         padding: 0;
     }
 
     #settings-header {
         dock: top;
-        height: 3;
-        padding: 1 2;
+        height: 1;
+        padding: 0 2;
         background: $primary-darken-2;
+        text-style: bold;
     }
 
     #settings-tabs {
         dock: top;
         width: 100%;
+        height: 1;
     }
 
     #settings-content {
@@ -463,106 +590,179 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     #settings-footer {
         dock: bottom;
-        height: auto;
-        padding: 1 2;
-        background: $primary-darken-2;
+        height: 1;
+        min-height: 1;
+        padding: 0 2;
+        background: $surface;
     }
 
-    #settings-footer-buttons {
-        height: auto;
-        align: center middle;
+    #settings-footer-info {
+        height: 1;
+        width: 100%;
+        align-horizontal: left;
+        align-vertical: middle;
     }
 
-    #settings-footer-buttons Button {
-        margin: 0 1;
-    }
-
-    #settings-footer-hint {
+    #settings-hint {
+        width: 1fr;
+        height: 1;
         color: $text-muted;
-        text-align: center;
-        margin-top: 1;
-    }
-
-    #settings-save {
-        text-style: bold;
     }
 
     #settings-error {
         color: $error;
-        margin: 1 0;
-        text-style: bold;
+        height: 1;
+        width: 1fr;
     }
 
     .settings-section-title {
         text-style: bold;
+        height: 1;
         margin-bottom: 1;
     }
 
     .settings-row {
-        height: auto;
-        margin-bottom: 1;
+        height: 3;
+        margin-bottom: 0;
+        align-vertical: middle;
     }
 
     .settings-label {
         width: 30;
+        height: 3;
         padding: 0 1;
+        content-align: left middle;
     }
 
     .settings-input {
         width: 1fr;
-    }
-
-    .settings-picker-button {
-        width: 1fr;
+        height: 3;
     }
 
     .settings-list-item {
-        margin-bottom: 1;
+        margin-bottom: 0;
         border: solid $surface-lighten-1;
         padding: 0 1;
+        height: 5;
+        align-vertical: middle;
     }
 
     .settings-list-item-label {
         text-style: bold;
+        width: 20;
+        height: 1;
     }
 
     .settings-list-item-detail {
         color: $text-muted;
+        width: 1fr;
+        height: 1;
+    }
+
+    .mcp-list-item {
+        margin-bottom: 0;
+        border: solid $surface-lighten-1;
+        padding: 0 1;
+        height: 5;
+        align-vertical: middle;
     }
 
     .tier-row {
-        height: auto;
-        margin-bottom: 1;
+        height: 3;
+        margin-bottom: 0;
         align-vertical: middle;
     }
 
     .tier-label {
         width: 20;
+        height: 3;
         padding: 0 1;
         text-style: bold;
+        content-align: left middle;
     }
 
     .tier-current {
         width: 1fr;
+        height: 3;
         padding: 0 1;
         color: $text-muted;
+        content-align: left middle;
     }
 
     .item-actions {
         dock: right;
         width: auto;
+        height: 3;
+        align-vertical: middle;
     }
 
     .item-actions Button {
         margin: 0 1;
+        height: 3;
+        min-width: 0;
+        width: auto;
+        content-align: center middle;
+    }
+
+    .tier-row Button {
+        height: 3;
+        min-width: 0;
+        width: auto;
+        content-align: center middle;
+    }
+
+    #providers-add, #mcp-add {
+        height: 3;
+        margin-top: 0;
+        content-align: center middle;
+        text-align: center;
+    }
+
+    .settings-add-row {
+        align-vertical: middle;
+        height: 3;
+        margin-top: 1;
     }
     """
 
+    TAB_FIELDS: dict[str, tuple[str, ...]] = {
+        "Providers": ("providers",),
+        "MCP Servers": ("mcp_servers",),
+        "Tier Models": ("tier_models", "default_model"),
+        "RAG": ("rag",),
+        "General": (
+            "default_model",
+            "command_timeout",
+            "read_line_limit",
+            "grep_max_results",
+            "directory_tree_depth",
+            "ast_max_file_size",
+            "theme",
+            "personality",
+        ),
+    }
+
     TABS = ["Providers", "MCP Servers", "Tier Models", "RAG", "General"]
+
+    # Config fields that map directly to Input widgets
+    _RAG_INT_FIELDS = {
+        "rag-chunk_size": "chunk_size",
+        "rag-chunk_overlap": "chunk_overlap",
+        "rag-top_k": "top_k",
+        "rag-max_file_size": "max_file_size",
+    }
+    _GEN_INT_FIELDS = {
+        "gen-command_timeout": "command_timeout",
+        "gen-read_line_limit": "read_line_limit",
+        "gen-grep_max_results": "grep_max_results",
+        "gen-directory_tree_depth": "directory_tree_depth",
+        "gen-ast_max_file_size": "ast_max_file_size",
+    }
 
     def __init__(self, config: Config) -> None:
         super().__init__()
-        self._config = Config(**asdict(config))  # deep copy
+        self._config = Config(**asdict(config))
+        self._original = Config(**asdict(config))
         self._items_cache: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
@@ -571,21 +771,43 @@ class SettingsScreen(ModalScreen[Config | None]):
             yield Tabs(*[Tab(name, id=name.lower().replace(" ", "-")) for name in self.TABS], id="settings-tabs")
             yield ScrollableContainer(id="settings-content")
             with Vertical(id="settings-footer"):
-                with Horizontal(id="settings-footer-buttons"):
+                with Horizontal(id="settings-footer-info"):
+                    yield Static("Ctrl+S save • Esc close without saving", id="settings-hint")
                     yield Static("", id="settings-error")
-                    yield Button("Save [Ctrl+S]", variant="primary", id="settings-save")
-                    yield Button("Cancel [Esc]", variant="default", id="settings-cancel")
-                yield Static(
-                    "Press Ctrl+S to save changes, Esc to cancel.",
-                    id="settings-footer-hint",
-                )
 
     def on_mount(self) -> None:
         self._render_tab("providers")
+        self._update_tab_labels()
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         tab_id = event.tab.id or "providers"
         self._render_tab(tab_id)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Update self._config in real-time as inputs change.
+
+        This prevents losing values when switching tabs (since only the
+        active tab's widgets exist in the DOM).
+        """
+        wid = event.input.id or ""
+        val = event.value.strip()
+
+        if wid in self._RAG_INT_FIELDS:
+            field = self._RAG_INT_FIELDS[wid]
+            try:
+                intval = int(val) if val else 0
+                self._config.rag = RAGConfig(**{**asdict(self._config.rag), field: intval})
+            except ValueError:
+                pass
+            self._mark_dirty("rag")
+        elif wid in self._GEN_INT_FIELDS:
+            field = self._GEN_INT_FIELDS[wid]
+            try:
+                intval = int(val) if val else 0
+                setattr(self._config, field, intval)
+            except ValueError:
+                pass
+            self._mark_dirty("general")
 
     def _render_tab(self, tab_id: str) -> None:
         container = self.query_one("#settings-content", ScrollableContainer)
@@ -607,18 +829,17 @@ class SettingsScreen(ModalScreen[Config | None]):
 
         self._render_keyed_list(container, items, "prov")
 
-        container.mount(Horizontal(
-            Button("Add Provider", variant="primary", id="providers-add"),
-            classes="settings-row",
-        ))
+        container.mount(
+            Horizontal(
+                Button("Add Provider", variant="primary", id="providers-add", classes="settings-add-btn"),
+                classes="settings-row settings-add-row",
+            )
+        )
 
     def _on_provider_action(self, alias: str, action: str) -> None:
         if action == "edit":
             entry = self._config.providers.get(alias, {})
-            initial = {
-                "_alias": alias,
-                **entry,
-            }
+            initial = {"_alias": alias, **entry}
             self.app.push_screen(
                 NewProviderForm(f"Edit Provider: {alias}", initial),
                 self._on_edit_provider_result,
@@ -626,17 +847,18 @@ class SettingsScreen(ModalScreen[Config | None]):
         elif action == "delete":
             self._config.providers.pop(alias, None)
             self._refresh_tab()
+            self._mark_dirty("providers")
 
     def _on_edit_provider_result(self, result: dict | None) -> None:
         if result is not None:
             alias = result.pop("_alias")
             self._config.providers[alias] = result
             self._refresh_tab()
+            self._mark_dirty("providers")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id or ""
 
-        # ── Provider list actions ────────────────────────
         if btn_id.startswith("prov-edit-") or btn_id.startswith("prov-del-"):
             idx = int(btn_id.split("-")[-1])
             if 0 <= idx < len(self._items_cache):
@@ -647,7 +869,6 @@ class SettingsScreen(ModalScreen[Config | None]):
                     self._on_provider_action(alias, "delete")
             return
 
-        # ── MCP list actions ─────────────────────────────
         if btn_id.startswith("mcp-edit-") or btn_id.startswith("mcp-del-"):
             idx = int(btn_id.split("-")[-1])
             if 0 <= idx < len(self._items_cache):
@@ -658,33 +879,39 @@ class SettingsScreen(ModalScreen[Config | None]):
                     self._on_mcp_action(name, "delete")
             return
 
-        # ── Tier model change buttons ────────────────────
         if btn_id.startswith("tier-change-"):
             tier = btn_id[len("tier-change-") :]
             self._open_tier_model_picker(tier)
             return
 
-        # ── Other buttons ────────────────────────────────
+        if btn_id.startswith("gen-pick-"):
+            field = btn_id[len("gen-pick-") :]
+            self._open_general_picker(field)
+            return
+
+        if btn_id.startswith("rag-pick-"):
+            field = btn_id[len("rag-pick-") :]
+            self._open_rag_picker(field)
+            return
+
         if btn_id == "providers-add":
             self.app.push_screen(NewProviderForm("Add Provider"), self._on_add_provider_result)
         elif btn_id == "mcp-add":
             self.app.push_screen(NewMCPServerForm("Add MCP Server"), self._on_add_mcp_result)
-        elif btn_id == "settings-save":
-            self._do_save()
-        elif btn_id == "settings-cancel":
-            self.dismiss(None)
 
     def _on_add_provider_result(self, result: dict | None) -> None:
         if result is not None:
             alias = result.pop("_alias")
             self._config.providers[alias] = result
             self._refresh_tab()
+            self._mark_dirty("providers")
 
     def _refresh_tab(self) -> None:
         tabs = self.query_one("#settings-tabs", Tabs)
         active = tabs.active
         if active:
             self._render_tab(active)
+        self._update_tab_labels()
 
     # ── MCP Servers tab ───────────────────────────────────────────────
 
@@ -692,6 +919,16 @@ class SettingsScreen(ModalScreen[Config | None]):
         container.mount(Static("MCP Servers", classes="settings-section-title"))
         container.mount(Static("Configure MCP tool servers.", classes="settings-list-item-detail"))
 
+        self._render_mcp_list(container)
+
+        container.mount(
+            Horizontal(
+                Button("Add MCP Server", variant="primary", id="mcp-add", classes="settings-add-btn"),
+                classes="settings-row settings-add-row",
+            )
+        )
+
+    def _render_mcp_list(self, container: ScrollableContainer) -> None:
         items = []
         for name, entry in self._config.mcp_servers.items():
             if "url" in entry:
@@ -699,13 +936,21 @@ class SettingsScreen(ModalScreen[Config | None]):
             else:
                 detail = f"{entry.get('command', '?')} {' '.join(entry.get('args', []))}"
             items.append((name, detail))
+        self._items_cache = items
 
-        self._render_keyed_list(container, items, "mcp")
-
-        container.mount(Horizontal(
-            Button("Add MCP Server", variant="primary", id="mcp-add"),
-            classes="settings-row",
-        ))
+        for idx, (name, detail) in enumerate(items):
+            container.mount(
+                Horizontal(
+                    Label(name, classes="settings-list-item-label"),
+                    Static(detail, classes="settings-list-item-detail"),
+                    Horizontal(
+                        Button("Edit", id=f"mcp-edit-{idx}"),
+                        Button("Delete", id=f"mcp-del-{idx}"),
+                        classes="item-actions",
+                    ),
+                    classes="mcp-list-item",
+                )
+            )
 
     def _on_mcp_action(self, name: str, action: str) -> None:
         if action == "edit":
@@ -718,18 +963,21 @@ class SettingsScreen(ModalScreen[Config | None]):
         elif action == "delete":
             self._config.mcp_servers.pop(name, None)
             self._refresh_tab()
+            self._mark_dirty("mcp_servers")
 
     def _on_edit_mcp_result(self, result: dict | None) -> None:
         if result is not None:
             name = result.pop("_name")
             self._config.mcp_servers[name] = result
             self._refresh_tab()
+            self._mark_dirty("mcp_servers")
 
     def _on_add_mcp_result(self, result: dict | None) -> None:
         if result is not None:
             name = result.pop("_name")
             self._config.mcp_servers[name] = result
             self._refresh_tab()
+            self._mark_dirty("mcp_servers")
 
     # ── Tier Models tab ───────────────────────────────────────────────
 
@@ -739,13 +987,11 @@ class SettingsScreen(ModalScreen[Config | None]):
         container.mount(Static("Tier Models", classes="settings-section-title"))
         container.mount(
             Static(
-                "Map each agent tier to a model (alias/model format). "
-                "Click Change to pick from configured providers.",
+                "Map each agent tier to a model (alias/model format). Click Change to pick from configured providers.",
                 classes="settings-list-item-detail",
             )
         )
 
-        # Build the available picker items once per render to know whether any models exist.
         picker_items = _build_model_picker_items(self._config)
         if not picker_items:
             container.mount(
@@ -768,7 +1014,6 @@ class SettingsScreen(ModalScreen[Config | None]):
             )
 
     def _open_tier_model_picker(self, tier: str) -> None:
-        """Push the OptionPicker to select a model assignment for `tier`."""
         items = _build_model_picker_items(self._config)
         if not items:
             return
@@ -778,6 +1023,7 @@ class SettingsScreen(ModalScreen[Config | None]):
                 return
             self._config.tier_models[tier] = selected
             self._refresh_tab()
+            self._mark_dirty("tier_models")
 
         self.app.push_screen(OptionPicker(items), _on_picked)
 
@@ -785,7 +1031,9 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     def _render_rag(self, container: ScrollableContainer) -> None:
         container.mount(Static("RAG Settings", classes="settings-section-title"))
-        container.mount(Static("Configure retrieval-augmented generation parameters.", classes="settings-list-item-detail"))
+        container.mount(
+            Static("Configure retrieval-augmented generation parameters.", classes="settings-list-item-detail")
+        )
 
         fields = [
             ("chunk_size", "Chunk Size", str(self._config.rag.chunk_size)),
@@ -794,21 +1042,56 @@ class SettingsScreen(ModalScreen[Config | None]):
             ("max_file_size", "Max File Size (bytes)", str(self._config.rag.max_file_size)),
         ]
         for field_id, label, value in fields:
-            container.mount(Horizontal(
-                Label(f"  {label}:", classes="settings-label"),
-                Input(value=value, id=f"rag-{field_id}", classes="settings-input"),
-                classes="settings-row",
-            ))
+            container.mount(
+                Horizontal(
+                    Label(f"  {label}:", classes="settings-label"),
+                    Input(value=value, id=f"rag-{field_id}", classes="settings-input"),
+                    classes="settings-row",
+                )
+            )
 
-        container.mount(Horizontal(
-            Label("  Embedding Model:", classes="settings-label"),
-            Input(
-                value=self._config.rag.embedding_model,
-                id="rag-embedding_model",
-                classes="settings-input",
-            ),
-            classes="settings-row",
-        ))
+        container.mount(
+            Horizontal(
+                Label("  Embedding Model:", classes="settings-label"),
+                Static(
+                    self._config.rag.embedding_model or "—", id="rag-embedding_model-display", classes="tier-current"
+                ),
+                Button("Change", id="rag-pick-embedding_model"),
+                classes="settings-row",
+            )
+        )
+
+    def _open_rag_picker(self, field: str) -> None:
+        if field == "embedding_model":
+            self._open_embedding_model_picker()
+
+    def _open_embedding_model_picker(self) -> None:
+        items: list[PickerItem] = []
+
+        for model_id in _list_fastembed_models():
+            ref = f"fastembed/{model_id}"
+            items.append(PickerItem(label=f"  {ref}", id=ref))
+
+        items.extend(_build_model_picker_items(self._config, mode="embeddings"))
+
+        if not items:
+            return
+
+        current = self._config.rag.embedding_model
+        if current:
+            for item in items:
+                if item.id == current:
+                    item.label = f"● {item.label.strip()}"
+                    break
+
+        def _on_picked(selected: str | None) -> None:
+            if not selected:
+                return
+            self._config.rag = RAGConfig(**{**asdict(self._config.rag), "embedding_model": selected})
+            self._refresh_tab()
+            self._mark_dirty("rag")
+
+        self.app.push_screen(OptionPicker(items, header="Embedding Models"), _on_picked)
 
     # ── General tab ───────────────────────────────────────────────────
 
@@ -816,32 +1099,112 @@ class SettingsScreen(ModalScreen[Config | None]):
         container.mount(Static("General Settings", classes="settings-section-title"))
         container.mount(Static("Default model, directory options, and timeouts.", classes="settings-list-item-detail"))
 
-        fields = [
-            ("default_model", "Default Model", self._config.default_model),
+        container.mount(
+            Horizontal(
+                Label("  Default Model:", classes="settings-label"),
+                Static(self._config.default_model or "—", id="gen-default_model-display", classes="tier-current"),
+                Button("Change", id="gen-pick-default_model"),
+                classes="settings-row",
+            )
+        )
+
+        gen_int_fields = [
             ("command_timeout", "Command Timeout (s)", str(self._config.command_timeout)),
             ("read_line_limit", "Read Line Limit", str(self._config.read_line_limit)),
             ("grep_max_results", "Grep Max Results", str(self._config.grep_max_results)),
             ("directory_tree_depth", "Directory Tree Depth", str(self._config.directory_tree_depth)),
             ("ast_max_file_size", "AST Max File Size (bytes)", str(self._config.ast_max_file_size)),
         ]
-        for field_id, label, value in fields:
-            container.mount(Horizontal(
-                Label(f"  {label}:", classes="settings-label"),
-                Input(value=value, id=f"gen-{field_id}", classes="settings-input"),
+        for field_id, label, value in gen_int_fields:
+            container.mount(
+                Horizontal(
+                    Label(f"  {label}:", classes="settings-label"),
+                    Input(value=value, id=f"gen-{field_id}", classes="settings-input"),
+                    classes="settings-row",
+                )
+            )
+
+        container.mount(
+            Horizontal(
+                Label("  Theme:", classes="settings-label"),
+                Static(self._config.theme or "—", id="gen-theme-display", classes="tier-current"),
+                Button("Change", id="gen-pick-theme"),
                 classes="settings-row",
-            ))
+            )
+        )
 
-        container.mount(Horizontal(
-            Label("  Theme:", classes="settings-label"),
-            Input(value=self._config.theme, id="gen-theme", classes="settings-input"),
-            classes="settings-row",
-        ))
+        container.mount(
+            Horizontal(
+                Label("  Personality:", classes="settings-label"),
+                Static(self._config.personality or "—", id="gen-personality-display", classes="tier-current"),
+                Button("Change", id="gen-pick-personality"),
+                classes="settings-row",
+            )
+        )
 
-        container.mount(Horizontal(
-            Label("  Personality:", classes="settings-label"),
-            Input(value=self._config.personality, id="gen-personality", classes="settings-input"),
-            classes="settings-row",
-        ))
+    def _open_general_picker(self, field: str) -> None:
+        if field == "default_model":
+            self._open_default_model_picker()
+        elif field == "theme":
+            self._open_theme_picker()
+        elif field == "personality":
+            self._open_personality_picker()
+
+    def _open_default_model_picker(self) -> None:
+        items = _build_model_picker_items(self._config)
+        if not items:
+            return
+
+        current = self._config.default_model
+        if current:
+            for item in items:
+                if item.id == current:
+                    item.label = f"● {item.label.strip()}"
+                    break
+
+        def _on_picked(selected: str | None) -> None:
+            if not selected:
+                return
+            self._config.default_model = selected
+            self._refresh_tab()
+            self._mark_dirty("general")
+
+        self.app.push_screen(OptionPicker(items), _on_picked)
+
+    def _open_theme_picker(self) -> None:
+        from stupidex.themes import get_theme_registry
+
+        registry = get_theme_registry()
+        current = self._config.theme
+        items = [
+            PickerItem(label=f"● {name}" if name == current else f"  {name}", id=name)
+            for name in registry.list_themes()
+        ]
+
+        def _on_picked(selected: str | None) -> None:
+            if not selected:
+                return
+            self._config.theme = selected
+            self._refresh_tab()
+            self._mark_dirty("general")
+
+        self.app.push_screen(OptionPicker(items, header="Themes"), _on_picked)
+
+    def _open_personality_picker(self) -> None:
+        from stupidex.personality import load_personalities
+
+        personalities = load_personalities()
+        current = self._config.personality
+        items = [PickerItem(label=f"● {p}" if p == current else f"  {p}", id=p) for p in personalities]
+
+        def _on_picked(selected: str | None) -> None:
+            if not selected:
+                return
+            self._config.personality = selected
+            self._refresh_tab()
+            self._mark_dirty("general")
+
+        self.app.push_screen(OptionPicker(items, header="Personalities"), _on_picked)
 
     # ── Helpers ───────────────────────────────────────────────────────
 
@@ -851,19 +1214,14 @@ class SettingsScreen(ModalScreen[Config | None]):
         items: list[tuple[str, str]],
         action_prefix: str,
     ) -> None:
-        """Render a list of named items with Edit/Delete buttons.
-
-        `action_prefix` is used in button IDs as `{prefix}-edit-{index}` and
-        `{prefix}-del-{index}`. The index is looked up in `items` when clicked.
-        """
         self._items_cache = items
         for idx, (key, detail) in enumerate(items):
-            item = Vertical(
-                Static(key, classes="settings-list-item-label"),
+            item = Horizontal(
+                Label(key, classes="settings-list-item-label"),
                 Static(detail, classes="settings-list-item-detail"),
                 Horizontal(
-                    Button("Edit", id=f"{action_prefix}-edit-{idx}", classes="small"),
-                    Button("Delete", id=f"{action_prefix}-del-{idx}", classes="small"),
+                    Button("Edit", id=f"{action_prefix}-edit-{idx}"),
+                    Button("Delete", id=f"{action_prefix}-del-{idx}"),
                     classes="item-actions",
                 ),
                 classes="settings-list-item",
@@ -871,83 +1229,107 @@ class SettingsScreen(ModalScreen[Config | None]):
             container.mount(item)
 
     def _collect_modified_config(self) -> Config:
-        """Read all input fields and produce a modified Config.
+        """Return the config with all live edits applied.
 
-        Tier models are stored directly on `self._config.tier_models` by the
-        OptionPicker callbacks, so they are not re-read from Inputs here.
+        RAG and General numeric fields are updated in real-time via
+        ``on_input_changed``, so we just return ``self._config``.
+        Picker-based fields (default_model, theme, personality,
+        embedding_model, tier_models) are also set directly on ``self._config``.
         """
-        cfg = self._config
+        return self._config
 
-        # RAG
-        rag_fields = {
-            "rag-chunk_size": ("chunk_size", int),
-            "rag-chunk_overlap": ("chunk_overlap", int),
-            "rag-top_k": ("top_k", int),
-            "rag-max_file_size": ("max_file_size", int),
-            "rag-embedding_model": ("embedding_model", str),
-        }
-        rag_kw = {}
-        for widget_id, (field_name, cast_type) in rag_fields.items():
-            try:
-                inp = self.query_one(f"#{widget_id}", Input)
-                val = inp.value.strip()
-                if cast_type is int:
-                    val = int(val) if val else 0
-                elif cast_type is str:
-                    val = val if val else cfg.rag.embedding_model
-                rag_kw[field_name] = val
-            except Exception:
-                pass
-        if rag_kw:
-            cfg.rag = RAGConfig(**{**asdict(cfg.rag), **rag_kw})
+    def _do_save(self, close: bool = False) -> None:
+        """Validate, persist and (optionally) close.
 
-        # General
-        gen_int_fields = {
-            "gen-command_timeout": "command_timeout",
-            "gen-read_line_limit": "read_line_limit",
-            "gen-grep_max_results": "grep_max_results",
-            "gen-directory_tree_depth": "directory_tree_depth",
-            "gen-ast_max_file_size": "ast_max_file_size",
-        }
-        for widget_id, field_name in gen_int_fields.items():
-            try:
-                inp = self.query_one(f"#{widget_id}", Input)
-                val = inp.value.strip()
-                if val:
-                    setattr(cfg, field_name, int(val))
-            except Exception:
-                pass
-
-        gen_str_fields = {
-            "gen-default_model": "default_model",
-            "gen-theme": "theme",
-            "gen-personality": "personality",
-        }
-        for widget_id, field_name in gen_str_fields.items():
-            try:
-                inp = self.query_one(f"#{widget_id}", Input)
-                val = inp.value.strip()
-                if val:
-                    setattr(cfg, field_name, val)
-            except Exception:
-                pass
-
-        return cfg
-
-    def _do_save(self) -> None:
+        On every save the config is written to disk and live-applied: the
+        theme is switched in-place via ``app.switch_theme`` so it takes effect
+        immediately without a restart. ``mcp_servers`` is the only field that
+        still binds at startup, so a restart is only needed when it changed —
+        the caller handles that prompt on close.
+        """
         config = self._collect_modified_config()
         errors = validate_config(config)
         if errors:
-            err_widget = self.query_one("#settings-error", Static)
-            err_widget.update("Errors:\n" + "\n".join(f"• {e}" for e in errors))
+            self.query_one("#settings-error", Static).update("  ".join(f"• {e}" for e in errors[:3]))
             return
-        self.dismiss(config)
 
-    # ── Keyboard shortcuts ────────────────────────────────────────────
+        from stupidex.config import ConfigManager
+
+        ConfigManager._instance = config
+        ConfigManager.save()
+
+        if config.theme != self._original.theme:
+            self.app.switch_theme(config.theme)
+
+        self._config = Config(**asdict(config))
+        self._original = Config(**asdict(config))
+        self.query_one("#settings-error", Static).update("")
+        self._update_tab_labels()
+
+        if close:
+            self.dismiss(self._config)
+        else:
+            self.app.notify("Settings saved.", severity="information")
 
     def key_ctrl_s(self) -> None:
-        """Ctrl+S saves the current settings."""
-        self._do_save()
+        self._do_save(close=False)
 
     def key_escape(self) -> None:
-        self.dismiss(None)
+        self._attempt_close()
+
+    def _attempt_close(self) -> None:
+        if self._config_differs():
+            self._push_confirm_discard()
+        else:
+            self.dismiss(None)
+
+    # ── Dirty tracking & confirmation ─────────────────────────────────
+
+    def _field_differs(self, field: str) -> bool:
+        cur = getattr(self._config, field, None)
+        orig = getattr(self._original, field, None)
+        if field == "rag":
+            return asdict(cur) != asdict(orig)
+        return cur != orig
+
+    def _tab_differs(self, tab: str) -> bool:
+        return any(self._field_differs(f) for f in self.TAB_FIELDS.get(tab, ()))
+
+    def _config_differs(self) -> bool:
+        return any(self._field_differs(f) for fields in self.TAB_FIELDS.values() for f in fields)
+
+    def _dirty_tab_names(self) -> list[str]:
+        return [tab for tab in self.TAB_FIELDS if self._tab_differs(tab)]
+
+    def _mark_dirty(self, field: str, _from_tab: str | None = None) -> None:
+        self._update_tab_labels()
+
+    def _update_tab_labels(self) -> None:
+        """Refresh tab labels, prefixing changed tabs with '● '."""
+        try:
+            tabs = self.query_one("#settings-tabs", Tabs)
+        except Exception:
+            return
+        for tab in tabs.query(Tab):
+            name = tab.label.plain.lstrip("● ").strip()
+            if self._tab_differs(name):
+                tab.label = f"● {name}"
+            else:
+                tab.label = name
+
+    def _push_confirm_discard(self) -> None:
+        tabs = self._dirty_tab_names()
+        summary = ", ".join(tabs) if tabs else "settings"
+        self.app.push_screen(
+            ConfirmScreen(
+                "Unsaved changes",
+                f"You have unsaved changes to: {summary}.",
+            ),
+            self._on_confirm_discard,
+        )
+
+    def _on_confirm_discard(self, choice: str | None) -> None:
+        if choice == "discard":
+            self.dismiss(None)
+        elif choice == "save_close":
+            self._do_save(close=True)

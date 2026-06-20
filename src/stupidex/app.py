@@ -63,7 +63,18 @@ class Stupidex(App):
         self._subagent_ui = SubagentUIManager(self)
         self._current_chain: ChainContainer | None = None
         self._footer_timer: object | None = None
+        self.restart_requested: bool = False
         self._setup_themes()
+
+    def request_restart(self) -> None:
+        """Flag the app for a full process restart on next idle.
+
+        ``main()`` checks ``restart_requested`` after ``app.run()`` returns and
+        re-execs the process via ``os.execv`` so config that only binds at
+        startup (e.g. ``mcp_servers``) is reloaded cleanly.
+        """
+        self.restart_requested = True
+        self.exit()
 
     def _setup_themes(self) -> None:
         registry = get_theme_registry()

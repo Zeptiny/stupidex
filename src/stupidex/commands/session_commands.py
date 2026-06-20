@@ -106,13 +106,17 @@ def _format_model_label(alias: str, model_id: str, metadata: dict) -> str:
     )
 
 
-def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
+def _build_model_picker_items(cfg: Config, mode: str = "chat") -> list[PickerItem]:
     """Build the picker-list for `/model` from configured providers + resolved metadata.
 
     Iterates each configured provider's declared `models` dict (per U1),
     hydrates capability metadata via `resolve_model_metadata` (per U2), and
     builds a `PickerItem` per `(alias, model_id)` pair with the `id` set to
     `f"{alias}/{model_id}"` -- the form `change_model` stores.
+
+    Only models whose resolved `mode` matches the `mode` argument are included,
+    so chat-model pickers (Tiers, default model, `/model`) show only chat
+    models and the embedding-model picker shows only embedding models.
 
     Never raises: malformed provider entries and metadata-resolution failures
     are logged and skipped, keeping the rest of the list intact. The validator
@@ -155,6 +159,8 @@ def _build_model_picker_items(cfg: Config) -> list[PickerItem]:
         for model_id in models:
             try:
                 metadata = resolve_model_metadata(alias, model_id)
+                if metadata.get("mode") != mode:
+                    continue
                 label = _format_model_label(alias, model_id, metadata)
                 items.append(PickerItem(label=label, id=f"{alias}/{model_id}"))
             except Exception:  # noqa: BLE001 -- defensive; resolver never raises by design
@@ -288,10 +294,32 @@ async def execute_command(app: App, cmd: str) -> None:
             cfg = get_config()
 
             async def on_settings_result(result: Config | None):
-                if result is not None:
-                    ConfigManager._instance = result
-                    ConfigManager.save()
-                    app.notify("Settings saved. Restart the application for some changes to take effect.", severity="information")
+                if result is None:
+                    return
+                ConfigManager._instance = result
+                ConfigManager.save()
+                needs_restart = result.mcp_servers != cfg.mcp_servers
+                if needs_restart:
+                    from stupidex.screens.settings import ConfirmScreen
+
+                    async def on_restart_confirm(confirmed: bool | None) -> None:
+                        if confirmed:
+                            app.request_restart()
+                        else:
+                            app.notify(
+                                "Settings saved. Restart for MCP server changes to take effect.",
+                                severity="information",
+                            )
+
+                    app.push_screen(
+                        ConfirmScreen(
+                            "Restart required",
+                            "MCP server configuration changed and requires a restart to take effect.\nRestart now?",
+                        ),
+                        on_restart_confirm,
+                    )
+                else:
+                    app.notify("Settings saved.", severity="information")
 
             app.push_screen(SettingsScreen(cfg), on_settings_result)
 

@@ -1,3 +1,4 @@
+import os
 import sys
 
 from stupidex.app import Stupidex
@@ -17,6 +18,8 @@ def main():
         sys.exit(1)
     app = Stupidex()
     app.run()
+    if app.restart_requested:
+        os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 if __name__ == "__main__":
