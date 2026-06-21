@@ -804,10 +804,21 @@ class TestFormatSubagentAttrs(unittest.TestCase):
         self.assertEqual(out.count('&gt;'), 4)
         self.assertEqual(out.count('&amp;'), 4)
 
-    def test_quote_not_escaped_known_bug_documents_attribute_breakout(self):
+    def test_quote_escaped_to_entities(self):
         out = format_subagent_attrs('a"b', 'n', 't', 's')
-        self.assertIn('a"b', out)
-        self.assertNotIn('&quot;', out)
+        self.assertIn('&quot;', out)
+        self.assertNotIn('a"b', out)
+        self.assertIn('a&quot;b', out)
+
+    def test_all_special_chars_escaped_together(self):
+        evil = '<a>&"'
+        out = format_subagent_attrs(evil, evil, evil, evil)
+        self.assertNotIn('<a>&"', out)
+        self.assertIn('&lt;a&gt;&amp;&quot;', out)
+        self.assertEqual(out.count('&lt;'), 4)
+        self.assertEqual(out.count('&gt;'), 4)
+        self.assertEqual(out.count('&amp;'), 4)
+        self.assertEqual(out.count('&quot;'), 4)
 
     def test_omits_elapsed_when_none(self):
         out = format_subagent_attrs('id1', 'n', 't', 's', elapsed=None)

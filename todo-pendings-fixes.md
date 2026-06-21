@@ -170,7 +170,7 @@
 | P2-46 | agents | agents/manager.py:188 | cancel_all() mutates self.on_spawn — unrelated side effect on a cancel path | kieran-python | 75 | manual | Y |
 | P2-47 | agents | agents/manager.py:279 | record.async_task = None # set below dead assignment plus timing race during on_spawn | kieran-python, maintainability, agent-native | 75/100 | manual | Y |
 | P2-48 | agents | agents/manager.py:191 (alt) | cancel_all and cancel_running duplicate cancel logic — single non-terminal status set diverges silently | kieran-python | 50 | manual | Y |
-| P2-49 | agents | agents/manager.py:63 | format_subagent_attrs escape + elapsed branches untested; security boundary for XML injection **[BLOCKED — testing-gap sweep 2026-06-21: `<`/`&`/`>` escaping covered by TestFormatSubagentAttrs; `"` is NOT escaped by xml.sax.saxutils.escape default — attribute-injection gap, production fix needed]** | testing | 100 | gated_auto | Y |
+| P2-49 | agents | agents/manager.py:63 | format_subagent_attrs escape + elapsed branches untested; security boundary for XML injection **[FIXED — Batch C 2026-06-21: `"` now escaped via `entities={'"': '&quot;'}`]** | testing | 100 | gated_auto | Y |
 | P2-50 | agents | agents/manager.py:101 (alt) | elapsed_seconds property has three branches, none tested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
 | P2-51 | agents | agents/manager.py:263 | Empty/blank content handling in result assignment not pinned by test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-52 | agents | agents/manager.py:188 (alt) | cancel_all clearing on_spawn=None is an unobserved side effect with no test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
@@ -220,9 +220,9 @@
 | P2-86 | llm | llm/client.py:326 (alt) | tool_call_id empty-string collision: provider deltas without id produce duplicate tool_call_ids that strict providers 400 on | adversarial | 75 | manual | Y |
 | P2-87 | llm | llm/client.py:284 | Shared mutable tool_calls list: executor reads tc['id'] before stream finalizes it, producing tool_call_id mismatch on replay | adversarial | 50 | manual | Y |
 | P2-88 | llm | llm/client.py:126 | THINKING replay as assistant content elevates tampered history into a privileged channel | adversarial | 50 | advisory | Y |
-| P2-89 | llm | llm/dynamic_system_prompt.py:22 | Dynamic system prompt cache keys on time but not cwd — stale directory tree after chdir within 5s window | adversarial | 75 | gated_auto | Y |
+| P2-89 | llm | llm/dynamic_system_prompt.py:22 | Dynamic system prompt cache keys on time but not cwd — stale directory tree after chdir within 5s window **[FIXED — Batch C 2026-06-21: cache now keys on (cwd, expiry, tree)]** | adversarial | 75 | gated_auto | Y |
 | P2-90 | llm | llm/client.py:36 | classify_error echoes raw provider exception text into the TUI — may include URLs, request bodies | kieran-python, adversarial | 50/25 | advisory | Y |
-| P2-91 | llm | llm/dynamic_system_prompt.py:32 | Directory tree and cwd injected raw into system prompt — file/path names can break XML framing | security | 75 | gated_auto | Y |
+| P2-91 | llm | llm/dynamic_system_prompt.py:32 | Directory tree and cwd injected raw into system prompt — file/path names can break XML framing **[FIXED — Batch C 2026-06-21: cwd and tree now XML-escaped]** | security | 75 | gated_auto | Y |
 | P2-92 | llm | llm/providers.py:224 | Provider base_url is user-controlled and unvalidated — API key leaked via Authorization header to arbitrary host | security | 50 | manual | Y |
 | P2-93 | llm | llm/static_system_prompt.py:9 | User-supplied system_prompt interpolated raw into <instructions> wrapper without escaping | security, kieran-python | 50 | advisory | Y |
 | P2-94 | llm | llm/client.py:393 | Tool result content is appended to api_messages without any content framing — indirect prompt-injection sink | security | 50 | advisory | Y |
@@ -282,11 +282,11 @@
 |---|---|---|---|---|---|---|---|
 | P2-139 | rag | rag/indexer.py:184 | Test-embedding pre-check consumes an embedding API call/tokens on every index run | correctness | 75 | advisory | Y |
 | P2-140 | rag | rag/store.py:178 | np.load on vectors file does not set allow_pickle=False — malicious pickle RCE primitive **[FIXED — safe_auto sweep 2026-06-21]** | correctness, security | 60 | safe_auto | Y |
-| P2-141 | rag | rag/store.py:325 | upsert_file appends new embeddings in arbitrary order when a file's chunks interleave with others — vector/content mismatch | correctness | 60 | gated_auto | Y |
+| P2-141 | rag | rag/store.py:325 | upsert_file appends new embeddings in arbitrary order when a file's chunks interleave with others — vector/content mismatch **[FIXED — Batch C 2026-06-21: uses `_chunk_ids_for_file` to scope new embeddings]** | correctness | 60 | gated_auto | Y |
 | P2-142 | rag | rag/store.py:143 | DB commit at upsert succeeds before vectors are written, leaving chunk/vector mismatch on _save_vectors failure | correctness | 50 | manual | Y |
-| P2-143 | rag | rag/chunker.py:85 | Chunker end_line off-by-one when chunk boundary aligns exactly with a newline | correctness | 75 | gated_auto | Y |
-| P2-144 | rag | rag/indexer.py:87 | update_file fails to persist new hash after embedding failure, freezing the file out of future re-index | correctness | 65 | gated_auto | Y |
-| P2-145 | rag | rag/indexer.py:156 | Indexering with empty discovered-files result wipes the existing index | correctness | 70 | gated_auto | Y |
+| P2-143 | rag | rag/chunker.py:85 | Chunker end_line off-by-one when chunk boundary aligns exactly with a newline **[FIXED — Batch C 2026-06-21: check `content[end_char - 1]` not `content[end_char]`]** | correctness | 75 | gated_auto | Y |
+| P2-144 | rag | rag/indexer.py:87 | update_file fails to persist new hash after embedding failure, freezing the file out of future re-index **[FALSE-POSITIVE — Batch C 2026-06-21: old hash ≠ new content hash triggers re-index on next `index_project` run]** | correctness | 65 | gated_auto | Y |
+| P2-145 | rag | rag/indexer.py:156 | Indexing with empty discovered-files result wipes the existing index **[FIXED — Batch C 2026-06-21: removed `store.clear()`, now just touches `last_indexed`]** | correctness | 70 | gated_auto | Y |
 | P2-146 | rag | rag/embedder.py:110 | asyncio.sleep retry without backoff in fastembed path; litellm retry doubles wait but ignores actual exception type | correctness | 50 | manual | Y |
 | P2-147 | rag | rag/indexer.py:256 (alt) | Non-destructive upsert should use per-file upsert_file — eliminate the hash-restore band-aid AND the empty-file delete_by_file special-casing | maintainability | 75 | manual | Y |
 | P2-148 | rag | rag/embedder.py:51 | Embedder dispatches on ad-hoc tuple arity (len(ref) == 2 vs 4), discarding then re-reading ref[0] | maintainability, kieran-python | 75 | manual | Y |
@@ -307,7 +307,7 @@
 | P2-163 | rag | rag/store.py:226 | search vector/chunk count mismatch (stale-index truncation) is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-164 | rag | rag/indexer.py:190 | Embedding pre-check unexpected format branch in index_project is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-165 | rag | rag/embedder.py:105 | Litellm ImportError branch in _embed_litellm is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-166 | rag | rag/embedder.py:104 | aembedding returning empty/malformed response.data is untested (would surface as ValueError deep in store) **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-166 | rag | rag/embedder.py:104 | aembedding returning empty/malformed response.data is untested (would surface as ValueError deep in store) **[FIXED — Batch C 2026-06-21: empty response.data now raises EmbeddingError]** | testing | 75 | gated_auto | Y |
 | P2-167 | rag | rag/embedder.py:49 | Embedding batching (BATCH_SIZE=100) never tested with >100 texts **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-168 | rag | rag/indexer.py:392 | _read_and_hash max_file_size branch is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-169 | rag | rag/indexer.py:120 | _indexing re-entrancy guard returns empty IndexResult with no test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
@@ -328,14 +328,14 @@
 | P2-184 | rag | rag/chunker.py:100 | chunk_overlap >= chunk_size makes chunker effectively stall (advances 1 char per iteration) **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 60 | gated_auto | Y |
 | P2-185 | rag | rag/store.py:73 | init_db and _get_conn rebuild DB without clearing stale vectors.npy, leaving inconsistent store | correctness | 50 | manual | Y |
 | P2-186 | rag | rag/store.py:405 (alt) | delete_by_file leaves stale vectors when chunk table is empty after deletion | correctness | 45 | manual | Y |
-| P2-187 | rag | rag/embedder.py:128 | embed_single on empty text raises IndexError (embed returns [] unconditionally) | correctness | 50 | manual | Y |
+| P2-187 | rag | rag/embedder.py:128 | embed_single on empty text raises IndexError (embed returns [] unconditionally) **[FIXED — Batch C 2026-06-21: embed_single now raises EmbeddingError, not IndexError]** | correctness | 50 | manual | Y |
 
 ### screens/
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P2-188 | screens | screens/settings.py:852 | Editing a provider/MCP entry and changing its alias/name leaves the stale old entry behind | correctness, testing | 75/80 | gated_auto | Y |
-| P2-189 | screens | screens/settings.py:902 | Renaming a provider/MCP to an alias that already exists silently overwrites the other entry | correctness | 75 | gated_auto | Y |
+| P2-188 | screens | screens/settings.py:852 | Editing a provider/MCP entry and changing its alias/name leaves the stale old entry behind **[FIXED — duplicate of P1-53, verified in Batch C 2026-06-21]** | correctness, testing | 75/80 | gated_auto | Y |
+| P2-189 | screens | screens/settings.py:902 | Renaming a provider/MCP to an alias that already exists silently overwrites the other entry **[FIXED — duplicate of P1-53, verified in Batch C 2026-06-21]** | correctness | 75 | gated_auto | Y |
 | P2-190 | screens | screens/settings.py:19 | _list_fastembed_models swallows every exception with bare except Exception | kieran-python, agent-native | 75 | manual | Y |
 | P2-191 | screens | screens/settings.py:219 | _add_model_entry wraps query_one(...).focus() in except Exception: pass (should narrow to NoMatches) | kieran-python | 75 | manual | Y |
 | P2-192 | screens | screens/settings.py:267 | _remove_model_entry uses try/except Exception: continue to locate a row | kieran-python | 75 | manual | Y |

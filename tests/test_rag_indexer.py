@@ -717,3 +717,148 @@ async def test_index_project_reentrancy_guard_returns_empty(tmp_path, monkeypatc
     assert r.chunks_created == 0
     assert r.errors == []
     assert r.duration_seconds == 0.0
+
+
+# ---------------------------------------------------------------------------
+# P2-144: update_file hash persistence on embedding failure — investigation.
+# The claim was that early-return on embedding failure (indexer.py:91-93) leaves
+# the file frozen out of future re-index because update_file_hash isn't called.
+# But: if content changed (which is the typical reason to call update_file),
+# the OLD hash in the DB != the NEW file_hash, so the next index_project run
+# sees the mismatch and re-indexes. The following characterization test
+# verifies this expected behavior (FALSE-POSITIVE), not the unfixed bug.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_file_embedding_failure_then_index_project_reindexes(
+    tmp_path, monkeypatch
+):
+    """P2-144 FALSE-POSITIVE characterization: when update_file fails to embed
+    and returns early (skipping update_file_hash), the DB retains the OLD hash,
+    which does NOT match the modified on-disk content, so the next
+    index_project run re-indexes the file (it is not frozen out)."""
+    f = tmp_path / "app.py"
+    f.write_text("def original():\n    return 1\n")
+    embedder = FakeEmbedder()
+    await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    store = RAGStore(str(tmp_path))
+    old_hash = store.get_file_hashes()["app.py"]
+    assert old_hash  # file was indexed with a real hash
+
+    # Modify the file so the on-disk content hash differs from the DB hash.
+    f.write_text("def modified():\n    return 2\n")
+
+    class FailingEmbedder(Embedder):
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "stupidex.rag.indexer.Embedder", lambda model=None: FailingEmbedder(model="x")
+    )
+
+    # update_file will read content, compute new file_hash, then fail at embed
+    # and return early. update_file_hash is NOT called — DB still has old_hash.
+    await update_file(str(f), project_path=str(tmp_path))
+
+    store2 = RAGStore(str(tmp_path))
+    assert store2.get_file_hashes()["app.py"] == old_hash  # hash unchanged
+
+    # Now index_project runs again with a working embedder. Because old_hash !=
+    # hash(modified content), the file IS re-indexed (it is not frozen out).
+    monkeypatch.setattr(
+        "stupidex.rag.indexer.Embedder", lambda model=None: FakeEmbedder()
+    )
+    r = await index_project(project_path=str(tmp_path), embedder=FakeEmbedder())
+    assert r.files_indexed == 1
+    assert r.errors == []
+
+    store3 = RAGStore(str(tmp_path))
+    new_hash = store3.get_file_hashes()["app.py"]
+    assert new_hash != old_hash
+    chunks = [c for c in store3._get_all_chunks() if c["file_path"] == "app.py"]
+    assert chunks
+    assert "def modified" in chunks[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# P2-145: empty-discovery result must NOT wipe an existing index.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_project_empty_discovery_preserves_existing_index(
+    tmp_path, monkeypatch
+):
+    """P2-145: an empty _discover_files result (e.g. paths=["/nonexistent"])
+    should NOT call store.clear() — existing chunks/vectors are preserved, and
+    last_indexed is updated."""
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    (tmp_path / "c.py").write_text("c = 3\n")
+    embedder = FakeEmbedder()
+    await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    store = RAGStore(str(tmp_path))
+    before_chunks = store._get_all_chunks()
+    before_vectors = store._load_vectors()
+    before_hashes = store.get_file_hashes()
+    before_last_indexed = store.status().last_indexed
+    assert len(before_chunks) == 3
+    assert before_vectors is not None
+    assert len(before_vectors) == 3
+
+    import time as _time
+    _time.sleep(0.01)
+
+    # Empty discovery — paths points nowhere valid.
+    r = await index_project(
+        project_path=str(tmp_path),
+        paths=["/nonexistent/path"],
+        embedder=embedder,
+    )
+    assert r.files_scanned == 0
+    assert r.files_indexed == 0
+    assert r.errors == []
+
+    store2 = RAGStore(str(tmp_path))
+    # Existing chunks + vectors + hashes preserved.
+    assert store2._get_all_chunks() == before_chunks
+    assert store2._load_vectors() == before_vectors
+    assert store2.get_file_hashes() == before_hashes
+    # last_indexed bumped forward (touch_last_indexed called, store.clear not).
+    assert store2.status().last_indexed != before_last_indexed
+
+
+@pytest.mark.asyncio
+async def test_index_project_empty_discovery_first_run_no_error(tmp_path):
+    """P2-145 edge: first-ever index_project with empty discovery must not crash
+    (the removal of store.clear() must not throw on an empty index)."""
+    embedder = FakeEmbedder()
+    r = await index_project(
+        project_path=str(tmp_path),
+        paths=["/nonexistent/path"],
+        embedder=embedder,
+    )
+    assert r.files_scanned == 0
+    assert r.files_indexed == 0
+    assert r.errors == []
+    store = RAGStore(str(tmp_path))
+    assert store.status().total_chunks == 0
+
+
+@pytest.mark.asyncio
+async def test_index_project_valid_paths_still_index_normally(tmp_path):
+    """P2-145 regression: valid paths still drive normal indexing after the
+    empty-discovery fix."""
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    embedder = FakeEmbedder()
+    r = await index_project(
+        project_path=str(tmp_path),
+        paths=[str(tmp_path / "a.py"), str(tmp_path / "b.py")],
+        embedder=embedder,
+    )
+    assert r.files_indexed == 2
+    assert r.errors == []

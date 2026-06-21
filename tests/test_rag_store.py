@@ -299,6 +299,122 @@ class TestUpsertFileVectorRebuild(unittest.TestCase):
         self.assertEqual(len(vectors), 1)
         self.assertEqual(list(vectors[0]), v2)
 
+    def test_upsert_file_single_file_vectors_aligned(self):
+        """P2-141: single file, 3 chunks -> vectors aligned chunk_id[i] <-> emb[i]."""
+        chunks = [
+            Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1),
+            Chunk(file_path="f1.py", content="a=2", start_line=2, end_line=2),
+            Chunk(file_path="f1.py", content="a=3", start_line=3, end_line=3),
+        ]
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+        v3 = [0.0, 0.0, 1.0]
+
+        self.store.upsert_file("f1.py", chunks, [v1, v2, v3])
+
+        ids = self.store._chunk_ids_for_file("f1.py")
+        self.assertEqual(len(ids), 3)
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 3)
+        for i, expected in enumerate([v1, v2, v3]):
+            self.assertEqual(list(vectors[i]), expected)
+
+    def test_upsert_file_second_file_preserves_first_vectors(self):
+        """P2-141: 2 files indexed; upsert_file for f1 preserves f2 vectors and vice-versa."""
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f2.py", content="b=1", start_line=1, end_line=1)
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+        self.store.upsert_file("f1.py", [c1], [v1])
+        self.store.upsert_file("f2.py", [c2], [v2])
+
+        # Re-upsert f1 with a new chunk — f2's vector must survive and stay aligned.
+        c1_new = Chunk(file_path="f1.py", content="a=NEW", start_line=1, end_line=1)
+        v1_new = [0.5, 0.5, 0.5]
+        self.store.upsert_file("f1.py", [c1_new], [v1_new])
+
+        all_chunks = self.store._get_all_chunks()
+        ids = [c["chunk_id"] for c in all_chunks]
+        file_for_id = {c["chunk_id"]: c["file_path"] for c in all_chunks}
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), len(ids))
+        for cid, vec in zip(ids, vectors, strict=True):
+            if file_for_id[cid] == "f2.py":
+                self.assertEqual(list(vec), v2)
+            elif file_for_id[cid] == "f1.py":
+                self.assertEqual(list(vec), v1_new)
+
+    def test_upsert_file_stale_vectors_aligned_to_file_chunks_only(self):
+        """P2-141: stale vectors.npy (wrong length) must not mis-assign f1's
+        embeddings to f2's chunks."""
+
+        # Pre-populate two files with non-stale vectors.
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f2.py", content="b=1", start_line=1, end_line=1)
+        self.store.upsert_file("f1.py", [c1], [[1.0, 0.0, 0.0]])
+        self.store.upsert_file("f2.py", [c2], [[0.0, 1.0, 0.0]])
+
+        # Wipe vectors.npy to simulate a stale/missing index.
+        self.store.vectors_file.unlink()
+        self.assertFalse(self.store.vectors_file.exists())
+
+        # Re-upsert f1 with 2 new chunks. Without the file-scoped fix the
+        # rebuild would assign f1's embeddings by position to whichever chunk_id
+        # happens to lack an old vector — including f2's chunk.
+        c1a = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c1b = Chunk(file_path="f1.py", content="a=2", start_line=2, end_line=2)
+        v_a = [1.0, 0.0, 0.0]
+        v_b = [0.0, 1.0, 0.0]
+        self.store.upsert_file("f1.py", [c1a, c1b], [v_a, v_b])
+
+        all_chunks = self.store._get_all_chunks()
+        ids = [c["chunk_id"] for c in all_chunks]
+        file_for_id = {c["chunk_id"]: c["file_path"] for c in all_chunks}
+        vectors = self._vectors()
+        # f1's two new embeddings land in order on f1's two chunks.
+        # f2's chunk has no old vector and wasn't in this upsert's scope, so it
+        # is skipped — only 2 vectors exist (f1's two), not 3.
+        f1_ids = [cid for cid in ids if file_for_id[cid] == "f1.py"]
+        self.assertEqual(len(f1_ids), 2)
+        self.assertEqual(len(vectors), 2)
+        self.assertEqual(list(vectors[0]), v_a)
+        self.assertEqual(list(vectors[1]), v_b)
+        # f2's chunk is never given an embedding stolen from f1 — vector list
+        # only contains f1's new embeddings, preserving chunk_id<->vector alignment.
+
+    def test_upsert_file_zero_chunks_preserves_other_vectors(self):
+        """P2-141 edge: file with 0 chunks must not append stray vectors."""
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        v1 = [1.0, 0.0, 0.0]
+        self.store.upsert_file("f1.py", [c1], [v1])
+
+        self.store.upsert_file("f2_empty.py", [], [])
+
+        self.assertEqual(self.store.status().total_chunks, 1)
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 1)
+        self.assertEqual(list(vectors[0]), v1)
+
+    def test_upsert_file_sequential_two_files_correct_alignment(self):
+        """P2-141 integration: sequential upsert_file for 2 files leaves both
+        vectors correctly aligned with their chunk_ids."""
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f2.py", content="b=2", start_line=1, end_line=1)
+        v1 = [1.0, 1.0, 0.0]
+        v2 = [2.0, 2.0, 0.0]
+
+        self.store.upsert_file("f1.py", [c1], [v1])
+        self.store.upsert_file("f2.py", [c2], [v2])
+
+        all_chunks = self.store._get_all_chunks()
+        ids = [c["chunk_id"] for c in all_chunks]
+        file_for_id = {c["chunk_id"]: c["file_path"] for c in all_chunks}
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 2)
+        for i, cid in enumerate(ids):
+            expected = v1 if file_for_id[cid] == "f1.py" else v2
+            self.assertEqual(list(vectors[i]), expected)
+
 
 # ---------------------------------------------------------------------------
 # Batch vector-state API

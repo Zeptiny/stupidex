@@ -238,18 +238,36 @@ class TestEmbedLitellmErrorPaths(EmbedderTestCase):
         self.assertIn("litellm is required for embeddings", str(ctx.exception))
 
     def test_litellm_empty_response_data_returns_empty_list(self):
-        """P2-166 (characterization): `response.data == []` -> _embed_litellm
-        returns [] silently (no ValueError). Pinned because this swallows a
-        provider error; flagged as a behavioral gap."""
+        """P2-166 (fixed): `response.data == []` -> _embed_litellm raises
+        EmbeddingError immediately (hard failure, not retried, not silent [])."""
+        response = MagicMock()
+        response.data = []
+        e = Embedder("work-openai/text-embedding-3-small")
+        with (
+            patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=self._FAKE_REF),
+            patch("litellm.aembedding", new_callable=AsyncMock, return_value=response) as mock_ae,
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            self.assertRaises(EmbeddingError) as ctx,
+        ):
+            asyncio.run(e.embed(["hi"]))
+        self.assertIn("empty response.data", str(ctx.exception))
+        self.assertIn("text-embedding-3-small", str(ctx.exception))
+        # Hard failure: not retried.
+        self.assertEqual(mock_ae.await_count, 1)
+        mock_sleep.assert_not_awaited()
+
+    def test_embed_empty_response_raises_not_silent(self):
+        """P2-166 (fixed): embed(["text"]) with provider returning empty
+        response.data raises EmbeddingError rather than returning []."""
         response = MagicMock()
         response.data = []
         e = Embedder("work-openai/text-embedding-3-small")
         with (
             patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=self._FAKE_REF),
             patch("litellm.aembedding", new_callable=AsyncMock, return_value=response),
+            self.assertRaises(EmbeddingError),
         ):
-            result = asyncio.run(e.embed(["hi"]))
-        self.assertEqual(result, [])
+            asyncio.run(e.embed(["text"]))
 
     def test_litellm_malformed_response_data_raises_embedding_error(self):
         """P2-166: `response.data` items missing the `embedding` key surface
@@ -337,17 +355,17 @@ class TestEmbedSingle(EmbedderTestCase):
         self.assertEqual(vec, [0.0, 0.0, 0.0, 0.0])
 
     def test_empty_provider_raises_indexerror(self):
-        """Characterization (P2-187 batch C): when embed() returns [], embed_single
-        raises IndexError on `results[0]`. Pinned to surface regressions; this is a
-        gap — the empty-provider error is not wrapped as EmbeddingError."""
+        """Fixed (P2-187): when embed() returns [], embed_single raises
+        EmbeddingError (not bare IndexError)."""
 
         class EmptyEmbedder(Embedder):
             async def embed(self, texts: list[str]) -> list[list[float]]:
                 return []
 
         e = EmptyEmbedder(model="fake")
-        with self.assertRaises(IndexError):
+        with self.assertRaises(EmbeddingError) as ctx:
             asyncio.run(e.embed_single("anything"))
+        self.assertIn("no vectors", str(ctx.exception))
 
 
 if __name__ == "__main__":

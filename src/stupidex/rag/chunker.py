@@ -87,7 +87,7 @@ def chunk_file(
 
         chunk_text = content[char_pos:end_char]
         start_line = _line_at_char(lines, char_pos) + 1
-        end_char_for_line = end_char - 1 if end_char < total_chars and content[end_char] == '\n' else end_char
+        end_char_for_line = end_char - 1 if content[end_char - 1] == '\n' else end_char
         end_line = _line_at_char(lines, end_char_for_line) + 1
 
         chunks.append(

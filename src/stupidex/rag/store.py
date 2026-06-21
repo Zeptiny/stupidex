@@ -403,16 +403,20 @@ class RAGStore:
         finally:
             conn.close()
 
-        # Rebuild vectors: keep old vectors for surviving chunks, append new ones.
+        # Rebuild vectors: keep old vectors for surviving chunks, append new
+        # embeddings for this file's new chunks only (scope by _chunk_ids_for_file
+        # so a stale vectors.npy can't mis-assign embeddings to other files).
+        file_new_id_set = set(self._chunk_ids_for_file(file_path))
         new_ids = self._get_ordered_chunk_ids()
         new_vectors: list[list[float]] = []
-        new_chunk_idx = 0
+        embed_idx = 0
         for cid in new_ids:
             if cid in id_to_vec:
                 new_vectors.append(id_to_vec[cid])
-            elif new_chunk_idx < len(embeddings):
-                new_vectors.append(embeddings[new_chunk_idx])
-                new_chunk_idx += 1
+            elif cid in file_new_id_set and embed_idx < len(embeddings):
+                new_vectors.append(embeddings[embed_idx])
+                embed_idx += 1
+        # else: chunk for another file with no old vector — skip (stale rebuild).
 
         self._save_vectors(new_vectors)
 

@@ -101,12 +101,18 @@ class Embedder:
                     base_url=base_url or None,
                     api_key=api_key,
                 )
+                if not response.data:
+                    raise EmbeddingError(
+                        f"Embedding provider returned empty response.data for model: {model}"
+                    )
                 return [item["embedding"] for item in response.data]
             except ImportError as err:
                 raise EmbeddingError(
                     "litellm is required for embeddings. "
                     "Install it with: pip install litellm"
                 ) from err
+            except EmbeddingError:
+                raise
             except Exception as e:
                 last_error = e
                 if attempt < MAX_RETRIES - 1:
@@ -127,4 +133,6 @@ class Embedder:
 
     async def embed_single(self, text: str) -> list[float]:
         results = await self.embed([text])
+        if not results:
+            raise EmbeddingError("Embedding returned no vectors for input text")
         return results[0]

@@ -68,11 +68,15 @@ TERMINAL: set[SubagentState] = {
 }
 
 
+def _attr_escape(s: str) -> str:
+    return escape(s, entities={'"': '&quot;'})
+
+
 def format_subagent_attrs(
     id: str, name: str, type: str, state: str, elapsed: float | None = None
 ) -> str:
     """Build XML attribute string for subagent elements."""
-    e = escape
+    e = _attr_escape
     attrs = f'id="{e(id)}" name="{e(name)}" type="{e(type)}" state="{e(state)}"'
     if elapsed is not None:
         attrs += f' elapsed="{elapsed}s"'

@@ -157,6 +157,12 @@ def record_streamed_message(history: list[Message], msg: Message, state: StreamH
         state.content = None
         return True
 
+    if msg.role == MessageRole.SYSTEM:
+        history.append(msg)
+        state.thinking = None
+        state.content = None
+        return True
+
     if msg.type == MessageType.TEXT:
         appended = False
         if msg.content:

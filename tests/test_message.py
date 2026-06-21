@@ -336,10 +336,10 @@ class TestRecordStreamedMessageSystemAndCatchAll(unittest.TestCase):
         sys_msg = Message(MessageRole.SYSTEM, "you are helpful", MessageType.TEXT)
         appended = record_streamed_message(history, sys_msg, state)
         self.assertTrue(appended)
-        self.assertIs(state.content, sys_msg)
+        self.assertIsNone(state.content)
         self.assertEqual(history, [sys_msg])
 
-    def test_system_text_with_prior_assistant_mutates_existing_snapshot(self):
+    def test_system_text_appends_distinct_entry_without_mutating_prior(self):
         history: list[Message] = []
         state = StreamHistoryState()
         prior = Message(MessageRole.ASSISTANT, "partial", MessageType.TEXT)
@@ -349,13 +349,12 @@ class TestRecordStreamedMessageSystemAndCatchAll(unittest.TestCase):
         sys_msg = Message(MessageRole.SYSTEM, "sys", MessageType.TEXT)
         appended = record_streamed_message(history, sys_msg, state)
 
-        # Pins current behavior: SYSTEM+TEXT does not append a new entry —
-        # it overwrites the existing assistant snapshot's content. Pinned so
-        # any future fix is intentional rather than silent drift.
-        self.assertFalse(appended)
-        self.assertEqual(len(history), 1)
+        self.assertTrue(appended)
+        self.assertEqual(len(history), 2)
         self.assertEqual(history[0].role, MessageRole.ASSISTANT)
-        self.assertEqual(history[0].content, "sys")
+        self.assertEqual(history[0].content, "partial")
+        self.assertEqual(history[1].role, MessageRole.SYSTEM)
+        self.assertEqual(history[1].content, "sys")
 
     def test_system_non_text_type_hits_catch_all_and_appends(self):
         history: list[Message] = []
@@ -370,6 +369,42 @@ class TestRecordStreamedMessageSystemAndCatchAll(unittest.TestCase):
         self.assertIn(sys_err, history)
         self.assertIsNone(state.thinking)
         self.assertIsNone(state.content)
+
+    def test_system_text_with_no_prior_state(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+        sys_msg = Message(MessageRole.SYSTEM, "sys", MessageType.TEXT)
+        appended = record_streamed_message(history, sys_msg, state)
+        self.assertTrue(appended)
+        self.assertEqual(len(history), 1)
+        self.assertIsNone(state.content)
+        self.assertIsNone(state.thinking)
+
+    def test_stream_with_system_interleaved(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+
+        user = Message(MessageRole.USER, "u1", MessageType.TEXT)
+        record_streamed_message(history, user, state)
+
+        asst1 = Message(MessageRole.ASSISTANT, "a1", MessageType.TEXT)
+        record_streamed_message(history, asst1, state)
+
+        sys1 = Message(MessageRole.SYSTEM, "s1", MessageType.TEXT)
+        record_streamed_message(history, sys1, state)
+
+        asst2 = Message(MessageRole.ASSISTANT, "a2", MessageType.TEXT)
+        record_streamed_message(history, asst2, state)
+
+        self.assertEqual(len(history), 4)
+        self.assertEqual(history[0], user)
+        self.assertEqual(history[0].content, "u1")
+        self.assertEqual(history[1], asst1)
+        self.assertEqual(history[1].content, "a1")
+        self.assertEqual(history[2], sys1)
+        self.assertEqual(history[2].content, "s1")
+        self.assertEqual(history[3], asst2)
+        self.assertEqual(history[3].content, "a2")
 
     def test_catch_all_appends_unknown_combination_without_raising(self):
         history: list[Message] = []

@@ -145,7 +145,15 @@ async def test_incremental_deleted_file(tmp_path):
 
 @pytest.mark.asyncio
 async def test_index_after_all_files_removed(tmp_path):
-    """Emptying the project (no indexable files) clears the index."""
+    """P2-145: emptying the project (no indexable files) preserves the index.
+
+    Previously, empty discovery called ``store.clear()`` which wiped the
+    entire index. Now it just touches ``last_indexed`` and returns — the
+    index is preserved. Stale chunks for deleted files are cleaned up by
+    the normal deletion-cleanup path when discovery finds at least one
+    file (see ``test_index_project_empty_discovery_preserves_existing_index``
+    in test_rag_indexer.py for the misconfigured-paths variant).
+    """
     _write(tmp_path / "a.py", "a = 1\n")
     _write(tmp_path / "b.py", "b = 2\n")
 
@@ -163,10 +171,11 @@ async def test_index_after_all_files_removed(tmp_path):
     assert r.files_scanned == 0
     assert r.errors == []
 
+    # P2-145: empty discovery no longer wipes the index.
     status = store.status()
-    assert status.total_chunks == 0
-    assert status.total_files == 0
-    assert _vector_count(store) == 0
+    assert status.total_chunks >= 2
+    assert status.total_files >= 2
+    assert _vector_count(store) >= 2
 
 
 @pytest.mark.asyncio

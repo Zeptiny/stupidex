@@ -116,3 +116,83 @@ def test_chunker_custom_size():
     code = "line\n" * 100
     chunks = chunk_file("test.py", code, chunk_size=50, chunk_overlap=10)
     assert len(chunks) > 1
+
+
+# ---------------------------------------------------------------------------
+# P2-143: end_line correctness when chunk boundary aligns with a newline.
+# Investigation tests written before the fix to confirm the bug. Each asserts
+# the *correct* (post-fix) line numbers — they all fail against the original
+# `content[end_char] == '\n'` adjustment.
+# ---------------------------------------------------------------------------
+
+
+def test_chunker_end_line_chunk_ends_with_newline():
+    """P2-143: chunk_text that ends with a trailing '\n' must report end_line
+    as the line of the trailing newline (not the next line)."""
+    # content = "abc\ndef\nghi"; chunk_size=4, chunk_overlap=1
+    # first chunk = content[0:4] = "abc\n" -> line 1 only.
+    chunks = chunk_file("t.py", "abc\ndef\nghi", chunk_size=4, chunk_overlap=1)
+    assert chunks[0].content == "abc\n"
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 1
+
+
+def test_chunker_end_line_chunk_includes_two_newlines():
+    """P2-143: chunk spanning two full lines (each ending with '\n') must
+    report end_line as the second line, not the line after."""
+    # content = "abc\ndef\nghi"; chunk_size=8, chunk_overlap=1
+    # first chunk = content[0:8] = "abc\ndef\n" -> lines 1-2.
+    chunks = chunk_file("t.py", "abc\ndef\nghi", chunk_size=8, chunk_overlap=1)
+    assert chunks[0].content == "abc\ndef\n"
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 2
+
+
+def test_chunker_end_line_chunk_ends_just_before_newline():
+    """P2-143: chunk that ends exactly at the char before '\n' (last content
+    char is non-newline) — end_line is the line that char is on."""
+    # content = "abc\ndef\nghi"; chunk_size=3, chunk_overlap=1
+    # first chunk = content[0:3] = "abc" -> line 1.
+    chunks = chunk_file("t.py", "abc\ndef\nghi", chunk_size=3, chunk_overlap=1)
+    assert chunks[0].content == "abc"
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 1
+
+
+def test_chunker_end_line_chunk_spans_newline_mid_chunk():
+    """P2-143: chunk that contains a '\n' in the middle but last char is on a
+    later line — end_line is the line of the last char."""
+    # content = "abc\ndef\nghi"; chunk_size=3, chunk_overlap=1
+    # second chunk = content[2:5] = "c\nd" -> spans lines 1-2.
+    chunks = chunk_file("t.py", "abc\ndef\nghi", chunk_size=3, chunk_overlap=1)
+    assert chunks[1].content == "c\nd"
+    assert chunks[1].start_line == 1
+    assert chunks[1].end_line == 2
+
+
+def test_chunker_end_line_no_trailing_newline_in_file():
+    """P2-143: file without a trailing newline — last chunk end_line is the
+    last line of the file."""
+    content = "line one\nline two\nline three"
+    chunks = chunk_file("t.py", content, chunk_size=100, chunk_overlap=10)
+    assert len(chunks) == 1
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 3
+
+
+def test_chunker_end_line_single_line_short_file():
+    """Edge: file shorter than chunk_size; start_line=1, end_line=1."""
+    chunks = chunk_file("t.py", "x = 1\n")
+    assert len(chunks) == 1
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 1
+
+
+def test_chunker_end_line_empty_content():
+    """Edge: empty content returns []."""
+    assert chunk_file("t.py", "") == []
+
+
+def test_chunker_end_line_binary_content():
+    """Edge: binary content returns []."""
+    assert chunk_file("t.py", "abc\x00def") == []

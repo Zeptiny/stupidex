@@ -157,3 +157,44 @@ async def test_subagent_name_with_xml_chars_escaped():
     c = msg.content
     assert 'name="a&amp;b"' in c
     assert "a&b\"" not in c
+
+
+@pytest.mark.asyncio
+async def test_cache_miss_after_chdir_within_ttl_regenerates_tree():
+    patches = _patch_deps()
+    with (
+        patches["get_config"],
+        patches["directory_tree"] as dt_patch,
+        patches["get_subagent_manager"],
+        patches["get_todo_store"],
+        patch("stupidex.llm.dynamic_system_prompt.os.getcwd", side_effect=["/a", "/b"]),
+    ):
+        await dsp.build_dynamic_system_prompt()
+        await dsp.build_dynamic_system_prompt()
+    assert dt_patch.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cwd_with_lt_escaped():
+    patches = _patch_deps()
+    with (
+        patches["get_config"],
+        patches["directory_tree"],
+        patches["get_subagent_manager"],
+        patches["get_todo_store"],
+        patch("stupidex.llm.dynamic_system_prompt.os.getcwd", return_value="/tmp/a<b>c"),
+    ):
+        msg = await dsp.build_dynamic_system_prompt()
+    c = msg.content
+    assert "/tmp/a&lt;b&gt;c" in c
+    assert "a<b>c" not in c
+
+
+@pytest.mark.asyncio
+async def test_tree_with_amp_escaped():
+    patches = _patch_deps(tree="a&b.py")
+    with patches["get_config"], patches["directory_tree"], patches["get_subagent_manager"], patches["get_todo_store"]:
+        msg = await dsp.build_dynamic_system_prompt()
+    c = msg.content
+    assert "a&amp;b.py" in c
+    assert "a&b.py" not in c
