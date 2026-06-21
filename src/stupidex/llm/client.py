@@ -1,9 +1,11 @@
 import asyncio
+import html
 import json
 import logging
 import os
 import random
 import re
+import shutil
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -84,6 +86,29 @@ def _raise_first_task_exception(results: tuple[Any, ...]) -> None:
             raise r
 
 
+def _is_transient_error(exc: Exception) -> bool:
+    """Check if an exception is a transient provider error worth retrying."""
+    transient_types = (
+        litellm.RateLimitError,
+        litellm.Timeout,
+        litellm.APIConnectionError,
+        litellm.InternalServerError,
+        litellm.ServiceUnavailableError,
+        litellm.BadGatewayError,
+    )
+    if isinstance(exc, transient_types):
+        return True
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code if exc.response is not None else None
+        return status in (408, 429, 500, 502, 503, 504)
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status in (408, 429, 500, 502, 503, 504)
+    return False
+
+
 def _validate_tool_args(tool: Tool, args: dict) -> str | None:
     """Return error message if args are invalid, None if ok."""
     known = set(tool.parameters.properties.keys())
@@ -106,6 +131,15 @@ def _tool_output_slug(tool_name: str, tool_call_id: str) -> str:
 
 def _tool_output_cache_dir(session_id: str) -> Path:
     return HOME_CONFIG_DIR / "cache" / "tool-output" / session_id
+
+
+def cleanup_tool_output_cache(session_id: str) -> None:
+    """Remove the tool-output cache directory for a session."""
+    cache_dir = _tool_output_cache_dir(session_id)
+    try:
+        shutil.rmtree(cache_dir, ignore_errors=True)
+    except OSError:
+        log.debug("Failed to clean tool-output cache for session %s", session_id, exc_info=True)
 
 
 def _maybe_offload_tool_output(
@@ -163,10 +197,11 @@ def _maybe_offload_tool_output(
             f"{truncated}\n</{tool_name}_result>"
         )
 
+    escaped_path = html.escape(str(path))
     return (
-        f"<{tool_name}_result length={len(content)} file=\"{path}\">\n"
+        f"<{tool_name}_result length={len(content)} file=\"{escaped_path}\">\n"
         f"<warning>Output exceeded {_TOOL_OUTPUT_INLINE_THRESHOLD} characters and "
-        f"was written to {path}. Use read (with offset/limit) or grep to inspect "
+        f"was written to {escaped_path}. Use read (with offset/limit) or grep to inspect "
         f"it.</warning>\n</{tool_name}_result>"
     )
 
@@ -432,6 +467,14 @@ async def _stream_task(
         thinking_dirty: bool = False
         prev_index: int | None = None
         assistant_api_msg: dict[str, Any] | None = None
+        # The anchored assistant message's tool_calls list. None until
+        # commit_assistant_with_tool_calls snapshots it; afterwards, late-
+        # arriving parallel tool_calls (index >= snapshot length) that become
+        # well-formed are appended here so the persisted assistant message and
+        # the anchored api_messages entry both see them (shared list ref),
+        # without mutating the raw `tool_calls` working buffer.
+        committed_tool_calls: list[dict] | None = None
+        committed_indices: set[int] = set()
 
         async def flush_thinking() -> None:
             nonlocal thinking_dirty, last_thinking_yield
@@ -458,30 +501,43 @@ async def _stream_task(
 
             Called at most once per stream: at the first mid-stream index
             transition (multi-tool) or at end-of-stream (single tool).
-            Subsequent transitions re-use the same anchored assistant entry;
-            the live `tool_calls` list continues to grow as more deltas
-            arrive and the persisted history's reference sees those
-            additions because we share the list, not snapshot it.
+            Subsequent transitions re-use the same anchored assistant entry.
 
             Tool-call entries lacking an `id` or `function.name` (placeholders
-            that never received their identifying delta) are dropped before
-            anchoring so strict providers don't 400 on an empty id/name. If
-            none survive the filter, an empty-assistant (content-only, no
-            tool_calls) message is anchored instead. The live `tool_calls`
-            list is filtered in place so the reference shared with the
-            anchored assistant dict/Message keeps growing as later deltas
-            append well-formed entries.
+            that never received their identifying delta) are filtered out of
+            a separate `committed_tool_calls` list before anchoring so strict
+            providers don't 400 on an empty id/name. If none survive the
+            filter, an empty-assistant (content-only, no tool_calls) message
+            is anchored instead. The live `tool_calls` list is NOT mutated:
+            a fresh `committed_tool_calls` snapshot is used for the anchored
+            assistant dict/Message so the shared list referenced elsewhere
+            (and grown by later deltas) is untouched.
+
+            The snapshot anchored here captures only the tool_calls that are
+            well-formed at commit time. Because the commit fires at the first
+            index transition (e.g. delta for index 1 arriving while index 0 is
+            running), later parallel tool_calls (index 2+) have not arrived
+            yet. To preserve the persistence guarantee for those, the delta
+            loop appends each newly well-formed tool_call to
+            `committed_tool_calls` (the anchored message's shared list) after
+            commit fires; see the append block in the delta loop. The
+            `committed_indices` set dedupes against entries already in the
+            snapshot so the filter + append path never double-adds.
             """
-            nonlocal assistant_api_msg
-            tool_calls[:] = [
+            nonlocal assistant_api_msg, committed_tool_calls, committed_indices
+            committed_tool_calls = [
                 tc for tc in tool_calls
                 if tc.get("id") and tc["function"].get("name")
             ]
-            if tool_calls:
+            committed_indices = {
+                i for i, tc in enumerate(tool_calls)
+                if tc.get("id") and tc["function"].get("name")
+            }
+            if committed_tool_calls:
                 assistant_api_msg = {
                     "role": "assistant",
                     "content": content or None,
-                    "tool_calls": tool_calls,
+                    "tool_calls": committed_tool_calls,
                 }
                 api_messages.append(assistant_api_msg)
                 assistant_appended.set()
@@ -490,7 +546,7 @@ async def _stream_task(
                     role=MessageRole.ASSISTANT,
                     content=content,
                     type=MessageType.TEXT,
-                    tool_calls=tool_calls,
+                    tool_calls=committed_tool_calls,
                 ))
             else:
                 assistant_api_msg = {"role": "assistant", "content": content or None}
@@ -594,6 +650,26 @@ async def _stream_task(
                         await maybe_enqueue(prev_index)
                     prev_index = tc_delta.index
 
+                    # Late-arriving parallel tool_calls (index >= snapshot
+                    # length at commit time) become well-formed only after the
+                    # commit already fired. Append them to the anchored
+                    # assistant message's `committed_tool_calls` list (shared
+                    # reference with the anchored api_messages dict and the
+                    # emitted Message) so they land on disk and pair with their
+                    # TOOL_RESULT on next-turn replay. The raw `tool_calls`
+                    # working buffer is NOT used as the anchor. The
+                    # `committed_indices` guard prevents re-adding entries
+                    # already captured by the commit-time snapshot (e.g. the
+                    # transition index that triggered the commit).
+                    if (
+                        committed_tool_calls is not None
+                        and tc.get("id")
+                        and tc["function"].get("name")
+                        and tc_delta.index not in committed_indices
+                    ):
+                        committed_tool_calls.append(tc)
+                        committed_indices.add(tc_delta.index)
+
             if hasattr(chunk, "usage") and chunk.usage:
                 usage = Usage(
                     prompt_tokens=chunk.usage.prompt_tokens,
@@ -630,11 +706,13 @@ async def _executor_task(
             if tc is None:
                 break
             result_msg = await _execute_tool(tc, filtered_tools)
+            trimmed = await asyncio.to_thread(
+                _maybe_offload_tool_output,
+                tc["function"]["name"], result_msg.content, tc["id"],
+            )
+            result_msg.content = trimmed
             await msg_q.put(result_msg)
             await assistant_appended.wait()
-            trimmed = _maybe_offload_tool_output(
-                tc["function"]["name"], result_msg.content, tc["id"]
-            )
             api_messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
@@ -686,15 +764,44 @@ async def stream_response(
     while True:
         attempt = 0
         while True:
-            response = await litellm.acompletion(
-                model=litellm_model,
-                messages=api_messages,
-                tools=tools_list,
-                base_url=base_url,
-                api_key=api_key,
-                stream=True,
-                stream_options={"include_usage": True},
-            )
+            snapshot_len = len(api_messages)
+            delivered_any = False
+
+            try:
+                response = await asyncio.wait_for(
+                    litellm.acompletion(
+                        model=litellm_model,
+                        messages=api_messages,
+                        tools=tools_list,
+                        base_url=base_url,
+                        api_key=api_key,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                    ),
+                    timeout=idle_timeout,
+                )
+            except TimeoutError:
+                if attempt < retries:
+                    del api_messages[snapshot_len:]
+                    log.warning(
+                        "LLM connect timed out after >%.1fs; retry %d/%d",
+                        idle_timeout, attempt + 1, retries,
+                    )
+                    await _backoff_sleep(attempt)
+                    attempt += 1
+                    continue
+                raise
+            except Exception as exc:
+                if attempt < retries and _is_transient_error(exc):
+                    del api_messages[snapshot_len:]
+                    log.warning(
+                        "Transient provider error: %s; retry %d/%d",
+                        exc, attempt + 1, retries,
+                    )
+                    await _backoff_sleep(attempt)
+                    attempt += 1
+                    continue
+                raise
 
             msg_q: asyncio.Queue[Message | None] = asyncio.Queue(maxsize=1)
             ready_q: asyncio.Queue[dict | None] = asyncio.Queue()
@@ -715,6 +822,7 @@ async def stream_response(
                         msg = await msg_q.get()
                         if msg is None:
                             break
+                        delivered_any = True
                         yield msg
                 except asyncio.CancelledError:
                     stream_t.cancel()
@@ -732,10 +840,22 @@ async def stream_response(
                     _raise_first_task_exception(
                         await asyncio.gather(stream_t, executor_t, return_exceptions=True))
             except _StreamIdleTimeoutError:
-                if attempt < retries:
+                if attempt < retries and not delivered_any:
+                    del api_messages[snapshot_len:]
                     log.warning(
                         "LLM stream idle for >%.1fs; retry %d/%d",
                         idle_timeout, attempt + 1, retries,
+                    )
+                    await _backoff_sleep(attempt)
+                    attempt += 1
+                    continue
+                raise
+            except Exception as exc:
+                if attempt < retries and not delivered_any and _is_transient_error(exc):
+                    del api_messages[snapshot_len:]
+                    log.warning(
+                        "Transient provider error: %s; retry %d/%d",
+                        exc, attempt + 1, retries,
                     )
                     await _backoff_sleep(attempt)
                     attempt += 1

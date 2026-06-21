@@ -546,3 +546,98 @@ class TestForceReindexDeletedFiles:
         assert r.files_scanned == 0
         assert r.files_indexed == 0
         assert r.errors == []
+
+
+# ---------------------------------------------------------------------------
+# Batch flush performance: _save_vectors called once per index_project run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_vectors_called_once_for_three_files(tmp_path, monkeypatch):
+    """Indexing 3 files should flush vectors.npy exactly once (regression)."""
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    (tmp_path / "c.py").write_text("c = 3\n")
+
+    embedder = FakeEmbedder()
+
+    calls: list[int] = []
+
+    real_store = RAGStore
+
+    def make_store(project_path: str):
+        s = real_store(project_path)
+        real_save = s._save_vectors
+
+        def counting_save(embeddings):
+            calls.append(1)
+            return real_save(embeddings)
+
+        s._save_vectors = counting_save
+        return s
+
+    monkeypatch.setattr("stupidex.rag.indexer.RAGStore", make_store)
+
+    r = await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    assert r.files_indexed == 3
+    assert r.errors == []
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_vectors_called_once_incremental_changed_and_deleted(
+    tmp_path, monkeypatch
+):
+    """2 changed + 1 deleted → _save_vectors called exactly once and vectors correct."""
+    (tmp_path / "keep.py").write_text("k = 1\n")
+    (tmp_path / "mod1.py").write_text("m1 = 1\n")
+    (tmp_path / "mod2.py").write_text("m2 = 1\n")
+    (tmp_path / "gone.py").write_text("g = 1\n")
+
+    embedder = FakeEmbedder()
+    await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    # Modify two files, delete one; keep.py unchanged
+    (tmp_path / "mod1.py").write_text("m1 = 999\n")
+    (tmp_path / "mod2.py").write_text("m2 = 888\n")
+    (tmp_path / "gone.py").unlink()
+
+    calls: list[int] = []
+
+    real_store = RAGStore
+
+    def make_store(project_path: str):
+        s = real_store(project_path)
+        real_save = s._save_vectors
+
+        def counting_save(embeddings):
+            calls.append(1)
+            return real_save(embeddings)
+
+        s._save_vectors = counting_save
+        return s
+
+    monkeypatch.setattr("stupidex.rag.indexer.RAGStore", make_store)
+
+    r = await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    assert r.files_indexed == 2  # mod1, mod2
+    assert r.files_deleted == 1  # gone
+    assert r.errors == []
+    assert len(calls) == 1
+
+    # Vectors on disk align with surviving chunks
+    store = real_store(str(tmp_path))
+    vectors = store._load_vectors()
+    chunk_ids = store._get_ordered_chunk_ids()
+    assert vectors is not None
+    assert len(vectors) == len(chunk_ids)
+
+    file_paths = {c["file_path"] for c in store._get_all_chunks()}
+    assert file_paths == {"keep.py", "mod1.py", "mod2.py"}
+
+    # Search still works
+    results = store.search(vectors[0], top_k=10)
+    assert len(results) == len(chunk_ids)

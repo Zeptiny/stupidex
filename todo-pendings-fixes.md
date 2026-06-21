@@ -632,3 +632,55 @@ These are concerns surfaced by reviewers that don't fit the finding schema (no c
 
 - **No `safe_auto` was applied** — this was a `mode:report-only` sweep. If a follow-up autofix pass is requested, the ~25 `safe_auto` findings should land first (lowest risk, no behavior change), then a targeted review of the `gated_auto` set.
 - **Test-coverage findings dominate the P1 bucket** (24 of 53 P1s) — every reviewer in every module flagged gaps. This is systemic; a test-coverage sprint is the single highest-leverage follow-up after the P0 reliability/security fixes.
+
+---
+
+## Branch Review P3 Findings (2026-06-20)
+
+> Source: `docs/code-review-reports/2026-06-20-branch-review.md` (multi-agent review of `fix/a_lot_of_things` branch, 11 reviewers)
+> P0/P1/P2 from this review have been **fixed** (see `docs/plans/2026-06-20-003-fix-p012-branch-review-findings-plan.md`, units U1–U13).
+> P3 and testing gaps below remain pending.
+
+### P3 — Low-impact / minor
+
+| # | Module | File:Line | Title | Reviewers | Conf | Pre |
+|---|---|---|---|---|---|---|
+| BR-P3-1 | agents | agents/manager.py:182 | `_cancel_record` double-fires `on_state_change(INTERRUPTED)` — `_cancel_record` fires it, then `_run`'s finally fires it again. Likely idempotent in practice. | correctness | 75 | N |
+| BR-P3-2 | agents | agents/manager.py:161 | `from_storage_dict` end_time fallback yields `elapsed=0.0` for records persisted with `end_time=None`. | correctness | 50 | N |
+| BR-P3-3 | mcp | mcp/__init__.py:211 | MCP shadow warning fires but later server still overwrites earlier binding — warning only, no prevention. | correctness | 50 | N |
+| BR-P3-4 | tools | tools/search.py:243 | `execute_grep` `finally: task.cancel()` cannot cancel in-flight `run_in_executor` futures. Bounded by Semaphore(32) + `_PER_FILE_TIMEOUT`. | correctness | 50 | N |
+| BR-P3-5 | tools | tools/exec.py:529 | `_read_bounded` over-trim when `rem > len(stdout_buf)` — `del stdout_buf[len(stdout_buf)-rem:]` removes last k elements (or all if k >= len). Fix: `rem = min(rem, len(stdout_buf))`. | correctness | 75 | N |
+| BR-P3-6 | domain | domain/todo.py:91 | `TodoStore.create` `RuntimeError` after 8 retries may propagate uncaught. Verify the `todo_create` tool handler wraps it as `ExecutorResult`. | correctness | 50 | N |
+| BR-P3-7 | tools | tools/skill.py:61 | `resolve_skill_dependencies` inner dedup now redundant with `_resolved` memoization. | correctness | 50 | N |
+| BR-P3-8 | screens | screens/settings.py:856,981 | Provider/MCP rename-rejected early-returns without `_refresh_tab()`/`_mark_dirty()`. Fix: call them before the early return. | correctness | 75 | N |
+| BR-P3-9 | llm | llm/client.py:148-150 | `os.open` / `os.fdopen` pairing can leak an fd if `fdopen` raises between allocation and `with`-block entry. | kieran-python | 50 | N |
+| BR-P3-10 | llm | llm/client.py:416-437 | `_idle_timed_stream` calls `_safe_aclose` twice on the timeout path. | kieran-python | 50 | N |
+| BR-P3-11 | tools | tools/skill.py:181-195 | Skill resource traversal guard TOCTOU between resolved-skill-dir check and resolved-subdir check. Microsecond window; requires FS attacker inside skill install dir. | adversarial | 50 | N |
+| BR-P3-12 | llm | llm/client.py:498-532 | `commit_assistant_with_tool_calls` in-place filter mutates list concurrently iterated by executor task. Correct today because dict identity survives the filter (undocumented invariant). | adversarial | 50 | N |
+
+### Testing Gaps (from branch review)
+
+| # | File:Line | Gap |
+|---|---|---|
+| BR-TG-1 | tests/test_streaming_messages.py | Stream-idle retry path untested with partial delivery — no test simulates "3 chunks, then stalls > idle_timeout, then retries" and asserts no duplicate messages. |
+| BR-TG-2 | tests/test_streaming_messages.py | `commit_assistant_with_tool_calls` all-malformed filter (empty `tool_calls`) untested — whether subsequent tool_call deltas become orphaned tool results. |
+| BR-TG-3 | tests/test_mcp_startup_timeout.py:68 | MCP per-server timeout transport-enter hang (`fail_enter=True`) fixture defined but never driven. |
+| BR-TG-4 | src/stupidex/tools/exec.py | `_read_bounded` overflow-trim stderr-only sub-branch untested. |
+| BR-TG-5 | tests/test_streaming_messages.py | Streaming tests mutate module-global `llm_client._execute_tool` outside `patch` context (7 sites) — brittle under `pytest-timeout`. Use `with patch.object(...)`. |
+| BR-TG-6 | tests/test_search.py | `test_max_results_does_not_leak_tasks` tolerates `+1` slack — admits exactly the leak the fix prevents. Tighten to `<= tasks_before`. |
+| BR-TG-7 | src/stupidex/llm/client.py | `_maybe_offload_tool_output` `except OSError` cache-write failure branch untested. |
+| BR-TG-8 | src/stupidex/domain/todo.py:91 | No test for `TodoStore.create` exhausting 8 retries — verify it propagates as `ExecutorResult`, not an unhandled exception. |
+| BR-TG-9 | src/stupidex/config.py | `_check_positive_float` branches and float ENV cast not exercised. |
+| BR-TG-10 | tests/test_settings_screen.py | Rename-rejected test doesn't assert pre-edit fields unchanged (P2-B related). |
+
+### Residual Risks (advisory, from branch review)
+
+| # | File | Risk |
+|---|---|---|
+| BR-RR-1 | llm/client.py:140-171 | Offload recovery depends on no workspace path confinement (P0-3 deferred). The pointer tells the LLM to `read` the cache file at `~/.stupidex/cache/...` — outside the workspace. The moment P0-3 path confinement lands, the agent will be silently unable to read its own offloaded outputs. |
+| BR-RR-2 | llm/client.py:107-108 | `session_id` used as path component without uuid validation. Not exploitable across a trust boundary but defense-in-depth: validate uuid format at `load_session` boundary. |
+| BR-RR-3 | llm/client.py:707 | `llm_stream_retries` config has no upper bound. `STUPIDEX_LLM_STREAM_RETRIES=30` -> max backoff `0.2*2^29s`. Add `min(retries, 10)`. |
+| BR-RR-4 | llm/client.py | Overall agent-turn wall-clock still unbounded (P1-12 deferred). Idle timeout bounds per-chunk latency but a provider emitting one chunk every ~290s for hours won't trip it. |
+| BR-RR-5 | llm/client.py:37-44 | `wait_for_subagent` still unbounded and timeout-exempt. A subagent wedged in a `_TOOLS_WITHOUT_TIMEOUT` tool hangs the parent indefinitely. Add a configurable timeout defaulting to `llm_stream_idle_timeout`. |
+| BR-RR-6 | mcp/__init__.py:121 | MCP `start_all` implies parallel but is sequential. Worst case N x per_server_timeout (bounded by startup_timeout overall). Not a regression. |
+| BR-RR-7 | docs/solutions/ | `docs/solutions/` is essentially empty. This branch's 15+ distinct topics are strong candidates for `/ce-compound` after the work lands. |

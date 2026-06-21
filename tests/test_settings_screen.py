@@ -883,14 +883,16 @@ class TestOnEditProviderResult(unittest.TestCase):
         screen._on_edit_provider_result(
             result={"_alias": "existing", "models": {}}, original_alias="old"
         )
-        # rename cancelled: old alias restored with new data, existing untouched
+        # rename cancelled: original entry UNCHANGED, existing untouched
         self.assertIn("old", screen._config.providers)
         self.assertIn("existing", screen._config.providers)
         self.assertEqual(screen._config.providers["existing"]["base_url"], "exist-url")
-        self.assertEqual(screen._config.providers["old"]["models"], {})
+        self.assertEqual(screen._config.providers["old"]["base_url"], "old-url")
         screen.notify.assert_called_once()
         args, kwargs = screen.notify.call_args
         self.assertEqual(kwargs.get("severity"), "warning")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("providers")
 
     def test_original_alias_none_just_inserts(self):
         screen = self._make_screen({"keep": {"base_url": "u"}})
@@ -954,14 +956,16 @@ class TestOnEditMcpResult(unittest.TestCase):
         screen._on_edit_mcp_result(
             result={"_name": "existing", "command": "new-cmd"}, original_name="old"
         )
-        # rename cancelled: old name restored with new data, existing untouched
+        # rename cancelled: original entry UNCHANGED, existing untouched
         self.assertIn("old", screen._config.mcp_servers)
         self.assertIn("existing", screen._config.mcp_servers)
         self.assertEqual(screen._config.mcp_servers["existing"]["command"], "exist-cmd")
-        self.assertEqual(screen._config.mcp_servers["old"]["command"], "new-cmd")
+        self.assertEqual(screen._config.mcp_servers["old"]["command"], "old-cmd")
         screen.notify.assert_called_once()
         args, kwargs = screen.notify.call_args
         self.assertEqual(kwargs.get("severity"), "warning")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("mcp_servers")
 
     def test_edit_marks_mcp_servers_dirty(self):
         screen = self._make_screen({"old": {"command": "x"}})

@@ -8,7 +8,11 @@ from unittest.mock import patch
 from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.domain.session import get_current_session_id, set_current_session_id
 from stupidex.llm import client as llm_client
-from stupidex.llm.client import _TOOL_OUTPUT_INLINE_THRESHOLD, _maybe_offload_tool_output
+from stupidex.llm.client import (
+    _TOOL_OUTPUT_INLINE_THRESHOLD,
+    _maybe_offload_tool_output,
+    cleanup_tool_output_cache,
+)
 
 
 class ToolOutputOffloadTest(unittest.TestCase):
@@ -65,7 +69,7 @@ class ToolOutputOffloadTest(unittest.TestCase):
         self.assertIn("no active session", result)
         self.assertLessEqual(len(result), _TOOL_OUTPUT_INLINE_THRESHOLD * 3)
 
-    def test_executor_task_offloads_large_result_and_keeps_full_content_on_queue(self):
+    def test_executor_task_offloads_large_result_and_persists_pointer(self):
         async def fake_execute_tool(tc, filtered_tools):
             return Message(
                 role=MessageRole.TOOL,
@@ -103,14 +107,54 @@ class ToolOutputOffloadTest(unittest.TestCase):
                 msgs, api_messages = asyncio.run(run())
             queued = [m for m in msgs if m.type == MessageType.TOOL_RESULT]
             self.assertEqual(len(queued), 1)
-            self.assertEqual(len(queued[0].content), _TOOL_OUTPUT_INLINE_THRESHOLD + 1000)
+            # U4: the queued message content is the POINTER, not the full content.
+            self.assertIn("edit_result", queued[0].content)
+            self.assertIn("<warning>", queued[0].content)
+            self.assertLess(len(queued[0].content), _TOOL_OUTPUT_INLINE_THRESHOLD + 1000)
             tool_msgs = [m for m in api_messages if m["role"] == "tool"]
             self.assertEqual(len(tool_msgs), 1)
             self.assertIn("edit_result", tool_msgs[0]["content"])
             self.assertIn("<warning>", tool_msgs[0]["content"])
             self.assertLess(len(tool_msgs[0]["content"]), _TOOL_OUTPUT_INLINE_THRESHOLD + 1000)
+            # Both the queued message and api_messages should have the SAME pointer content.
+            self.assertEqual(queued[0].content, tool_msgs[0]["content"])
         finally:
             llm_client._execute_tool = original
+
+
+class ToolOutputCacheCleanupTest(unittest.TestCase):
+    def test_delete_session_removes_cache_directory(self):
+        set_current_session_id("test-session-cleanup")
+        content = "A" * (_TOOL_OUTPUT_INLINE_THRESHOLD + 5000)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(llm_client, "HOME_CONFIG_DIR", Path(tmp)):
+            _maybe_offload_tool_output("edit", content, "call-1")
+            cache_dir = llm_client._tool_output_cache_dir("test-session-cleanup")
+            self.assertTrue(cache_dir.exists())
+            cleanup_tool_output_cache("test-session-cleanup")
+            self.assertFalse(cache_dir.exists())
+            self.assertFalse(cache_dir.parent.parent / "test-session-cleanup" in [
+                p for p in (cache_dir.parent.parent).iterdir()
+            ])
+
+    def test_cleanup_nonexistent_session_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(llm_client, "HOME_CONFIG_DIR", Path(tmp)):
+            cache_dir = llm_client._tool_output_cache_dir("no-such-session")
+            self.assertFalse(cache_dir.exists())
+            cleanup_tool_output_cache("no-such-session")
+            self.assertFalse(cache_dir.exists())
+
+    def test_cleanup_handles_permission_errors_gracefully(self):
+        set_current_session_id("test-session-perm")
+        content = "A" * (_TOOL_OUTPUT_INLINE_THRESHOLD + 1000)
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(llm_client, "HOME_CONFIG_DIR", Path(tmp)):
+                _maybe_offload_tool_output("edit", content, "call-1")
+                cache_dir = llm_client._tool_output_cache_dir("test-session-perm")
+                self.assertTrue(cache_dir.exists())
+                with patch("stupidex.llm.client.shutil.rmtree", side_effect=OSError("denied")):
+                    cleanup_tool_output_cache("test-session-perm")
+                self.assertTrue(cache_dir.exists())
+            set_current_session_id(None)
 
 
 if __name__ == "__main__":

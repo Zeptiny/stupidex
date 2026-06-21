@@ -52,6 +52,19 @@ class StoreStatus:
     last_index_duration: float | None
 
 
+@dataclass
+class VectorState:
+    """In-memory snapshot of the vectors table aligned with chunk_ids.
+
+    Used by the batch upsert/delete/flush path to avoid reloading and
+    rewriting vectors.npy once per file.
+    """
+
+    chunk_ids: list[int]
+    vectors: list[list[float]]
+    id_to_index: dict[int, int]
+
+
 class RAGStore:
     def __init__(self, project_path: str):
         self.project_path = project_path
@@ -425,6 +438,145 @@ class RAGStore:
                 p = self.vectors_file
                 if p.exists():
                     p.unlink()
+
+    def load_vector_state(self) -> VectorState:
+        """Load chunk_ids + vectors once, building the position index.
+
+        If the on-disk vectors are missing or out of sync with the chunk
+        table, both lists are treated as empty (callers will rebuild the
+        full vector set as files are upserted, matching the non-batch
+        ``upsert_file``/``delete_by_file`` behavior for a stale index).
+        """
+        chunk_ids = self._get_ordered_chunk_ids()
+        vectors = self._load_vectors()
+        if vectors is None or len(vectors) != len(chunk_ids):
+            chunk_ids = []
+            vectors = []
+        id_to_index = {cid: i for i, cid in enumerate(chunk_ids)}
+        return VectorState(
+            chunk_ids=list(chunk_ids),
+            vectors=list(vectors),
+            id_to_index=id_to_index,
+        )
+
+    def _chunk_ids_for_file(self, file_path: str) -> list[int]:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT chunk_id FROM chunks WHERE file_path = ? ORDER BY chunk_id",
+                (file_path,),
+            ).fetchall()
+            return [r[0] for r in rows]
+        finally:
+            conn.close()
+
+    def upsert_file_batch(
+        self,
+        state: VectorState,
+        file_path: str,
+        chunks: list[Chunk],
+        embeddings: list[list[float]],
+    ) -> None:
+        """Batch upsert: mutate ``state`` in place, do NOT touch vectors.npy.
+
+        sqlite is updated (delete + insert for ``file_path``) and the new
+        chunk_ids are appended to ``state`` aligned with ``embeddings``.
+        Old chunk_ids for ``file_path`` are dropped from ``state``.
+        """
+        if len(chunks) != len(embeddings):
+            raise ValueError(
+                f"Chunks ({len(chunks)}) and embeddings ({len(embeddings)}) count mismatch"
+            )
+
+        old_ids = self._chunk_ids_for_file(file_path)
+
+        conn = self._get_conn()
+        try:
+            conn.execute("DELETE FROM chunks WHERE file_path = ?", (file_path,))
+            conn.execute("DELETE FROM files WHERE file_path = ?", (file_path,))
+
+            if chunks:
+                chunk_data = [
+                    (c.file_path, c.start_line, c.end_line, c.content)
+                    for c in chunks
+                ]
+                conn.executemany(
+                    "INSERT INTO chunks (file_path, start_line, end_line, content) "
+                    "VALUES (?, ?, ?, ?)",
+                    chunk_data,
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', ?)",
+                    (file_path, len(chunks)),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', 0)",
+                    (file_path,),
+                )
+
+            now = datetime.now(UTC).isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed', ?)",
+                (now,),
+            )
+            conn.commit()
+
+            new_ids = (
+                [
+                    r[0]
+                    for r in conn.execute(
+                        "SELECT chunk_id FROM chunks WHERE file_path = ? ORDER BY chunk_id",
+                        (file_path,),
+                    ).fetchall()
+                ]
+                if chunks
+                else []
+            )
+        finally:
+            conn.close()
+
+        # Drop old vectors for this file from state (only those present).
+        drop_indices = sorted(
+            (state.id_to_index[cid] for cid in old_ids if cid in state.id_to_index),
+            reverse=True,
+        )
+        for idx in drop_indices:
+            state.chunk_ids.pop(idx)
+            state.vectors.pop(idx)
+
+        # Append new chunk_ids + embeddings.
+        for cid, vec in zip(new_ids, embeddings, strict=True):
+            state.chunk_ids.append(cid)
+            state.vectors.append(list(vec))
+
+        # Rebuild position index (indices shifted by pops above).
+        state.id_to_index = {cid: i for i, cid in enumerate(state.chunk_ids)}
+
+    def delete_by_file_batch(self, state: VectorState, file_path: str) -> None:
+        """Batch delete: mutate ``state`` in place, do NOT touch vectors.npy."""
+        old_ids = self._chunk_ids_for_file(file_path)
+
+        conn = self._get_conn()
+        try:
+            conn.execute("DELETE FROM chunks WHERE file_path = ?", (file_path,))
+            conn.execute("DELETE FROM files WHERE file_path = ?", (file_path,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        drop_indices = sorted(
+            (state.id_to_index[cid] for cid in old_ids if cid in state.id_to_index),
+            reverse=True,
+        )
+        for idx in drop_indices:
+            state.chunk_ids.pop(idx)
+            state.vectors.pop(idx)
+        state.id_to_index = {cid: i for i, cid in enumerate(state.chunk_ids)}
+
+    def flush_vector_state(self, state: VectorState) -> None:
+        """Single write of the accumulated vectors to vectors.npy."""
+        self._save_vectors(state.vectors)
 
     def _get_ordered_chunk_ids(self) -> list[int]:
         conn = self._get_conn()

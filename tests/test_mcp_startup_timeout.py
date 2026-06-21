@@ -233,5 +233,57 @@ class TestMCPStartupTimeout(unittest.IsolatedAsyncioTestCase):
             await manager.shutdown()
 
 
+    async def test_startup_timeout_clears_tools(self):
+        """After an overall startup timeout, orphaned tool registrations are dropped.
+
+        Regression for the bug where the ``except TimeoutError`` branch in
+        ``start_all`` cleared ``self._sessions`` but left ``self._tools``
+        populated — the LLM would then be advertised dead tool entries whose
+        executors could never run (no backing session), producing confusing
+        "not connected" failures from user-initiated tool calls.
+
+        This pre-populates ``_tools``/``_sessions`` to model the state where
+        some servers connected and registered tools before the overall budget
+        fired on a remaining hung server, then verifies the timeout path wipes
+        both maps and that a subsequent ``call_tool`` reports cleanly.
+        """
+        from stupidex.mcp import MCPManager
+
+        behaviors = {f"hung-{i}": "hung-initialize" for i in range(2)}
+        servers = {f"srv-{i}": {"command": f"hung-{i}", "args": []} for i in range(2)}
+        manager = MCPManager()
+        # Simulate tools/sessions registered by a since-superseded state so we
+        # can assert the timeout branch actually clears them.
+        manager._tools["mcp::srv-0::dead_tool"] = {"tool": object(), "executor": None, "input_schema": {}}
+        manager._sessions["srv-0"] = None  # type: ignore[assignment]
+        handler = _RecordingHandler()
+        logger = logging.getLogger("stupidex.mcp")
+        logger.addHandler(handler)
+        try:
+            with (
+                patch("stupidex.mcp.stdio_client", fake_stdio_client),
+                patch("stupidex.mcp.ClientSession", _scripted_factory(behaviors)),
+            ):
+                # ``start_all`` must NOT raise on overall timeout (skip-and-continue).
+                await manager.start_all(
+                    servers,
+                    per_server_timeout=5.0,
+                    startup_timeout=0.3,
+                )
+
+            # Both maps wiped: no orphaned tools advertised, no dead sessions.
+            self.assertEqual(manager._tools, {})
+            self.assertEqual(manager.get_tools(), {})
+            self.assertEqual(manager._sessions, {})
+
+            # A tool call against a dropped session reports "not connected"
+            # rather than dispatching into a dead executor/session.
+            result = await manager.call_tool("srv-0", "dead_tool", {})
+            self.assertIn("not connected", result.content)
+        finally:
+            logger.removeHandler(handler)
+            await manager.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()

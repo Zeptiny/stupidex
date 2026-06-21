@@ -18,6 +18,22 @@ logger = logging.getLogger(__name__)
 _mcp_manager: ContextVar[MCPManager | None] = ContextVar('mcp_manager', default=None)
 
 
+async def _close_session(session: ClientSession) -> None:
+    """Best-effort close of a (possibly already-closed) client session.
+
+    ``ClientSession`` exposes ``__aexit__`` rather than ``aclose``; some
+    fake/stub sessions used in tests may only implement one or the other.
+    Swallowing of errors is the caller's responsibility (we are gathered
+    with ``return_exceptions=True``); this helper just picks whichever
+    shutdown coroutine the object offers.
+    """
+    aclose = getattr(session, "aclose", None)
+    if aclose is not None:
+        await aclose()
+        return
+    await session.__aexit__(None, None, None)
+
+
 def get_mcp_manager() -> MCPManager | None:
     return _mcp_manager.get()
 
@@ -107,8 +123,18 @@ class MCPManager:
                     status["status"] = "unavailable"
                     status["error"] = f"startup timed out after {self._startup_timeout:.0f}s"
             # Transports were torn down by ``_await_runner``; drop dead session
-            # handles so ``call_tool``/``read_resource`` report cleanly.
+            # handles so ``call_tool``/``read_resource`` report cleanly. Explicitly
+            # close each session first to avoid a teardown race with later
+            # transport cleanup; otherwise orphaned sessions/transport handles
+            # can resurface during ``shutdown``. Clear ``_tools`` too so we
+            # don't keep advertising dead tool entries to the LLM.
+            if self._sessions:
+                await asyncio.gather(
+                    *[_close_session(s) for s in self._sessions.values() if s is not None],
+                    return_exceptions=True,
+                )
             self._sessions.clear()
+            self._tools.clear()
             return
         if self._start_error is not None:
             # Startup itself failed; ensure the runner has torn down.

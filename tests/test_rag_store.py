@@ -297,3 +297,239 @@ class TestUpsertFileVectorRebuild(unittest.TestCase):
         vectors = self._vectors()
         self.assertEqual(len(vectors), 1)
         self.assertEqual(list(vectors[0]), v2)
+
+
+# ---------------------------------------------------------------------------
+# Batch vector-state API
+# ---------------------------------------------------------------------------
+
+
+def test_load_vector_state_empty_store(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    state = store.load_vector_state()
+    assert state.chunk_ids == []
+    assert state.vectors == []
+    assert state.id_to_index == {}
+
+
+def test_load_vector_state_after_upsert(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1),
+    ]
+    store.upsert(chunks, [[1.0, 0.0], [0.0, 1.0]])
+
+    state = store.load_vector_state()
+    assert len(state.chunk_ids) == 2
+    assert len(state.vectors) == 2
+    assert state.id_to_index[state.chunk_ids[0]] == 0
+    assert state.id_to_index[state.chunk_ids[1]] == 1
+    assert state.vectors[0] == [1.0, 0.0]
+    assert state.vectors[1] == [0.0, 1.0]
+
+
+def test_upsert_file_batch_updates_state_single_file(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    state = store.load_vector_state()
+    assert state.chunk_ids == []
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="a.py", content="x=2", start_line=2, end_line=2),
+    ]
+    embeddings = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+
+    store.upsert_file_batch(state, "a.py", chunks, embeddings)
+
+    # state mirrors sqlite
+    db_ids = store._get_ordered_chunk_ids()
+    assert state.chunk_ids == db_ids
+    assert len(state.vectors) == 2
+    assert state.vectors[0] == [1.0, 0.0, 0.0]
+    assert state.vectors[1] == [0.0, 1.0, 0.0]
+    assert state.id_to_index == {cid: i for i, cid in enumerate(db_ids)}
+    # vectors.npy not yet written
+    assert not store.vectors_file.exists()
+
+
+def test_upsert_file_batch_replace_existing_in_state(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks_v1 = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="a.py", content="x=2", start_line=2, end_line=2),
+    ]
+    embeddings_v1 = [[1.0, 0.0], [0.0, 1.0]]
+    store.upsert(chunks_v1, embeddings_v1)
+
+    state = store.load_vector_state()
+    assert len(state.chunk_ids) == 2
+
+    # Replace a.py with a single new chunk
+    chunks_v2 = [Chunk(file_path="a.py", content="new", start_line=1, end_line=1)]
+    embeddings_v2 = [[0.5, 0.5]]
+    store.upsert_file_batch(state, "a.py", chunks_v2, embeddings_v2)
+
+    db_ids = store._get_ordered_chunk_ids()
+    assert state.chunk_ids == db_ids
+    assert len(state.vectors) == 1
+    assert state.vectors[0] == [0.5, 0.5]
+    assert state.id_to_index[db_ids[0]] == 0
+
+
+def test_upsert_file_batch_second_file_preserves_first(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    state = store.load_vector_state()
+
+    c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+    c2 = Chunk(file_path="f2.py", content="b=2", start_line=1, end_line=1)
+    v1 = [1.0, 0.0, 0.0]
+    v2 = [0.0, 1.0, 0.0]
+
+    store.upsert_file_batch(state, "f1.py", [c1], [v1])
+    store.upsert_file_batch(state, "f2.py", [c2], [v2])
+
+    assert state.chunk_ids == store._get_ordered_chunk_ids()
+    assert len(state.vectors) == 2
+    assert state.vectors[0] == v1
+    assert state.vectors[1] == v2
+
+
+def test_upsert_file_batch_mismatch_raises(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    state = store.load_vector_state()
+
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
+    with pytest.raises(ValueError, match="mismatch"):
+        store.upsert_file_batch(state, "a.py", chunks, [[0.1], [0.2]])
+
+
+def test_delete_by_file_batch_updates_state(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="a.py", content="x=2", start_line=2, end_line=2),
+        Chunk(file_path="b.py", content="y=1", start_line=1, end_line=1),
+    ]
+    store.upsert(chunks, [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]])
+
+    state = store.load_vector_state()
+    assert len(state.chunk_ids) == 3
+
+    store.delete_by_file_batch(state, "a.py")
+
+    db_ids = store._get_ordered_chunk_ids()
+    assert state.chunk_ids == db_ids
+    assert len(state.vectors) == 1
+    assert state.vectors[0] == [0.5, 0.5]
+    assert state.id_to_index == {db_ids[0]: 0}
+    assert store.status().total_chunks == 1
+
+
+def test_delete_by_file_batch_does_not_save_vectors(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="b.py", content="y=1", start_line=1, end_line=1),
+    ]
+    store.upsert(chunks, [[1.0, 0.0], [0.0, 1.0]])
+
+    state = store.load_vector_state()
+
+    save_calls = 0
+    real_save = store._save_vectors
+
+    def counting_save(embeddings):
+        nonlocal save_calls
+        save_calls += 1
+        return real_save(embeddings)
+
+    store._save_vectors = counting_save
+    store.delete_by_file_batch(state, "a.py")
+
+    assert save_calls == 0  # batch delete must NOT write vectors.npy
+
+
+def test_delete_by_file_batch_unknown_file_noop(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
+    store.upsert(chunks, [[1.0, 0.0]])
+
+    state = store.load_vector_state()
+    before_ids = list(state.chunk_ids)
+    before_vecs = [list(v) for v in state.vectors]
+
+    store.delete_by_file_batch(state, "nonexistent.py")
+
+    assert state.chunk_ids == before_ids
+    assert state.vectors == before_vecs
+
+
+def test_flush_vector_state_writes_once(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    state = store.load_vector_state()
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
+    store.upsert_file_batch(state, "a.py", chunks, [[0.7, 0.3]])
+
+    save_calls = 0
+    real_save = store._save_vectors
+
+    def counting_save(embeddings):
+        nonlocal save_calls
+        save_calls += 1
+        return real_save(embeddings)
+
+    store._save_vectors = counting_save
+    store.flush_vector_state(state)
+
+    assert save_calls == 1
+    assert store.vectors_file.exists()
+    loaded = store._load_vectors()
+    assert loaded is not None
+    assert len(loaded) == 1
+    assert loaded[0][0] == pytest.approx(0.7, abs=1e-5)
+    assert loaded[0][1] == pytest.approx(0.3, abs=1e-5)
+
+
+def test_search_correct_after_batch_index(tmp_path):
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    state = store.load_vector_state()
+    chunks = [
+        Chunk(file_path="src/a.py", content="alpha", start_line=1, end_line=1),
+        Chunk(file_path="src/b.py", content="beta", start_line=1, end_line=1),
+        Chunk(file_path="tests/c.py", content="gamma", start_line=1, end_line=1),
+    ]
+    embeddings = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
+    store.upsert_file_batch(state, "src/a.py", [chunks[0]], [embeddings[0]])
+    store.upsert_file_batch(state, "src/b.py", [chunks[1]], [embeddings[1]])
+    store.upsert_file_batch(state, "tests/c.py", [chunks[2]], [embeddings[2]])
+    store.flush_vector_state(state)
+
+    results = store.search([1.0, 0.0], top_k=10)
+    assert len(results) == 3
+    assert results[0].file_path == "src/a.py"
+
+    filtered = store.search([1.0, 0.0], top_k=10, file_pattern="src/*")
+    assert len(filtered) == 2
+    assert all(r.file_path.startswith("src/") for r in filtered)

@@ -238,10 +238,7 @@ def validate_config(cfg: Config) -> list[str]:
     _check_positive_int(cfg, "directory_tree_depth", errors)
     _check_positive_int(cfg, "ast_max_file_size", errors)
 
-    if not isinstance(cfg.llm_stream_idle_timeout, (int, float)) or isinstance(cfg.llm_stream_idle_timeout, bool):
-        errors.append(f"'llm_stream_idle_timeout' must be a positive number, got {type(cfg.llm_stream_idle_timeout).__name__}")
-    elif cfg.llm_stream_idle_timeout <= 0:
-        errors.append(f"'llm_stream_idle_timeout' must be a positive number, got {cfg.llm_stream_idle_timeout}")
+    _check_positive_float(cfg, "llm_stream_idle_timeout", errors)
     _check_nonneg_int(cfg, "llm_stream_retries", errors)
 
     _check_positive_float(cfg, "mcp_startup_timeout", errors)

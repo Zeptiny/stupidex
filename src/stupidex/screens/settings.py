@@ -858,7 +858,8 @@ class SettingsScreen(ModalScreen[Config | None]):
                         f"Provider '{alias}' already exists; rename cancelled.",
                         severity="warning",
                     )
-                    self._config.providers[original_alias] = result
+                    self._refresh_tab()
+                    self._mark_dirty("providers")
                     return
                 self._config.providers.pop(original_alias, None)
             self._config.providers[alias] = result
@@ -983,7 +984,8 @@ class SettingsScreen(ModalScreen[Config | None]):
                         f"MCP server '{name}' already exists; rename cancelled.",
                         severity="warning",
                     )
-                    self._config.mcp_servers[original_name] = result
+                    self._refresh_tab()
+                    self._mark_dirty("mcp_servers")
                     return
                 self._config.mcp_servers.pop(original_name, None)
             self._config.mcp_servers[name] = result

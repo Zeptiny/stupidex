@@ -13,6 +13,7 @@ result — a readable placeholder is emitted instead.
 """
 import logging
 import unittest
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -71,36 +72,80 @@ class TestRegistryNaming(unittest.TestCase):
 
 class TestShadowWarning(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_registration_logs_warning(self):
+        """Shadow guard (mcp/__init__.py:227-232) fires through the real
+        ``_connect_server`` registration loop.
+
+        Per P1-19 the ``mcp::{server}::{tool}`` scheme deliberately prevents
+        collisions *across* different servers, so the shadow path can only be
+        exercised by re-registering the same ``(server, tool)`` pair. Here the
+        manager connects "srv1" a second time with a fresh fake session that
+        advertises the same tool name "dup". The real body of
+        ``_connect_server`` runs ``session.list_tools()``, the guard check,
+        the ``logger.warning`` call, and the executor-overwriting dict
+        assignment — the test never calls ``logger.warning`` directly, so
+        deleting the guard breaks this test.
+        """
         manager = MCPManager()
         handler = _RecordingHandler()
         logger = logging.getLogger("stupidex.mcp")
         logger.addHandler(handler)
         try:
-            # Manually drive the registration path that _connect_server uses:
-            # convert_mcp_tool + the shadow guard + the dict assignment.
-            from stupidex.mcp.schema import convert_mcp_tool, make_mcp_executor
+            # Two fake sessions, each advertising a tool named "dup". The
+            # second connection's session returns a distinguishable call
+            # result so we can prove the second registration overwrote the
+            # first via the real code path.
+            session1 = _FakeSession(tool_names=["dup"])
+            session2 = _FakeSession(
+                tool_names=["dup"],
+                call_result=_CallToolResult([
+                    SimpleNamespace(type="text", text="from-session2"),
+                ]),
+            )
 
-            tool = _mcp_tool("dup")
-            registry_name, tool_obj, raw_schema = convert_mcp_tool("srv", tool)
-            entry = {
-                "tool": tool_obj,
-                "executor": make_mcp_executor(manager.call_tool, "srv", tool.name),
-                "input_schema": raw_schema,
-            }
-            manager._tools[registry_name] = dict(entry)
+            @asynccontextmanager
+            async def fake_stdio(params):
+                # Transport handles are opaque to _connect_server; the fake
+                # session ignores them.
+                yield (SimpleNamespace(), SimpleNamespace())
 
-            # Second registration of the same (server, tool) → warning expected.
-            if registry_name in manager._tools:
-                logger.warning(
-                    "MCP tool '%s' from server '%s' shadows existing registration",
-                    registry_name,
-                    "srv",
-                )
-            manager._tools[registry_name] = dict(entry)
+            def session_cm(session_obj):
+                @asynccontextmanager
+                async def _cm(read, write):
+                    yield session_obj
+                return _cm
+
+            config = {"command": "x", "args": []}
+
+            # First registration: _connect_server lists "dup" and writes
+            # manager._tools["mcp::srv1::dup"]. No prior entry -> no warning.
+            with (
+                patch("stupidex.mcp.stdio_client", side_effect=fake_stdio),
+                patch("stupidex.mcp.ClientSession", side_effect=session_cm(session1)),
+            ):
+                await manager._connect_server("srv1", config)
+            self.assertEqual(handler.warnings_matching("shadows existing registration"), [])
+
+            # Second registration of the same (server, tool): the REAL guard
+            # at line 227 fires before the dict assignment overwrites.
+            with (
+                patch("stupidex.mcp.stdio_client", side_effect=fake_stdio),
+                patch("stupidex.mcp.ClientSession", side_effect=session_cm(session2)),
+            ):
+                await manager._connect_server("srv1", config)
 
             warnings = handler.warnings_matching("shadows existing registration")
             self.assertEqual(len(warnings), 1)
-            self.assertIn("mcp::srv::dup", warnings[0].getMessage())
+            self.assertIn("mcp::srv1::dup", warnings[0].getMessage())
+            self.assertIn("srv1", warnings[0].getMessage())
+
+            # The second connect's session displaced the first (current
+            # behavior being characterized), and the registered executor —
+            # built by the real ``make_mcp_executor`` in ``_connect_server`` —
+            # now routes tool calls to session2.
+            self.assertIs(manager._sessions["srv1"], session2)
+            tool_entry = manager.get_tools()["mcp::srv1::dup"]
+            result = await tool_entry["executor"]()
+            self.assertEqual(result.content, "from-session2")
         finally:
             logger.removeHandler(handler)
             await manager.shutdown()
@@ -142,15 +187,28 @@ class _ReadResourceResult:
 
 
 class _FakeSession:
-    def __init__(self, *, call_result=None, read_result=None):
+    def __init__(self, *, tool_names=(), call_result=None, read_result=None):
+        self._tool_names = list(tool_names)
         self._call_result = call_result
         self._read_result = read_result
+
+    async def initialize(self):
+        return None
+
+    async def list_tools(self):
+        return SimpleNamespace(tools=[_mcp_tool(n) for n in self._tool_names])
+
+    async def list_resources(self):
+        return SimpleNamespace(resources=[])
 
     async def call_tool(self, tool_name, arguments):
         return self._call_result
 
     async def read_resource(self, uri):
         return self._read_result
+
+    async def aclose(self):
+        return None
 
 
 class TestCallToolBlocks(unittest.IsolatedAsyncioTestCase):

@@ -8,7 +8,7 @@ from textual.containers import ScrollableContainer
 from textual.timer import Timer
 from textual.widgets import TabbedContent, TabPane
 
-from stupidex.agents.manager import SubagentRecord, SubagentState
+from stupidex.agents.manager import TERMINAL, SubagentRecord, SubagentState
 from stupidex.domain.message import Message
 from stupidex.widgets.message_widget import (
     StreamWidgetState,
@@ -107,7 +107,18 @@ class SubagentUIManager:
         if not record:
             return
         tab.update(self._tab_label(record))
+        if state in TERMINAL:
+            self.prune_lock(subagent_id)
         await self.update_sidebar()
+
+    def prune_lock(self, subagent_id: str) -> None:
+        """Remove the mount lock for a subagent that has reached a terminal state.
+
+        Locks are recreated lazily via ``setdefault`` on the next ``on_message``,
+        so evicting them here bounds ``_mount_locks`` to the set of subagents
+        with pending or in-flight mounts.
+        """
+        self._mount_locks.pop(subagent_id, None)
 
     async def sync_tabs(self, manager) -> None:
         tabs = self.app.query_one("#tabs", TabbedContent)
@@ -115,6 +126,7 @@ class SubagentUIManager:
         for pane_id in pane_ids:
             await tabs.remove_pane(pane_id)
         self._widgets.clear()
+        self._mount_locks.clear()
         manager.on_spawn = self.on_spawn
         self._set_manager(manager)
         for record in manager.all_records():

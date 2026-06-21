@@ -196,6 +196,9 @@ async def _index_project_impl(
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
         return stats
 
+    # Load vector state once; batch ops mutate it in place and flush at end.
+    state = await loop.run_in_executor(None, store.load_vector_state)
+
     for i, filepath in enumerate(files):
         try:
             rel = str(filepath.relative_to(project_path))
@@ -218,7 +221,9 @@ async def _index_project_impl(
             if content is None:
                 logger.debug("Skipping %s (binary, empty, or too large)", rel)
                 if rel in existing_hashes:
-                    await loop.run_in_executor(None, store.delete_by_file, rel)
+                    await loop.run_in_executor(
+                        None, store.delete_by_file_batch, state, rel
+                    )
                 continue
 
             # skip unchanged
@@ -231,7 +236,9 @@ async def _index_project_impl(
             chunks = chunk_file(rel, content, cfg.rag.chunk_size, cfg.rag.chunk_overlap)
             if not chunks:
                 if rel in existing_hashes:
-                    await loop.run_in_executor(None, store.delete_by_file, rel)
+                    await loop.run_in_executor(
+                        None, store.delete_by_file_batch, state, rel
+                    )
                 indexed_files.add(rel)
                 continue
 
@@ -239,7 +246,9 @@ async def _index_project_impl(
             texts = [c.content for c in chunks]
             embeddings = await embedder.embed(texts)
 
-            await loop.run_in_executor(None, store.upsert_file, rel, chunks, embeddings)
+            await loop.run_in_executor(
+                None, store.upsert_file_batch, state, rel, chunks, embeddings
+            )
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
             indexed_files.add(rel)
@@ -273,9 +282,11 @@ async def _index_project_impl(
         for stored_path in existing_hashes:
             if stored_path not in current_rels:
                 await loop.run_in_executor(
-                    None, store.delete_by_file, stored_path
+                    None, store.delete_by_file_batch, state, stored_path
                 )
                 stats.files_deleted += 1
+
+    await loop.run_in_executor(None, store.flush_vector_state, state)
 
     stats.duration_seconds = asyncio.get_event_loop().time() - t0
 

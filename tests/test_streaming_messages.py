@@ -535,6 +535,191 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tool_msgs), 3,
                          "all three tool results must be paired with the assistant tool_calls on replay")
 
+    async def _drive_stream(self, response, *, execute_tool=None):
+        """Run _stream_task + _executor_task against `response` and return
+        (messages, api_messages). Mirrors the setup used by the streaming
+        tests above; optionally patches _execute_tool."""
+        original = llm_client._execute_tool
+        if execute_tool is not None:
+            llm_client._execute_tool = execute_tool
+        try:
+            msg_q = asyncio.Queue(maxsize=1)
+            ready_q = asyncio.Queue()
+            api_messages: list[dict] = []
+            assistant_appended = asyncio.Event()
+            tool_calls_started = asyncio.Event()
+
+            stream_t = asyncio.create_task(
+                llm_client._stream_task(
+                    response(), msg_q, ready_q, api_messages,
+                    assistant_appended, tool_calls_started,
+                )
+            )
+            executor_t = asyncio.create_task(
+                llm_client._executor_task(
+                    msg_q, ready_q, api_messages, {}, assistant_appended,
+                )
+            )
+
+            messages = []
+            while True:
+                msg = await msg_q.get()
+                if msg is None:
+                    break
+                messages.append(msg)
+
+            await asyncio.gather(stream_t, executor_t)
+        finally:
+            llm_client._execute_tool = original
+        return messages, api_messages
+
+    @staticmethod
+    def _placeholder_delta(index: int, *, arguments: str = '{"x":1}'):
+        """A tool_call delta that grows the working buffer for `index` but
+        carries NO id and NO function.name — exercising the empty-id
+        placeholder filtering path."""
+        return SimpleNamespace(
+            index=index,
+            id=None,
+            function=SimpleNamespace(name=None, arguments=arguments),
+        )
+
+    async def _assistant_with_tool_calls(self, api_messages):
+        return next(
+            m for m in api_messages
+            if m.get("role") == "assistant" and m.get("tool_calls")
+        )
+
+    async def test_commit_does_not_mutate_the_raw_tool_calls_buffer(self):
+        """Option A step 4: the filter must NOT mutate the shared `tool_calls`
+        working buffer in place. Proven behaviorally: an unfilled placeholder
+        at index 1 (only `arguments` arrives, never an id/name) is followed by
+        a well-formed index 2. The committed assistant message must contain
+        exactly [call-0, call-2] in order — the placeholder is filtered out of
+        the snapshot AND not appended. If the filter mutated the working list
+        in place (removing the placeholder), the growth the anchored message
+        aliased would leak the empty-id growth placeholder into the persisted
+        message instead. This test directly mirrors the Option A background
+        fix (the in-place `tool_calls[:] = [...]` regression)."""
+        async def response():
+            yield chunk(content="Reading two files, skipping one")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[self._placeholder_delta(1)])
+            yield chunk(tool_calls=[tool_delta(2)])
+            await asyncio.sleep(0.01)
+
+        messages, api_messages = await self._drive_stream(response)
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        ids = [tc.get("id") for tc in anchored["tool_calls"]]
+        self.assertEqual(ids, ["call-0", "call-2"],
+                         "placeholder filtered; only well-formed ids anchored, in order")
+
+    async def test_commit_filters_out_empty_and_none_id_tool_calls(self):
+        """Option A: tool_calls lacking an id (empty string or None) and/or a
+        function.name are excluded from the committed/anchored assistant
+        message."""
+        async def response():
+            yield chunk(content="Picking a tool")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[self._placeholder_delta(1)])
+            await asyncio.sleep(0.01)
+
+        messages, api_messages = await self._drive_stream(response)
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        for tc in anchored["tool_calls"]:
+            self.assertTrue(tc.get("id"), f"no empty-id entry should be committed: {tc}")
+            self.assertTrue(tc["function"].get("name"),
+                           f"no empty-name entry should be committed: {tc}")
+        self.assertEqual([tc["id"] for tc in anchored["tool_calls"]], ["call-0"])
+
+    async def test_commit_preserves_valid_tool_calls_in_order(self):
+        """Option A: well-formed tool_calls are preserved in arrival order in
+        the committed/anchored assistant message."""
+        async def response():
+            yield chunk(content="Two parallel reads")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[tool_delta(1)])
+            await asyncio.sleep(0.01)
+
+        messages, api_messages = await self._drive_stream(response)
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        self.assertEqual(
+            [tc["id"] for tc in anchored["tool_calls"]],
+            ["call-0", "call-1"],
+        )
+        self.assertEqual(
+            [tc["function"]["name"] for tc in anchored["tool_calls"]],
+            ["read", "read"],
+        )
+
+    async def test_late_arriving_parallel_tool_call_is_appended_to_committed(self):
+        """Option A step 3: a parallel tool_call whose index arrives AFTER the
+        commit fired (snapshot was taken without it) must be appended to the
+        anchored assistant message's committed_tool_calls list so its
+        TOOL_RESULT is not orphaned on next-turn replay. This is the focused
+        version of test_three_parallel... (also covers test 4)."""
+        async def response():
+            yield chunk(content="Reading three files")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[tool_delta(1)])
+            yield chunk(tool_calls=[tool_delta(2)])
+            await asyncio.sleep(0.01)
+
+        messages, api_messages = await self._drive_stream(response)
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        self.assertEqual(
+            {tc["id"] for tc in anchored["tool_calls"]},
+            {"call-0", "call-1", "call-2"},
+        )
+        # The emitted Message shares the same committed list reference, so the
+        # late append must also be visible on the persisted assistant Message.
+        emitted = next(
+            m for m in messages
+            if m.type == MessageType.TEXT and m.tool_calls
+        )
+        self.assertEqual(
+            {tc["id"] for tc in emitted.tool_calls},
+            {"call-0", "call-1", "call-2"},
+        )
+
+    async def test_empty_id_placeholder_is_never_appended_to_committed(self):
+        """Option A: a placeholder that stays malformed (no id/name) must never
+        be appended to committed_tool_calls even when later deltas reference
+        its index. The delta-loop append guard requires both `id` AND `name`
+        to be present."""
+        async def response():
+            yield chunk(content="Reading then a dead placeholder")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[self._placeholder_delta(1)])
+            yield chunk(tool_calls=[tool_delta(2)])
+            await asyncio.sleep(0.01)
+
+        messages, api_messages = await self._drive_stream(response)
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        ids = [tc.get("id") for tc in anchored["tool_calls"]]
+        self.assertEqual(ids, ["call-0", "call-2"],
+                         "no empty-id placeholder appended: only call-0 and call-2")
+        # And the persisted history replay must pair both tool results.
+        emitted = next(
+            m for m in messages
+            if m.type == MessageType.TEXT and m.tool_calls
+        )
+        history = [Message(MessageRole.USER, "hello"), emitted]
+        for m in messages:
+            if m.type == MessageType.TOOL_RESULT:
+                history.append(m)
+        replayed = llm_client._history_to_api_messages(history)
+        tool_msgs = [m for m in replayed if m["role"] == "tool"]
+        self.assertEqual(
+            {m["tool_call_id"] for m in tool_msgs},
+            {"call-0", "call-2"},
+        )
+
     def test_round_trip_persists_tool_calls_through_storage_dict(self):
         """End-to-end: record_streamed_message -> to_storage_dict ->
         from_storage_dict -> _history_to_api_messages must round-trip the
@@ -1356,6 +1541,213 @@ class StreamIdleTimeoutTest(unittest.IsolatedAsyncioTestCase):
             any(m.usage == Usage(1, 2, 3) for m in text_messages),
             "usage from the final delta must be carried through",
         )
+
+
+class StreamRetryRollbackTest(unittest.IsolatedAsyncioTestCase):
+    """U1/U2 -- stream_response retry loop snapshots ``api_messages`` length
+    before each attempt and rolls back appended entries on retry.  If any
+    message has already been yielded to the consumer (``delivered_any``),
+    retry is skipped to avoid duplicate / partial output.  Connect-timeout
+    and transient provider errors are retried the same way as idle timeouts.
+    """
+
+    def _providers(self):
+        return {
+            "default": {
+                "base_url": "https://example.test/v1",
+                "litellm_provider": "openai",
+                "models": {"mimo-v2.5": {}},
+            }
+        }
+
+    def _run_stream_response(self, *, cfg, fake_acompletion):
+        acompletion_mock = AsyncMock(side_effect=fake_acompletion)
+        dummy_dynamic = Message(MessageRole.SYSTEM, "<dynamic/>", MessageType.TEXT)
+        patches = [
+            patch("stupidex.llm.client.get_config", return_value=cfg),
+            patch("stupidex.llm.providers.get_config", return_value=cfg),
+            patch("stupidex.llm.client.build_dynamic_system_prompt",
+                  new=AsyncMock(return_value=dummy_dynamic)),
+            patch("stupidex.llm.client.get_tool_registry", return_value={}),
+            patch("stupidex.llm.client.litellm.acompletion", new=acompletion_mock),
+            patch("stupidex.llm.client._backoff_sleep", new=AsyncMock()),
+        ]
+        stack = contextlib.ExitStack()
+        for p in patches:
+            stack.enter_context(p)
+        stack.__enter__()
+        gen = llm_client.stream_response(
+            messages=[],
+            model="default/mimo-v2.5",
+            allowed_tools=[],
+            system_prompt="",
+        )
+        return stack, gen
+
+    async def test_idle_retry_restores_api_messages(self):
+        """After a stream-idle timeout + retry, ``api_messages`` must not
+        contain any pollution from the failed attempt.  The silent-stall case
+        (no chunks delivered, ``delivered_any`` stays False) exercises the
+        rollback path even though nothing was appended — the key assertion is
+        that the second attempt sees a clean ``api_messages``."""
+        cfg = Config(
+            providers=self._providers(),
+            llm_stream_idle_timeout=0.05,
+            llm_stream_retries=1,
+        )
+        call_count = {"n": 0}
+        captured_msg_counts: list[int] = []
+
+        async def fake_acompletion(**kwargs):
+            call_count["n"] += 1
+            # Record how many messages are in api_messages at call time.
+            captured_msg_counts.append(len(kwargs["messages"]))
+            if call_count["n"] == 1:
+                # Silent stall: never yields any chunk.
+                async def _stream1():
+                    await asyncio.sleep(10)
+                    yield chunk(content="unreachable")
+
+                return _stream1()
+            # Second attempt: succeed immediately.
+            async def _stream2():
+                yield chunk(content="recovered", usage=Usage(1, 2, 3))
+
+            return _stream2()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            messages = []
+            async for msg in gen:
+                messages.append(msg)
+        finally:
+            stack.__exit__(None, None, None)
+
+        self.assertEqual(call_count["n"], 2, "should have retried once")
+        # Both attempts should see the same number of messages in api_messages
+        # (system + dynamic prompt). If rollback failed, the second attempt
+        # would see extra entries.
+        self.assertEqual(
+            captured_msg_counts[0], captured_msg_counts[1],
+            "api_messages length must be identical on both attempts (rollback works)",
+        )
+
+    async def test_no_retry_after_partial_delivery(self):
+        """If messages have been yielded to the consumer before the idle
+        timeout fires, retry must NOT occur (``delivered_any`` gate)."""
+        cfg = Config(
+            providers=self._providers(),
+            llm_stream_idle_timeout=0.05,
+            llm_stream_retries=3,
+        )
+        call_count = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            call_count["n"] += 1
+
+            async def _stream():
+                yield chunk(content="delivered")
+                await asyncio.sleep(10)
+
+            return _stream()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            with self.assertRaises(llm_client._StreamIdleTimeoutError):
+                async for _ in gen:
+                    pass
+        finally:
+            stack.__exit__(None, None, None)
+            await gen.aclose()
+
+        self.assertEqual(
+            call_count["n"], 1,
+            "must NOT retry after partial delivery",
+        )
+
+    async def test_connect_timeout_retries(self):
+        """If litellm.acompletion hangs (connect timeout), asyncio.wait_for
+        fires and the call is retried."""
+        cfg = Config(
+            providers=self._providers(),
+            llm_stream_idle_timeout=0.05,
+            llm_stream_retries=1,
+        )
+        call_count = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                await asyncio.sleep(10)  # hangs on connect
+            async def _stream():
+                yield chunk(content="ok", usage=Usage(1, 2, 3))
+            return _stream()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            messages = []
+            async for msg in gen:
+                messages.append(msg)
+        finally:
+            stack.__exit__(None, None, None)
+
+        self.assertEqual(call_count["n"], 2, "should have retried after connect timeout")
+
+    async def test_transient_error_retries(self):
+        """A transient provider error (e.g. ServiceUnavailableError) from
+        acompletion should be retried."""
+        cfg = Config(
+            providers=self._providers(),
+            llm_stream_idle_timeout=5.0,
+            llm_stream_retries=2,
+        )
+        call_count = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise litellm.ServiceUnavailableError(
+                    message="503", model="openai/mimo-v2.5", llm_provider="openai",
+                )
+            async def _stream():
+                yield chunk(content="ok", usage=Usage(1, 2, 3))
+            return _stream()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            messages = []
+            async for msg in gen:
+                messages.append(msg)
+        finally:
+            stack.__exit__(None, None, None)
+
+        self.assertEqual(call_count["n"], 2, "should have retried after transient error")
+
+    async def test_non_transient_error_no_retry(self):
+        """A non-transient error (e.g. AuthenticationError) must NOT be retried."""
+        cfg = Config(
+            providers=self._providers(),
+            llm_stream_idle_timeout=5.0,
+            llm_stream_retries=3,
+        )
+        call_count = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            call_count["n"] += 1
+            raise litellm.AuthenticationError(
+                message="401", model="openai/mimo-v2.5", llm_provider="openai",
+            )
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            with self.assertRaises(litellm.AuthenticationError):
+                async for _ in gen:
+                    pass
+        finally:
+            stack.__exit__(None, None, None)
+            await gen.aclose()
+
+        self.assertEqual(call_count["n"], 1, "non-transient error must not retry")
 
 
 def _tool_delta_split(index, *, id=None, name=None, arguments=None):
