@@ -75,15 +75,12 @@
 - Contexto não está sendo atualizado constantemente
 - Geração de título não está funcionando automaticamente
 
-### Refatoração de configuração
-- Ainda precisa ser melhor analisada
-- Ser possível de fazer toda e qualquer configuração por meio da TUI
-  - Editar os agentes dos vários tiers
-  - Adicionar/deletar provedores
-  - Adicionar/editar/remover modelos e suas limitações
-  - Modificar o modelo padrão
-  - Servidores MCP
-  - etc....
+### Configuração
+- Adicionar provedor tem como colcoar api key e env auth ao mesmo tempo
+  - Deixar apenas um visivel, selecionado por botão
+- Adicionar um MCP tem como colocar comandos e URL ao mesmo tempo
+  - Deixar apenas um visivel, selecionado por botão
+  - Não tem como colocar auth token
 
 ### Considerações
 - Tornar a ferramenta read utilizável com diretórios?
