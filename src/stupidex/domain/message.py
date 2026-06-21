@@ -95,12 +95,28 @@ class Message:
                     completion_tokens=src.get("completion_tokens", 0),
                     total_tokens=src.get("total_tokens", 0),
                 )
+        metadata = dict(data.get("metadata", {}))
+        warnings: list[str] = []
+        raw_role = data.get("role", "system")
+        try:
+            role = MessageRole(raw_role)
+        except ValueError:
+            role = MessageRole.SYSTEM
+            warnings.append(f"unknown role '{raw_role}', falling back to system")
+        raw_type = data.get("type", "text")
+        try:
+            msg_type = MessageType(raw_type)
+        except ValueError:
+            msg_type = MessageType.TEXT
+            warnings.append(f"unknown type '{raw_type}', falling back to text")
+        if warnings:
+            metadata["_deserialize_warning"] = "; ".join(warnings)
         return cls(
-            role=MessageRole(data["role"]),
+            role=role,
             content=data.get("content", ""),
-            type=MessageType(data.get("type", "text")),
+            type=msg_type,
             display=data.get("display"),
-            metadata=data.get("metadata", {}),
+            metadata=metadata,
             usage=usage,
             tool_call_id=data.get("tool_call_id"),
             tool_calls=data.get("tool_calls"),

@@ -2,6 +2,7 @@
 
 import unittest
 
+from stupidex.domain.chain import Chain
 from stupidex.domain.message import (
     Message,
     MessageRole,
@@ -115,6 +116,110 @@ class TestUsageDeserializationForwardCompat(unittest.TestCase):
         self.assertEqual(msg.content, "hello")
         assert msg.usage is not None
         self.assertEqual(msg.usage.total_tokens, 150)
+
+
+class TestMessageFromStorageDictEnumTolerance(unittest.TestCase):
+    """P2-9: unknown role/type enum values must not abort session recovery.
+    The loader falls back to SYSTEM/TEXT and records the drift in
+    metadata["_deserialize_warning"] so the message stays visible
+    (dropping it would break chain length and tool_call_id pairing).
+    """
+
+    def test_well_formed_message_loads_normally(self):
+        msg = Message.from_storage_dict(
+            {"role": "assistant", "content": "hi", "type": "text"}
+        )
+        self.assertEqual(msg.role, MessageRole.ASSISTANT)
+        self.assertEqual(msg.type, MessageType.TEXT)
+        self.assertEqual(msg.content, "hi")
+        self.assertNotIn("_deserialize_warning", msg.metadata)
+
+    def test_unknown_role_falls_back_to_system_with_warning(self):
+        msg = Message.from_storage_dict(
+            {"role": "helper", "content": "hello", "type": "text"}
+        )
+        self.assertEqual(msg.role, MessageRole.SYSTEM)
+        self.assertEqual(msg.type, MessageType.TEXT)
+        self.assertEqual(msg.content, "hello")
+        warning = msg.metadata.get("_deserialize_warning", "")
+        self.assertIn("helper", warning)
+        self.assertIn("system", warning)
+
+    def test_unknown_role_preserves_other_fields(self):
+        tool_calls = [{"id": "tc1", "function": {"name": "x", "arguments": "{}"}}]
+        msg = Message.from_storage_dict(
+            {
+                "role": "bogus",
+                "content": "body",
+                "type": "text",
+                "display": "displayed",
+                "tool_call_id": "tc1",
+                "tool_calls": tool_calls,
+                "metadata": {"k": "v"},
+            }
+        )
+        self.assertEqual(msg.role, MessageRole.SYSTEM)
+        self.assertEqual(msg.content, "body")
+        self.assertEqual(msg.display, "displayed")
+        self.assertEqual(msg.tool_call_id, "tc1")
+        self.assertEqual(msg.tool_calls, tool_calls)
+        self.assertEqual(msg.metadata.get("k"), "v")
+        self.assertIn("_deserialize_warning", msg.metadata)
+
+    def test_unknown_type_falls_back_to_text_with_warning(self):
+        msg = Message.from_storage_dict(
+            {"role": "user", "content": "hi", "type": "reasoning"}
+        )
+        self.assertEqual(msg.role, MessageRole.USER)
+        self.assertEqual(msg.type, MessageType.TEXT)
+        warning = msg.metadata.get("_deserialize_warning", "")
+        self.assertIn("reasoning", warning)
+        self.assertIn("text", warning)
+
+    def test_both_role_and_type_unknown_fall_back_independently(self):
+        msg = Message.from_storage_dict(
+            {"role": "helper", "content": "hi", "type": "reasoning"}
+        )
+        self.assertEqual(msg.role, MessageRole.SYSTEM)
+        self.assertEqual(msg.type, MessageType.TEXT)
+        warning = msg.metadata.get("_deserialize_warning", "")
+        self.assertIn("helper", warning)
+        self.assertIn("reasoning", warning)
+
+    def test_missing_role_key_defaults_to_system_without_warning(self):
+        msg = Message.from_storage_dict({"content": "hi", "type": "text"})
+        self.assertEqual(msg.role, MessageRole.SYSTEM)
+        self.assertNotIn("_deserialize_warning", msg.metadata)
+
+    def test_missing_type_key_defaults_to_text_without_warning(self):
+        msg = Message.from_storage_dict({"role": "user", "content": "hi"})
+        self.assertEqual(msg.type, MessageType.TEXT)
+        self.assertNotIn("_deserialize_warning", msg.metadata)
+
+    def test_warning_metadata_does_not_mutate_caller_dict(self):
+        shared_meta = {"k": "v"}
+        Message.from_storage_dict(
+            {"role": "helper", "content": "hi", "type": "text", "metadata": shared_meta}
+        )
+        self.assertNotIn("_deserialize_warning", shared_meta)
+
+    def test_chain_loads_with_mixed_valid_and_corrupt_messages(self):
+        data = {
+            "model": "m",
+            "status": "completed",
+            "messages": [
+                {"role": "user", "content": "ok", "type": "text"},
+                {"role": "helper", "content": "bad-role", "type": "reasoning"},
+                {"role": "assistant", "content": "reply", "type": "text"},
+            ],
+        }
+        chain = Chain.from_storage_dict(data)
+        self.assertEqual(len(chain.messages), 3)
+        self.assertEqual(chain.messages[0].role, MessageRole.USER)
+        self.assertEqual(chain.messages[1].role, MessageRole.SYSTEM)
+        self.assertEqual(chain.messages[1].type, MessageType.TEXT)
+        self.assertIn("_deserialize_warning", chain.messages[1].metadata)
+        self.assertEqual(chain.messages[2].role, MessageRole.ASSISTANT)
 
 
 class TestMessageToDict(unittest.TestCase):

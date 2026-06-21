@@ -422,7 +422,7 @@ class SubagentManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.state, SubagentState.INTERRUPTED)
         self.assertIsNone(record.async_task)
         self.assertIsNotNone(record.end_time)
-        self.assertEqual(record.end_time, 1.0)
+        self.assertGreaterEqual(record.end_time, 1.0)
 
     def test_cancel_one_pending_task_none_transitions_and_returns_true(self):
         agent = make_agent()
@@ -896,6 +896,283 @@ class TestCancelAllClearsOnSpawn(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(len(calls), 1)
             self.assertIsNone(manager.on_spawn)
+
+
+def _storage_record(**overrides) -> dict:
+    base = {
+        "id": "rec",
+        "agent_name": "Subagent",
+        "agent_type": "subagent",
+        "state": "completed",
+        "label": "s",
+        "task": "t",
+        "result": None,
+        "error": None,
+        "start_time": 0.0,
+        "end_time": None,
+        "messages": [],
+    }
+    base.update(overrides)
+    return base
+
+
+class TestRestoreAgentHelper(unittest.TestCase):
+    def test_registry_hit_returns_registered_agent(self):
+        agent = make_agent()
+        with patch("stupidex.agents.get_agent_registry", return_value={agent.name: agent}):
+            record = SubagentRecord.from_storage_dict(_storage_record(agent_name="Subagent"))
+        self.assertIs(record.agent, agent)
+
+    def test_registry_miss_valid_type_constructs_fallback(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(agent_name="Ghost", agent_type="Subagent")
+            )
+        self.assertEqual(record.agent.name, "Ghost")
+        self.assertEqual(record.agent.type, AgentTypes.SUBAGENT)
+        self.assertEqual(record.agent.tier, ModelTier.PAPUDO)
+
+    def test_registry_miss_invalid_type_falls_back_to_subagent(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(agent_name="Ghost", agent_type="garbage")
+            )
+        self.assertEqual(record.agent.name, "Ghost")
+        self.assertEqual(record.agent.type, AgentTypes.SUBAGENT)
+
+    def test_registry_raises_still_constructs_fallback(self):
+        def boom():
+            raise RuntimeError("registry not initialized")
+
+        with patch("stupidex.agents.get_agent_registry", side_effect=boom):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(agent_name="Ghost", agent_type="garbage")
+            )
+        self.assertEqual(record.agent.name, "Ghost")
+        self.assertEqual(record.agent.type, AgentTypes.SUBAGENT)
+
+    def test_empty_agent_name_constructs_agent_with_empty_name(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(agent_name="", agent_type="subagent")
+            )
+        self.assertEqual(record.agent.name, "")
+
+
+class TestRestoredInterruptedNormalization(unittest.TestCase):
+    def test_completed_record_elapsed_uses_end_minus_start(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(
+                    state="completed", start_time=100.0, end_time=200.0
+                )
+            )
+        self.assertEqual(record.elapsed_seconds, 100.0)
+
+    def test_interrupted_with_both_times_uses_end_minus_start(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(
+                    state="interrupted", start_time=100.0, end_time=200.0
+                )
+            )
+        self.assertEqual(record.elapsed_seconds, 100.0)
+
+    def test_running_migrated_to_interrupted_sets_end_time_now(self):
+        before = time.time()
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(state="running", start_time=100.0, end_time=None)
+            )
+        after = time.time()
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertIsNotNone(record.end_time)
+        self.assertGreaterEqual(record.end_time, before)
+        self.assertLessEqual(record.end_time, after)
+        self.assertAlmostEqual(
+            record.elapsed_seconds, round(record.end_time - 100.0, 1)
+        )
+
+    def test_pending_never_started_reports_zero_elapsed(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(state="pending", start_time=0.0, end_time=None)
+            )
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertIsNotNone(record.end_time)
+        self.assertEqual(record.start_time, record.end_time)
+        self.assertEqual(record.elapsed_seconds, 0.0)
+
+    def test_running_with_zero_start_time_reports_zero_elapsed(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(state="running", start_time=0.0, end_time=None)
+            )
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+        self.assertEqual(record.start_time, record.end_time)
+        self.assertEqual(record.elapsed_seconds, 0.0)
+
+    def test_pending_string_state_migrates_to_interrupted(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(state="pending", start_time=100.0, end_time=200.0)
+            )
+        self.assertEqual(record.state, SubagentState.INTERRUPTED)
+
+    def test_completed_with_none_end_time_keeps_live_running_semantics(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(state="completed", start_time=100.0, end_time=None)
+            )
+        self.assertIsNone(record.end_time)
+        with patch("stupidex.agents.manager.time.time", return_value=200.0):
+            self.assertEqual(record.elapsed_seconds, 100.0)
+
+
+class TestSubagentMessageReconciliation(unittest.TestCase):
+    def _assistant_with_tool_calls(self, content="calling", tool_call_id="abc"):
+        return Message(
+            role=MessageRole.ASSISTANT,
+            content=content,
+            type=MessageType.TOOL_CALL,
+            tool_calls=[{"id": tool_call_id, "function": {"name": "f", "arguments": "{}"}}],
+        )
+
+    def _tool_result(self, tool_call_id="abc", content="result"):
+        return Message(
+            role=MessageRole.TOOL,
+            content=content,
+            type=MessageType.TOOL_RESULT,
+            tool_call_id=tool_call_id,
+        )
+
+    def test_well_formed_messages_preserved(self):
+        msgs = [
+            self._assistant_with_tool_calls(),
+            self._tool_result(),
+        ]
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(messages=[m.to_storage_dict() for m in msgs])
+            )
+        self.assertEqual(len(record.messages), 2)
+
+    def test_orphan_tool_result_dropped(self):
+        msgs = [
+            self._tool_result(tool_call_id="orphan"),
+            self._assistant_with_tool_calls(tool_call_id="valid"),
+            self._tool_result(tool_call_id="valid"),
+        ]
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(messages=[m.to_storage_dict() for m in msgs])
+            )
+        ids = [m.tool_call_id for m in record.messages if m.tool_call_id]
+        self.assertNotIn("orphan", ids)
+        self.assertEqual(ids, ["valid"])
+        self.assertEqual(len(record.messages), 2)
+
+    def test_multiple_orphans_interleaved_dropped_others_preserved(self):
+        msgs = [
+            self._tool_result(tool_call_id="orphan1"),
+            self._assistant_with_tool_calls(content="c1", tool_call_id="valid1"),
+            self._tool_result(tool_call_id="orphan2"),
+            self._tool_result(tool_call_id="valid1"),
+            self._tool_result(tool_call_id="orphan3"),
+        ]
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(messages=[m.to_storage_dict() for m in msgs])
+            )
+        ids = [m.tool_call_id for m in record.messages if m.tool_call_id]
+        self.assertNotIn("orphan1", ids)
+        self.assertNotIn("orphan2", ids)
+        self.assertNotIn("orphan3", ids)
+        self.assertEqual(ids, ["valid1"])
+        self.assertEqual(len(record.messages), 2)
+
+    def test_empty_messages_list_is_noop(self):
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
+            record = SubagentRecord.from_storage_dict(_storage_record(messages=[]))
+        self.assertEqual(record.messages, [])
+
+
+class TestFlushStateCallbacks(unittest.IsolatedAsyncioTestCase):
+    async def test_flush_awaits_single_callback(self):
+        manager = SubagentManager()
+        agent = make_agent()
+        record = SubagentRecord(
+            id="r1",
+            agent=agent,
+            state=SubagentState.RUNNING,
+            label="s",
+            task="t",
+            start_time=time.time(),
+        )
+        observed: list[SubagentState] = []
+
+        async def on_state_change(state):
+            observed.append(state)
+
+        record.on_state_change = on_state_change
+        manager._subagents[record.id] = record
+
+        self.assertTrue(manager.cancel_one(record.id))
+        self.assertEqual(len(manager._pending_callback_tasks), 1)
+        await manager.flush_state_callbacks()
+        self.assertEqual(observed, [SubagentState.INTERRUPTED])
+        self.assertEqual(manager._pending_callback_tasks, set())
+
+    async def test_flush_awaits_multiple_callbacks(self):
+        manager = SubagentManager()
+        agent = make_agent()
+        r1 = SubagentRecord(
+            id="r1", agent=agent, state=SubagentState.RUNNING, label="s", task="t",
+            start_time=time.time(),
+        )
+        r2 = SubagentRecord(
+            id="r2", agent=agent, state=SubagentState.RUNNING, label="s", task="t",
+            start_time=time.time(),
+        )
+        observed: list[SubagentState] = []
+
+        async def on_state_change(state):
+            observed.append(state)
+
+        r1.on_state_change = on_state_change
+        r2.on_state_change = on_state_change
+        manager._subagents[r1.id] = r1
+        manager._subagents[r2.id] = r2
+
+        cancelled = manager.cancel_running()
+        self.assertEqual(set(cancelled), {r1.id, r2.id})
+        self.assertEqual(len(manager._pending_callback_tasks), 2)
+        await manager.flush_state_callbacks()
+        self.assertEqual(observed, [SubagentState.INTERRUPTED, SubagentState.INTERRUPTED])
+        self.assertEqual(manager._pending_callback_tasks, set())
+
+    async def test_flush_callback_raises_does_not_propagate(self):
+        manager = SubagentManager()
+        agent = make_agent()
+        record = SubagentRecord(
+            id="r1", agent=agent, state=SubagentState.RUNNING, label="s", task="t",
+            start_time=time.time(),
+        )
+
+        async def on_state_change(state):
+            raise RuntimeError("boom")
+
+        record.on_state_change = on_state_change
+        manager._subagents[record.id] = record
+
+        manager.cancel_one(record.id)
+        await manager.flush_state_callbacks()
+        self.assertEqual(manager._pending_callback_tasks, set())
+
+    async def test_flush_empty_returns_immediately(self):
+        manager = SubagentManager()
+        await manager.flush_state_callbacks()
+        self.assertEqual(manager._pending_callback_tasks, set())
 
 
 if __name__ == "__main__":

@@ -189,6 +189,7 @@ async def execute_interrupt_subagents(subagent_ids: list[str]) -> ExecutorResult
 
     if not subagent_ids:
         cancelled = manager.cancel_running()
+        await manager.flush_state_callbacks()
         if not cancelled:
             return ExecutorResult(
                 display="No running subagents to interrupt",
@@ -223,5 +224,7 @@ async def execute_interrupt_subagents(subagent_ids: list[str]) -> ExecutorResult
 
     content = ". ".join(parts) + "." if parts else "No subagents matched."
     display = f"Interrupted {len(cancelled)} subagent(s)" if cancelled else "No subagents interrupted"
+
+    await manager.flush_state_callbacks()
 
     return ExecutorResult(display=display, content=content)

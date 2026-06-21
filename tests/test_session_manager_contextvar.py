@@ -114,16 +114,12 @@ class TestSessionManagerContextVarBinding(unittest.TestCase):
         set_current_session_id(sentinel_session_id)
 
         # Simulate a corrupt session file that raises during from_storage_dict.
-        # An invalid MessageRole value triggers ValueError in Message.from_storage_dict,
-        # which propagates up through the bare list comprehensions in
-        # Chain.from_storage_dict and Session.from_storage_dict.
+        # A missing "id" key triggers KeyError in Session.from_storage_dict,
+        # which propagates up through the bare Session constructor call.
+        # (Unknown enum values no longer raise — they fall back per U3 / P2-9.)
         with patch(
             "stupidex.storage.load_session",
-            return_value={
-                "id": "x",
-                "name": "bad",
-                "chains": [{"messages": [{"role": "invalid-role", "content": "x"}]}],
-            },
+            return_value={"name": "bad", "chains": []},
         ):
             result = sm.load("x")
 

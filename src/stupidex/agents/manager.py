@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from xml.sax.saxutils import escape
 
 from stupidex.domain.agent import Agent
+from stupidex.domain.chain import _reconcile_orphan_tool_results
 
 if TYPE_CHECKING:
     from stupidex.domain.message import Message
@@ -129,36 +130,28 @@ class SubagentRecord:
 
     @classmethod
     def from_storage_dict(cls, data: dict[str, Any]) -> SubagentRecord:
-        from stupidex.agents import get_agent_registry
         from stupidex.domain.message import Message
+
         agent_name = data.get("agent_name", "")
         agent_type = data.get("agent_type", "Subagent")
-        try:
-            registry = get_agent_registry()
-            agent = registry.get(agent_name)
-            if agent is None:
-                from stupidex.domain.agent import Agent, AgentTypes, ModelTier
-                agent = Agent(
-                    name=agent_name,
-                    type=AgentTypes.from_str(agent_type),
-                    tier=ModelTier.PAPUDO,
-                    description="Restored from storage",
-                    system_prompt="",
-                )
-        except Exception:
-            from stupidex.domain.agent import Agent, AgentTypes, ModelTier
-            agent = Agent(
-                name=agent_name,
-                type=AgentTypes.from_str(agent_type),
-                tier=ModelTier.PAPUDO,
-                description="Restored from storage",
-                system_prompt="",
-            )
+        agent = _restore_agent(agent_name, agent_type)
+
         state = SubagentState(data.get("state", "completed"))
-        if state in (SubagentState.PENDING, SubagentState.RUNNING):
+        migrated_to_interrupted = state in (SubagentState.PENDING, SubagentState.RUNNING)
+        if migrated_to_interrupted:
             state = SubagentState.INTERRUPTED
+
+        now = time.time()
         start_time = data.get("start_time", 0.0)
-        end_time = data.get("end_time") or start_time or time.time()
+        end_time = data.get("end_time")
+        if (migrated_to_interrupted or state == SubagentState.INTERRUPTED) and end_time is None:
+            end_time = now
+            if not start_time:
+                start_time = end_time
+
+        messages = [Message.from_storage_dict(m) for m in data.get("messages", [])]
+        _reconcile_orphan_tool_results(messages)
+
         return cls(
             id=data["id"],
             agent=agent,
@@ -169,8 +162,44 @@ class SubagentRecord:
             error=data.get("error"),
             start_time=start_time,
             end_time=end_time,
-            messages=[Message.from_storage_dict(m) for m in data.get("messages", [])],
+            messages=messages,
         )
+
+
+def _restore_agent(name: str, type_str: str) -> Agent:
+    from stupidex.agents import get_agent_registry
+    from stupidex.domain.agent import Agent, AgentTypes, ModelTier
+
+    try:
+        registry = get_agent_registry()
+        agent = registry.get(name)
+        if agent is not None:
+            return agent
+    except Exception as exc:
+        log.warning(
+            "SubagentRecord restore: registry unavailable for %r: %s",
+            name,
+            exc,
+        )
+
+    try:
+        agent_type = AgentTypes.from_str(type_str)
+    except ValueError:
+        log.warning(
+            "SubagentRecord restore: unknown agent_type %r for %r; "
+            "falling back to AgentTypes.SUBAGENT",
+            type_str,
+            name,
+        )
+        agent_type = AgentTypes.SUBAGENT
+
+    return Agent(
+        name=name,
+        type=agent_type,
+        tier=ModelTier.PAPUDO,
+        description="Restored from storage",
+        system_prompt="",
+    )
 
 
 class SubagentManager:
@@ -178,6 +207,21 @@ class SubagentManager:
         self._subagents: dict[str, SubagentRecord] = {}
         self.on_spawn: Callable[[SubagentRecord],
                                 Coroutine[Any, Any, None]] | None = None
+        self._pending_callback_tasks: set[asyncio.Task] = set()
+
+    def _fire_and_forget(self, coro: Coroutine) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self._pending_callback_tasks.add(task)
+        task.add_done_callback(_log_task_exception)
+        task.add_done_callback(self._pending_callback_tasks.discard)
+        return task
+
+    async def flush_state_callbacks(self) -> None:
+        if not self._pending_callback_tasks:
+            return
+        pending = list(self._pending_callback_tasks)
+        await asyncio.gather(*pending, return_exceptions=True)
+        self._pending_callback_tasks.difference_update(pending)
 
     def _cancel_record(self, record: SubagentRecord) -> bool:
         if record.state in TERMINAL:
@@ -189,7 +233,7 @@ class SubagentManager:
         if task is not None and not task.done():
             task.cancel()
         if record.on_state_change:
-            _fire_and_forget(record.on_state_change(record.state))
+            self._fire_and_forget(record.on_state_change(record.state))
         return True
 
     def cancel_one(self, subagent_id: str) -> bool:
@@ -253,7 +297,7 @@ class SubagentManager:
         async def _run() -> None:
             record.state = SubagentState.RUNNING
             if record.on_state_change:
-                _fire_and_forget(record.on_state_change(record.state))
+                self._fire_and_forget(record.on_state_change(record.state))
             try:
                 user_msg = Message(role=MessageRole.USER, content=task)
                 subagent_messages = [user_msg]
@@ -294,11 +338,11 @@ class SubagentManager:
             finally:
                 record.end_time = time.time()
                 if record.on_state_change:
-                    _fire_and_forget(record.on_state_change(record.state))
+                    self._fire_and_forget(record.on_state_change(record.state))
 
         record.async_task = None  # set below
         if self.on_spawn:
-            _fire_and_forget(self.on_spawn(record))
+            self._fire_and_forget(self.on_spawn(record))
         record.async_task = asyncio.create_task(_run())
         return record
 

@@ -188,6 +188,7 @@ class InterruptSubagentsTests(unittest.TestCase):
     def test_empty_list_calls_cancel_running(self):
         mock_manager = MagicMock()
         mock_manager.cancel_running = MagicMock(return_value=["id1", "id2"])
+        mock_manager.flush_state_callbacks = AsyncMock()
         with patch("stupidex.tools.subagent.get_subagent_manager", return_value=mock_manager):
             result = asyncio.run(execute_interrupt_subagents([]))
         mock_manager.cancel_running.assert_called_once()
@@ -197,6 +198,7 @@ class InterruptSubagentsTests(unittest.TestCase):
     def test_empty_list_no_running_returns_message(self):
         mock_manager = MagicMock()
         mock_manager.cancel_running = MagicMock(return_value=[])
+        mock_manager.flush_state_callbacks = AsyncMock()
         with patch("stupidex.tools.subagent.get_subagent_manager", return_value=mock_manager):
             result = asyncio.run(execute_interrupt_subagents([]))
         self.assertIn("No running subagents found", result.content)
@@ -215,6 +217,7 @@ class InterruptSubagentsTests(unittest.TestCase):
         mock_manager = MagicMock()
         mock_manager.get_record = MagicMock(side_effect=get_record)
         mock_manager.cancel_one = MagicMock(return_value=True)
+        mock_manager.flush_state_callbacks = AsyncMock()
 
         with patch("stupidex.tools.subagent.get_subagent_manager", return_value=mock_manager):
             result = asyncio.run(
@@ -229,6 +232,7 @@ class InterruptSubagentsTests(unittest.TestCase):
     def test_all_not_found_returns_not_found_bucket(self):
         mock_manager = MagicMock()
         mock_manager.get_record = MagicMock(return_value=None)
+        mock_manager.flush_state_callbacks = AsyncMock()
         with patch("stupidex.tools.subagent.get_subagent_manager", return_value=mock_manager):
             result = asyncio.run(
                 execute_interrupt_subagents(["a", "b"])

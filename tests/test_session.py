@@ -7,7 +7,7 @@ from stupidex.agents.manager import SubagentRecord, SubagentState
 from stupidex.domain.agent import Agent, AgentTypes, ModelTier
 from stupidex.domain.chain import Chain
 from stupidex.domain.message import Message, MessageRole, MessageType
-from stupidex.domain.session import Session
+from stupidex.domain.session import Session, SessionManager
 from stupidex.domain.todo import TodoStatus, TodoTask
 
 
@@ -152,6 +152,151 @@ class TestSessionStorageRoundTrip(unittest.TestCase):
         # assert the load did not raise and the corrupt non-id entry was
         # skipped — those are the fail-soft guarantees under test.
         self.assertEqual(session.chains, [])
+
+
+class TestSessionManagerDelete(unittest.TestCase):
+    """Tests for disk-first delete ordering (P2-1)."""
+
+    def _manager_with_session(self, sess_id: str, make_active: bool = True) -> SessionManager:
+        mgr = SessionManager()
+        session = Session(name="S", id=sess_id, model="m")
+        mgr.sessions[sess_id] = session
+        if make_active:
+            mgr.active = session
+        return mgr
+
+    @patch("stupidex.storage.delete_session")
+    def test_delete_happy_path_active_session(self, mock_delete):
+        mgr = self._manager_with_session("sess-1")
+        self.assertTrue(mgr.delete("sess-1"))
+        mock_delete.assert_called_once_with("sess-1")
+        self.assertNotIn("sess-1", mgr.sessions)
+        self.assertIsNone(mgr.active)
+
+    @patch("stupidex.storage.delete_session")
+    def test_delete_active_is_different_session(self, mock_delete):
+        mgr = self._manager_with_session("sess-1", make_active=False)
+        other = Session(name="other", id="sess-other", model="m")
+        mgr.sessions["sess-other"] = other
+        mgr.active = other
+        self.assertTrue(mgr.delete("sess-1"))
+        mock_delete.assert_called_once_with("sess-1")
+        self.assertNotIn("sess-1", mgr.sessions)
+        self.assertIs(mgr.active, other)
+
+    @patch("stupidex.storage.delete_session")
+    def test_delete_unknown_session_no_disk_touch(self, mock_delete):
+        mgr = SessionManager()
+        self.assertFalse(mgr.delete("missing"))
+        mock_delete.assert_not_called()
+
+    @patch("stupidex.storage.delete_session")
+    def test_delete_disk_failure_preserves_in_memory_state(self, mock_delete):
+        mgr = self._manager_with_session("sess-1")
+        mock_delete.side_effect = OSError("disk full")
+        with self.assertLogs("stupidex.domain.session", level="WARNING") as cm:
+            self.assertFalse(mgr.delete("sess-1"))
+        self.assertIn("sess-1", mgr.sessions)
+        self.assertIsNotNone(mgr.active)
+        assert mgr.active is not None
+        self.assertEqual(mgr.active.id, "sess-1")
+        self.assertTrue(any("sess-1" in line for line in cm.output))
+
+    @patch("stupidex.storage.delete_session")
+    def test_cancel_all_called_before_disk_delete(self, mock_delete):
+        call_order: list[str] = []
+
+        def track_delete(sid):
+            call_order.append("delete_session")
+
+        mock_delete.side_effect = track_delete
+        mgr = self._manager_with_session("sess-1")
+        session = mgr.sessions["sess-1"]
+
+        def track_cancel():
+            call_order.append("cancel_all")
+
+        with patch.object(session.subagent_manager, "cancel_all", side_effect=track_cancel):
+            self.assertTrue(mgr.delete("sess-1"))
+        mock_delete.assert_called_once_with("sess-1")
+        self.assertEqual(call_order, ["cancel_all", "delete_session"])
+
+
+class TestSessionFromStorageDictChainGuard(unittest.TestCase):
+    """Tests for per-chain deserialization guard in Session.from_storage_dict (P2-8)."""
+
+    def _chain_data(self, status: str = "completed") -> dict:
+        return {
+            "model": "m",
+            "messages": [],
+            "start_time": 1.0,
+            "end_time": 2.0,
+            "status": status,
+        }
+
+    def _session_data(self, chains: list) -> dict:
+        return {
+            "version": 1,
+            "id": "sess-chains",
+            "name": "chains",
+            "model": "m",
+            "chains": chains,
+            "subagent_chains": [],
+            "todo_store": {},
+        }
+
+    def test_all_valid_chains_load(self):
+        data = self._session_data([self._chain_data(), self._chain_data(), self._chain_data()])
+        session = Session.from_storage_dict(data)
+        self.assertEqual(len(session.chains), 3)
+
+    def test_corrupt_middle_chain_status_skipped(self):
+        corrupt = self._chain_data(status="bogus")
+        data = self._session_data([self._chain_data(), corrupt, self._chain_data()])
+        with self.assertLogs("stupidex.domain.session", level="WARNING") as cm:
+            session = Session.from_storage_dict(data)
+        self.assertEqual(len(session.chains), 2)
+        self.assertTrue(any("index 1" in line for line in cm.output))
+
+    def test_corrupt_first_chain_messages_field_skipped(self):
+        corrupt = {"model": "m", "messages": "not-a-list", "start_time": 1.0, "status": "completed"}
+        data = self._session_data([corrupt, self._chain_data(), self._chain_data()])
+        with self.assertLogs("stupidex.domain.session", level="WARNING"):
+            session = Session.from_storage_dict(data)
+        self.assertEqual(len(session.chains), 2)
+
+    def test_zero_chains_returns_empty_list(self):
+        data = self._session_data([])
+        session = Session.from_storage_dict(data)
+        self.assertEqual(session.chains, [])
+
+    def test_corrupt_chain_does_not_cascade_to_subagent_restoration(self):
+        agent = Agent(
+            name="Subagent",
+            type=AgentTypes.SUBAGENT,
+            tier=ModelTier.PAPUDO,
+            description="d",
+            system_prompt="p",
+        )
+        good_record = SubagentRecord(
+            id="good-1",
+            agent=agent,
+            state=SubagentState.COMPLETED,
+            label="g",
+            task="ok",
+            result="done",
+            start_time=1.0,
+            end_time=2.0,
+        )
+        data = self._session_data([self._chain_data(status="bogus")])
+        data["subagent_chains"] = [good_record.to_storage_dict()]
+        with (
+            patch("stupidex.agents.get_agent_registry", return_value={"Subagent": agent}),
+            self.assertLogs("stupidex.domain.session", level="WARNING"),
+        ):
+            session = Session.from_storage_dict(data)
+        self.assertEqual(session.chains, [])
+        self.assertIn("good-1", session.subagent_manager._subagents)
 
 
 if __name__ == "__main__":

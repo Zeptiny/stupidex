@@ -117,15 +117,15 @@
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P2-1 | domain | domain/session.py:95 | SessionManager.delete mutates in-memory state before disk deletion; partial failure leaves ghost session | correctness, reliability | 75 | gated_auto | Y |
+| P2-1 | domain | domain/session.py:95 | SessionManager.delete mutates in-memory state before disk deletion; partial failure leaves ghost session **[FIXED — Batch B 2026-06-21: disk-first delete ordering]** | correctness, reliability | 75 | gated_auto | Y |
 | P2-2 | domain | domain/session.py:65 | SubagentRecord.from_storage_dict direct private-attr access to SubagentManager._subagents | correctness, maintainability, kieran-python | 75 | manual | Y |
 | P2-3 | domain | domain/chain.py:90 | _reconcile_orphan_tool_results does not deduplicate repeated TOOL_RESULT with same tool_call_id | correctness | 50 | advisory | Y |
 | P2-4 | domain | domain/message.py:110 | record_streamed_message silently discards TOOL_CALL MessageType messages, risking orphaned TOOL_RESULT on replay | correctness | 50 | advisory | Y |
 | P2-5 | domain | domain/session.py:133 | SessionManager.load doesn't verify loaded session.id matches requested session_id — keying by disk-supplied id | adversarial | 75 | advisory | Y |
 | P2-6 | domain | domain/message.py:100 | THINKING-typed stream chunk silently drops tool_calls, orphans subsequent TOOL_RESULT and triggers reconcile-prune | adversarial | 50 | advisory | Y |
 | P2-7 | domain | domain/session.py:38 | Concurrentmut — Session.messages property rebuilds list every call during streaming → potential torn snapshot | adversarial | 50 | advisory | Y |
-| P2-8 | domain | domain/session.py:56 | Chain deserialization in Session.from_storage_dict not individually guarded — one corrupt chain aborts whole session load | reliability | 75 | gated_auto | Y |
-| P2-9 | domain | domain/message.py:76 | Message.from_storage_dict raises on unknown role/type or usage schema drift — single malformed message kills session recovery | reliability | 75 | gated_auto | Y |
+| P2-8 | domain | domain/session.py:56 | Chain deserialization in Session.from_storage_dict not individually guarded — one corrupt chain aborts whole session load **[FIXED — Batch B 2026-06-21: per-chain try/except]** | reliability | 75 | gated_auto | Y |
+| P2-9 | domain | domain/message.py:76 | Message.from_storage_dict raises on unknown role/type or usage schema drift — single malformed message kills session recovery **[FIXED — Batch B 2026-06-21: enum tolerance, role→SYSTEM, type→TEXT, metadata warning]** | reliability | 75 | gated_auto | Y |
 | P2-10 | domain | domain/todo.py:150 | TodoStore.from_storage_dict raises on unknown status — one bad todo aborts session recovery | reliability | 75 | manual | Y |
 | P2-11 | domain | domain/agent.py:75 | Inconsistent serialization method naming across domain models (to_dict vs to_storage_dict vs both) | maintainability | 75 | gated_auto | Y |
 | P2-12 | domain | domain/session.py:8 | Domain layer imports from agents layer — creating a domain↔agents circular dependency | maintainability | 50 | manual | Y |
@@ -144,20 +144,20 @@
 |---|---|---|---|---|---|---|---|
 | P2-21 | agents | agents/manager.py:246 | Exceptions in on_message UI callback silently swallowed, masking persistent mount failures | correctness, maintainability, kieran-python, reliability, agent-native | 75/100 | manual | Y |
 | P2-22 | agents | agents/manager.py:236 | Cancelled on_state_change callbacks cannot reach UI if pane not yet mounted; RUNNING transition silently dropped | correctness | 60 | manual | Y |
-| P2-23 | agents | agents/manager.py:101 | Restored INTERRUPTED records with end_time=None produce forever-growing elapsed_seconds | correctness | 75 | gated_auto | Y |
-| P2-24 | agents | agents/manager.py:141 | from_storage_dict outer except replays the same failing AgentTypes.from_str call as the try block | correctness | 75 | gated_auto | Y |
+| P2-23 | agents | agents/manager.py:101 | Restored INTERRUPTED records with end_time=None produce forever-growing elapsed_seconds **[FIXED — Batch B 2026-06-21: end_time/start_time normalization on INTERRUPTED migration]** | correctness | 75 | gated_auto | Y |
+| P2-24 | agents | agents/manager.py:141 | from_storage_dict outer except replays the same failing AgentTypes.from_str call as the try block **[FIXED — Batch B 2026-06-21: _restore_agent helper with isolated AgentTypes.from_str try]** | correctness | 75 | gated_auto | Y |
 | P2-25 | agents | agents/manager.py:153 | Restored records have no async_task and no on_message/on_state_change wiring; new spawns depend on sync_tabs re-wiring | correctness | 50 | manual | Y |
-| P2-26 | agents | agents/manager.py:124 | Duplicated fallback Agent construction in SubagentRecord.from_storage_dict; try/except is dead | maintainability, kieran-python | 75 | gated_auto | Y |
+| P2-26 | agents | agents/manager.py:124 | Duplicated fallback Agent construction in SubagentRecord.from_storage_dict; try/except is dead **[FIXED — Batch B 2026-06-21: consolidated into _restore_agent helper]** | maintainability, kieran-python | 75 | gated_auto | Y |
 | P2-27 | agents | agents/manager.py:181 | cancel_all and cancel_running are near-duplicates with one observable difference (state filter + on_spawn clear) | maintainability, kieran-python | 75 | manual | Y |
 | P2-28 | agents | agents/manager.py:233 | spawn()'s _run closure is a 50-line inline lifecycle that cannot be tested in isolation | maintainability | 50 | manual | Y |
 | P2-29 | agents | agents/manager.py:201 | spawn() parameter 'agent_type' is misleading — it is actually the registry name lookup key | maintainability | 75 | manual | Y |
 | P2-30 | agents | agents/manager.py:282 | Subagent task inherit parent's SubagentManager via ContextVar → lateral privilege escalation + sibling cancellation + unbounded sub-subagent recursion | adversarial, agent-native | 75/65 | manual | Y |
-| P2-31 | agents | agents/manager.py:163 | SubagentRecord.from_storage_dict bypasses orphan reconciliation that recent fix (commit 406e032) applied only to parent chains | adversarial | 75 | gated_auto | Y |
+| P2-31 | agents | agents/manager.py:163 | SubagentRecord.from_storage_dict bypasses orphan reconciliation that recent fix (commit 406e032) applied only to parent chains **[FIXED — Batch B 2026-06-21: _reconcile_orphan_tool_results now applied to subagent messages]** | adversarial | 75 | gated_auto | Y |
 | P2-32 | agents | agents/manager.py:248 | No per-subagent iteration cap or wall-clock timeout — runaway LLM tool-call loop blocks parent indefinitely and grows record.messages unbounded | adversarial, reliability | 75 | manual | Y |
 | P2-33 | agents | agents/manager.py:169 | SubagentManager._subagents never pruned — unbounded memory growth and O(N) sidebar rebuild per dynamic-system-prompt call | adversarial | 100 | manual | Y |
-| P2-34 | agents | agents/manager.py:191 | cancel_running/cancel_one return before cancellation cleanup completes → fire-and-forget on_state_change(INTERRUPTED) races UI teardown | adversarial | 75 | gated_auto | Y |
+| P2-34 | agents | agents/manager.py:191 | cancel_running/cancel_one return before cancellation cleanup completes → fire-and-forget on_state_change(INTERRUPTED) races UI teardown **[FIXED — Batch B 2026-06-21: flush_state_callbacks() primitive + async caller updates]** | adversarial | 75 | gated_auto | Y |
 | P2-35 | agents | agents/manager.py:120 | Parallel subagent spawn + save_active race: tool_calls list reference snapshot via deepcopy may persist inconsistent message state | adversarial | 50 | advisory | Y |
-| P2-36 | agents | agents/manager.py:150 (alt) | Persistence replay silently accepts state=PENDING → restored record stays non-terminal forever → _tick_timer runs indefinitely | adversarial | 50 | gated_auto | Y |
+| P2-36 | agents | agents/manager.py:150 (alt) | Persistence replay silently accepts state=PENDING → restored record stays non-terminal forever → _tick_timer runs indefinitely **[FIXED — duplicate of P1-1, characterized in Batch B 2026-06-21: PENDING→INTERRUPTED migration verified by characterization test]** | adversarial | 50 | gated_auto | Y |
 | P2-37 | agents | agents/manager.py:294 | wait() has no timeout — a hung subagent stream blocks the caller indefinitely | reliability | 75 | manual | N |
 | P2-38 | agents | agents/manager.py:243 | messages_mounted counter incremented before on_message awaits, drifts on failure | reliability | 75 | manual | N |
 | P2-39 | agents | agents/manager.py:154 | from_storage_dict raises uncaught KeyError on data['id'] and ValueError on unknown state | reliability | 75 | manual | N |

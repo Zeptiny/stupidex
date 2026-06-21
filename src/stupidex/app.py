@@ -189,6 +189,7 @@ class Stupidex(App):
         elif self._interrupt_state == InterruptState.CONFIRM_SUBAGENTS:
             if self.sessions.active:
                 cancelled = self.sessions.active.subagent_manager.cancel_running()
+                await self.sessions.active.subagent_manager.flush_state_callbacks()
                 if cancelled:
                     names = []
                     for sid in cancelled:

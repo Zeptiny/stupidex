@@ -53,7 +53,12 @@ class Session:
 
     @classmethod
     def from_storage_dict(cls, data: dict[str, Any]) -> "Session":
-        chains = [Chain.from_storage_dict(c) for c in data.get("chains", [])]
+        chains: list[Chain] = []
+        for i, c in enumerate(data.get("chains", [])):
+            try:
+                chains.append(Chain.from_storage_dict(c))
+            except Exception:
+                log.warning("Failed to restore chain at index %d", i, exc_info=True)
         todo_store = TodoStore.from_storage_dict(data.get("todo_store", {}))
         session = cls(
             id=data["id"],
@@ -107,16 +112,20 @@ class SessionManager:
         return None
 
     def delete(self, id: str) -> bool:
-        if id in self.sessions:
-            session = self.sessions[id]
-            session.subagent_manager.cancel_all()
-            del self.sessions[id]
-            if self.active and self.active.id == id:
-                self.active = None
-            from stupidex.storage import delete_session
+        if id not in self.sessions:
+            return False
+        session = self.sessions[id]
+        session.subagent_manager.cancel_all()
+        from stupidex.storage import delete_session
+        try:
             delete_session(id)
-            return True
-        return False
+        except Exception:
+            log.warning("Failed to delete session %s from disk", id, exc_info=True)
+            return False
+        del self.sessions[id]
+        if self.active is not None and self.active.id == id:
+            self.active = None
+        return True
 
     def change_model(self, model_id: str) -> None:
         if self.active:
