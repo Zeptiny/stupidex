@@ -17,6 +17,12 @@ from stupidex.domain.message import (
     Usage,
     record_streamed_message,
 )
+from stupidex.domain.tool import (
+    ExecutorResult,
+    Tool,
+    ToolParameter,
+    ToolParameterProperties,
+)
 from stupidex.llm import client as llm_client
 from stupidex.llm.client import classify_error
 from stupidex.llm.providers import ProviderResolutionError
@@ -1598,6 +1604,250 @@ class PostCommitContentSyncTest(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(assistant_text), 1)
         self.assertIn("AB", assistant_text[0].content)
+
+
+class TestValidateToolArgs(unittest.TestCase):
+    """P1-33 -- _validate_tool_args covers unknown params, missing required, and ok paths."""
+
+    def _make_tool(self, *, required=None, properties=None):
+        props = {
+            k: ToolParameterProperties(type="string", description=d)
+            for k, d in (properties or {}).items()
+        }
+        return Tool(
+            name="mytool",
+            description="d",
+            parameters=ToolParameter(properties=props, required=required or []),
+        )
+
+    def test_all_required_present_no_unknown_returns_none(self):
+        tool = self._make_tool(
+            required=["path"],
+            properties={"path": "p", "content": "c"},
+        )
+        self.assertIsNone(llm_client._validate_tool_args(tool, {"path": "x", "content": "y"}))
+
+    def test_unknown_param_returns_error_string(self):
+        tool = self._make_tool(properties={"path": "p"})
+        err = llm_client._validate_tool_args(tool, {"path": "x", "foo": "z"})
+        self.assertIsInstance(err, str)
+        self.assertTrue(err.startswith("Unknown parameters:"))
+
+    def test_missing_required_returns_error_string(self):
+        tool = self._make_tool(required=["path"], properties={"path": "p"})
+        err = llm_client._validate_tool_args(tool, {})
+        self.assertIsInstance(err, str)
+        self.assertEqual(err, "Missing required parameter: path")
+
+    def test_empty_args_no_required_returns_none(self):
+        tool = self._make_tool(properties={"path": "p"})
+        self.assertIsNone(llm_client._validate_tool_args(tool, {}))
+
+
+class TestExecuteToolErrorPaths(unittest.IsolatedAsyncioTestCase):
+    """P1-32 -- _execute_tool covers all error branches + happy path + no-timeout branch."""
+
+    def _make_tool(self, name="mytool", required=None, properties=None):
+        props = {
+            k: ToolParameterProperties(type="string", description=d)
+            for k, d in (properties or {"path": "p"}).items()
+        }
+        return Tool(
+            name=name,
+            description="d",
+            parameters=ToolParameter(properties=props, required=required or []),
+        )
+
+    def _filtered_tools(self, name="mytool", tool=None, executor=None):
+        return {name: {"tool": tool or self._make_tool(name=name), "executor": executor or AsyncMock()}}
+
+    def _tc(self, name="mytool", arguments="{}", tc_id="tc1"):
+        return {"id": tc_id, "function": {"name": name, "arguments": arguments}}
+
+    async def test_jsondecode_error_returns_parse_error(self):
+        tc = self._tc(arguments="not json")
+        result = await llm_client._execute_tool(tc, self._filtered_tools())
+        self.assertEqual(result.role, MessageRole.TOOL)
+        self.assertEqual(result.type, MessageType.TOOL_RESULT)
+        self.assertEqual(result.tool_call_id, "tc1")
+        self.assertIn("parse", result.content.lower())
+
+    async def test_args_not_dict_returns_type_error(self):
+        tc = self._tc(arguments='[1,2,3]')
+        result = await llm_client._execute_tool(tc, self._filtered_tools())
+        self.assertIn("must be a JSON object", result.content)
+
+    async def test_unknown_tool_returns_unknown_error(self):
+        tools = self._filtered_tools(name="mytool")
+        tc = self._tc(name="nonexistent")
+        result = await llm_client._execute_tool(tc, tools)
+        self.assertIn("does not exist", result.content)
+
+    async def test_validation_failure_returns_validation_error(self):
+        executor = AsyncMock()
+        tool = self._make_tool(required=["path"])
+        tc = self._tc(arguments="{}")
+        result = await llm_client._execute_tool(tc, self._filtered_tools(tool=tool, executor=executor))
+        self.assertTrue(result.content.startswith("Error:"))
+        self.assertIn("Missing required parameter: path", result.content)
+        executor.assert_not_called()
+
+    async def test_timeout_error_returns_timeout_message(self):
+        executor = AsyncMock(side_effect=TimeoutError())
+        tc = self._tc(arguments='{"path":"x"}')
+        result = await llm_client._execute_tool(tc, self._filtered_tools(executor=executor))
+        self.assertIn("timed out", result.content.lower())
+
+    async def test_generic_exception_returns_internal_error(self):
+        executor = AsyncMock(side_effect=RuntimeError("boom"))
+        tc = self._tc(arguments='{"path":"x"}')
+        result = await llm_client._execute_tool(tc, self._filtered_tools(executor=executor))
+        self.assertIn("internal error", result.content.lower())
+
+    async def test_happy_path_returns_tool_message(self):
+        executor = AsyncMock(return_value=ExecutorResult(display="ok", content="result"))
+        tc = self._tc(arguments='{"path":"x"}')
+        result = await llm_client._execute_tool(tc, self._filtered_tools(executor=executor))
+        self.assertEqual(result.role, MessageRole.TOOL)
+        self.assertEqual(result.type, MessageType.TOOL_RESULT)
+        self.assertEqual(result.content, "result")
+        self.assertEqual(result.display, "ok")
+        executor.assert_awaited_once_with(path="x")
+
+    async def test_tools_without_timeout_bare_call(self):
+        self.assertIn("wait_for_subagent", llm_client._TOOLS_WITHOUT_TIMEOUT)
+        tool = self._make_tool(name="wait_for_subagent")
+
+        async def executor(**args):
+            await asyncio.sleep(0.02)
+            return ExecutorResult(display="ok", content="bare-result")
+
+        mock_exec = AsyncMock(side_effect=executor)
+        tc = {"id": "tc1", "function": {"name": "wait_for_subagent", "arguments": "{}"}}
+        result = await llm_client._execute_tool(tc, self._filtered_tools(name="wait_for_subagent", tool=tool, executor=mock_exec))
+        self.assertEqual(result.content, "bare-result")
+        mock_exec.assert_awaited_once()
+
+    async def test_tool_call_id_preserved_in_result(self):
+        executor = AsyncMock(return_value=ExecutorResult(display="ok", content="result"))
+        tc = self._tc(arguments='{"path":"x"}', tc_id="tc123")
+        result = await llm_client._execute_tool(tc, self._filtered_tools(executor=executor))
+        self.assertEqual(result.tool_call_id, "tc123")
+
+
+class TestStreamResponseMultiTurn(unittest.IsolatedAsyncioTestCase):
+    """P1-31 -- stream_response outer while-loop drives multi-turn tool-call rounds."""
+
+    def _providers(self):
+        return {
+            "default": {
+                "base_url": "https://example.test/v1",
+                "litellm_provider": "openai",
+                "models": {"mimo-v2.5": {}},
+            }
+        }
+
+    async def _drive(self, *, fake_acompletion):
+        cfg = Config(providers=self._providers())
+        acompletion_mock = AsyncMock(side_effect=fake_acompletion)
+        dummy_dynamic = Message(MessageRole.SYSTEM, "<dynamic/>", MessageType.TEXT)
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"result {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        original_execute_tool = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        patches = [
+            patch("stupidex.llm.client.get_config", return_value=cfg),
+            patch("stupidex.llm.providers.get_config", return_value=cfg),
+            patch("stupidex.llm.client.build_dynamic_system_prompt",
+                  new=AsyncMock(return_value=dummy_dynamic)),
+            patch("stupidex.llm.client.get_tool_registry", return_value={}),
+            patch("stupidex.llm.client.litellm.acompletion", new=acompletion_mock),
+        ]
+        try:
+            with contextlib.ExitStack() as stack:
+                for p in patches:
+                    stack.enter_context(p)
+                gen = llm_client.stream_response(
+                    messages=[],
+                    model="default/mimo-v2.5",
+                    allowed_tools=[],
+                    system_prompt="",
+                )
+                messages: list[Message] = []
+                async for msg in gen:
+                    messages.append(msg)
+        finally:
+            llm_client._execute_tool = original_execute_tool
+        return messages, acompletion_mock
+
+    async def test_single_round_no_tool_calls_exits_immediately(self):
+        async def fake_acompletion(**kwargs):
+            async def _stream():
+                yield chunk(content="done", usage=Usage(1, 2, 3))
+            return _stream()
+
+        messages, mock = await self._drive(fake_acompletion=fake_acompletion)
+        self.assertEqual(mock.call_count, 1)
+        text_msgs = [m for m in messages if m.type == MessageType.TEXT and m.content]
+        self.assertTrue(any(m.content == "done" for m in text_msgs))
+
+    async def test_two_round_loop_tool_calls_then_text(self):
+        state = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            state["n"] += 1
+            if state["n"] == 1:
+                async def s1():
+                    yield chunk(tool_calls=[_tool_delta_split(
+                        0, id="tc1", name="mytool", arguments='{"path":"x"}')])
+                return s1()
+            else:
+                async def s2():
+                    yield chunk(content="done", usage=Usage(1, 2, 3))
+                return s2()
+
+        messages, mock = await self._drive(fake_acompletion=fake_acompletion)
+        self.assertEqual(mock.call_count, 2)
+        tool_results = [m for m in messages if m.type == MessageType.TOOL_RESULT]
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(tool_results[0].tool_call_id, "tc1")
+        text_msgs = [m for m in messages if m.type == MessageType.TEXT and m.content]
+        self.assertTrue(any(m.content == "done" for m in text_msgs))
+
+    async def test_three_round_loop_two_tool_rounds_then_text(self):
+        state = {"n": 0}
+
+        async def fake_acompletion(**kwargs):
+            state["n"] += 1
+            if state["n"] == 1:
+                async def s1():
+                    yield chunk(tool_calls=[_tool_delta_split(
+                        0, id="tc1", name="mytool", arguments='{"path":"x"}')])
+                return s1()
+            elif state["n"] == 2:
+                async def s2():
+                    yield chunk(tool_calls=[_tool_delta_split(
+                        0, id="tc2", name="mytool", arguments='{"path":"y"}')])
+                return s2()
+            else:
+                async def s3():
+                    yield chunk(content="final", usage=Usage(1, 2, 3))
+                return s3()
+
+        messages, mock = await self._drive(fake_acompletion=fake_acompletion)
+        self.assertEqual(mock.call_count, 3)
+        tool_results = [m for m in messages if m.type == MessageType.TOOL_RESULT]
+        ids = sorted(tr.tool_call_id for tr in tool_results)
+        self.assertEqual(ids, ["tc1", "tc2"])
+        text_msgs = [m for m in messages if m.type == MessageType.TEXT and m.content]
+        self.assertTrue(any(m.content == "final" for m in text_msgs))
 
 
 if __name__ == "__main__":

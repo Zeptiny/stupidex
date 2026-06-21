@@ -199,3 +199,210 @@ class TestMCPLifecycle(unittest.IsolatedAsyncioTestCase):
                     await manager.start_all(servers)
             finally:
                 await manager.shutdown()
+
+
+_SSE_SENTINEL = object()
+
+
+@asynccontextmanager
+async def fake_sse_client(*args, **kwargs):
+    async def reader():
+        try:
+            await anyio.sleep_forever()
+        except anyio.get_cancelled_exc_class():
+            pass
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(reader)
+        try:
+            yield (_SSE_SENTINEL, object())
+        finally:
+            tg.cancel_scope.cancel()
+
+
+@asynccontextmanager
+async def stdio_client_with_command(server_params):
+    async def reader():
+        try:
+            await anyio.sleep_forever()
+        except anyio.get_cancelled_exc_class():
+            pass
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(reader)
+        try:
+            yield (server_params.command, object())
+        finally:
+            tg.cancel_scope.cancel()
+
+
+def _make_recording_sse_client():
+    calls: list[dict] = []
+
+    @asynccontextmanager
+    async def _recording(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        async with fake_sse_client(*args, **kwargs) as streams:
+            yield streams
+
+    _recording.calls = calls  # type: ignore[attr-defined]
+    return _recording
+
+
+class _ScriptedSession:
+    def __init__(self, read_stream=None, write_stream=None, *, behavior="healthy"):
+        self.behavior = behavior
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def initialize(self):
+        if self.behavior == "fail-init":
+            raise RuntimeError("init boom")
+
+    async def list_tools(self):
+        return _ToolsResult()
+
+    async def list_resources(self):
+        return _ResourcesResult()
+
+
+class TestSSETransport(unittest.IsolatedAsyncioTestCase):
+    async def test_sse_branch_calls_sse_client_not_stdio(self):
+        from unittest.mock import MagicMock
+
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        servers = {"sse-srv": {"url": "http://localhost:8080/sse"}}
+        recording_sse = _make_recording_sse_client()
+        stdio_mock = MagicMock()
+        with (
+            patch("stupidex.mcp.sse_client", recording_sse),
+            patch("stupidex.mcp.stdio_client", stdio_mock),
+            patch("stupidex.mcp.ClientSession", FakeClientSession),
+        ):
+            await manager.start_all(servers)
+
+            self.assertEqual(len(recording_sse.calls), 1)
+            self.assertEqual(
+                recording_sse.calls[0]["kwargs"].get("url"),
+                "http://localhost:8080/sse",
+            )
+            stdio_mock.assert_not_called()
+            self.assertIn("sse-srv", manager._sessions)
+            self.assertEqual(
+                manager.get_server_statuses()["sse-srv"]["status"],
+                "connected",
+            )
+            await manager.shutdown()
+
+    async def test_sse_server_initialize_failure_marks_failed(self):
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        servers = {
+            "sse-bad": {"url": "http://localhost:8080/sse"},
+            "stdio-good": {"command": "good", "args": []},
+        }
+
+        def session_factory(read_stream, write_stream):
+            if read_stream is _SSE_SENTINEL:
+                return _ScriptedSession(behavior="fail-init")
+            return _ScriptedSession(behavior="healthy")
+
+        with (
+            patch("stupidex.mcp.sse_client", fake_sse_client),
+            patch("stupidex.mcp.stdio_client", stdio_client_with_command),
+            patch("stupidex.mcp.ClientSession", session_factory),
+        ):
+            await manager.start_all(servers)
+
+            statuses = manager.get_server_statuses()
+            self.assertEqual(statuses["sse-bad"]["status"], "failed")
+            self.assertIn("init boom", statuses["sse-bad"]["error"])
+            self.assertEqual(statuses["stdio-good"]["status"], "connected")
+            self.assertNotIn("sse-bad", manager._sessions)
+            self.assertIn("stdio-good", manager._sessions)
+            await manager.shutdown()
+
+
+class TestStartAllErrorPropagation(unittest.IsolatedAsyncioTestCase):
+    async def test_start_error_re_raised_by_start_all(self):
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        servers = {"srv1": {"command": "fake", "args": []}}
+
+        async def _fake_run(self, servers):
+            self._start_error = RuntimeError("catastrophic")
+            self._ready.set()
+            await self._stop.wait()
+
+        with patch.object(MCPManager, "_run", _fake_run), self.assertRaises(RuntimeError) as ctx:
+            await manager.start_all(servers)
+        self.assertIn("catastrophic", str(ctx.exception))
+        self.assertIsNone(manager._runner)
+
+    async def test_per_server_failure_does_not_propagate(self):
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        servers = {
+            "srv-good": {"command": "good", "args": []},
+            "srv-bad": {"command": "bad", "args": []},
+        }
+
+        def session_factory(read_stream, write_stream):
+            if read_stream == "bad":
+                return _ScriptedSession(behavior="fail-init")
+            return _ScriptedSession(behavior="healthy")
+
+        with (
+            patch("stupidex.mcp.stdio_client", stdio_client_with_command),
+            patch("stupidex.mcp.ClientSession", session_factory),
+        ):
+            await manager.start_all(servers)
+
+            statuses = manager.get_server_statuses()
+            self.assertEqual(statuses["srv-bad"]["status"], "failed")
+            self.assertIn("init boom", statuses["srv-bad"]["error"])
+            self.assertEqual(statuses["srv-good"]["status"], "connected")
+            self.assertIn("srv-good", manager._sessions)
+            self.assertNotIn("srv-bad", manager._sessions)
+            await manager.shutdown()
+
+    async def test_empty_servers_completes_immediately(self):
+        import time
+
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        t0 = time.monotonic()
+        await manager.start_all({})
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(manager._sessions, {})
+        await manager.shutdown()
+
+    async def test_config_load_failure_uses_defaults(self):
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        servers = {"srv1": {"command": "fake", "args": []}}
+        with (
+            patch("stupidex.mcp.stdio_client", fake_stdio_client),
+            patch("stupidex.mcp.ClientSession", FakeClientSession),
+            patch("stupidex.config.get_config", side_effect=RuntimeError("config boom")),
+        ):
+            await manager.start_all(servers)
+            self.assertEqual(manager._per_server_timeout, 10.0)
+            self.assertEqual(manager._startup_timeout, 60.0)
+            self.assertEqual(
+                manager.get_server_statuses()["srv1"]["status"],
+                "connected",
+            )
+            await manager.shutdown()

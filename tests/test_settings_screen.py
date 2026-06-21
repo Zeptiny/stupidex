@@ -1,6 +1,7 @@
 """Tests for the SettingsScreen modal, NewProviderForm, and NewMCPServerForm."""
 
 import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -844,3 +845,117 @@ class TestMainStartupGate:
 
         mock_app_cls.assert_called_once()
         mock_app.run.assert_called_once()
+
+
+# ── _on_edit_provider_result (rename / overwrite behavior) ──────────────────
+
+
+class TestOnEditProviderResult(unittest.TestCase):
+    def _make_screen(self, providers=None):
+        cfg = Config()
+        cfg.providers = dict(providers) if providers else {}
+        screen = SettingsScreen(cfg)
+        screen._refresh_tab = MagicMock()
+        screen._mark_dirty = MagicMock()
+        return screen
+
+    def test_rename_removes_old_alias_adds_new(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "new", "models": {}}, original_alias="old"
+        )
+        self.assertIn("new", screen._config.providers)
+        self.assertNotIn("old", screen._config.providers)
+
+    def test_same_alias_overwrites_in_place_no_pop(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "old", "models": {"m": {}}}, original_alias="old"
+        )
+        self.assertEqual(set(screen._config.providers.keys()), {"old"})
+        self.assertEqual(screen._config.providers["old"]["models"], {"m": {}})
+
+    def test_rename_to_existing_alias_silently_overwrites(self):
+        # FIXME: P1-53
+        screen = self._make_screen(
+            {"old": {"base_url": "old-url"}, "existing": {"base_url": "exist-url"}}
+        )
+        screen._on_edit_provider_result(
+            result={"_alias": "existing", "models": {}}, original_alias="old"
+        )
+        self.assertIn("existing", screen._config.providers)
+        self.assertNotIn("old", screen._config.providers)
+        self.assertEqual(screen._config.providers["existing"]["models"], {})
+
+    def test_original_alias_none_just_inserts(self):
+        screen = self._make_screen({"keep": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "new", "models": {}}, original_alias=None
+        )
+        self.assertIn("new", screen._config.providers)
+        self.assertIn("keep", screen._config.providers)
+
+    def test_result_missing_alias_key_raises_keyerror(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        with self.assertRaises(KeyError):
+            screen._on_edit_provider_result(
+                result={"models": {}}, original_alias="old"
+            )
+
+    def test_edit_marks_providers_dirty(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "old", "models": {}}, original_alias="old"
+        )
+        screen._mark_dirty.assert_called_once_with("providers")
+
+
+# ── _on_edit_mcp_result (rename / overwrite behavior) ───────────────────────
+
+
+class TestOnEditMcpResult(unittest.TestCase):
+    def _make_screen(self, mcp_servers=None):
+        cfg = Config()
+        cfg.mcp_servers = dict(mcp_servers) if mcp_servers else {}
+        screen = SettingsScreen(cfg)
+        screen._refresh_tab = MagicMock()
+        screen._mark_dirty = MagicMock()
+        return screen
+
+    def test_rename_removes_old_name_adds_new(self):
+        screen = self._make_screen({"old": {"command": "x"}})
+        screen._on_edit_mcp_result(
+            result={"_name": "new", "command": "x"}, original_name="old"
+        )
+        self.assertIn("new", screen._config.mcp_servers)
+        self.assertNotIn("old", screen._config.mcp_servers)
+
+    def test_same_name_overwrites_in_place(self):
+        screen = self._make_screen({"old": {"command": "x"}})
+        screen._on_edit_mcp_result(
+            result={"_name": "old", "command": "y", "args": ["a"]}, original_name="old"
+        )
+        self.assertEqual(set(screen._config.mcp_servers.keys()), {"old"})
+        self.assertEqual(screen._config.mcp_servers["old"]["command"], "y")
+
+    def test_rename_to_existing_name_silently_overwrites(self):
+        # FIXME: P1-53
+        screen = self._make_screen(
+            {
+                "old": {"command": "old-cmd"},
+                "existing": {"command": "exist-cmd"},
+            }
+        )
+        screen._on_edit_mcp_result(
+            result={"_name": "existing", "command": "new-cmd"}, original_name="old"
+        )
+        self.assertIn("existing", screen._config.mcp_servers)
+        self.assertNotIn("old", screen._config.mcp_servers)
+        self.assertEqual(screen._config.mcp_servers["existing"]["command"], "new-cmd")
+
+    def test_edit_marks_mcp_servers_dirty(self):
+        screen = self._make_screen({"old": {"command": "x"}})
+        screen._on_edit_mcp_result(
+            result={"_name": "old", "command": "x"}, original_name="old"
+        )
+        screen._mark_dirty.assert_called_once_with("mcp_servers")

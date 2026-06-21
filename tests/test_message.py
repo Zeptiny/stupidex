@@ -110,5 +110,104 @@ class TestUsageDeserializationForwardCompat(unittest.TestCase):
         self.assertEqual(msg.usage.total_tokens, 150)
 
 
+class TestMessageToDict(unittest.TestCase):
+    """Tests for Message.to_dict() content/tool_call_id/tool_calls contracts (P1-30)."""
+
+    def _tool_calls(self):
+        return [{"id": "tc1", "function": {"name": "x", "arguments": "{}"}}]
+
+    def test_assistant_with_tool_calls_and_content_keeps_string(self):
+        msg = Message(
+            MessageRole.ASSISTANT,
+            "hello",
+            MessageType.TEXT,
+            tool_calls=self._tool_calls(),
+        )
+        d = msg.to_dict()
+        self.assertEqual(d["content"], "hello")
+        self.assertIn("tool_calls", d)
+
+    def test_assistant_with_tool_calls_empty_content_becomes_none(self):
+        msg = Message(
+            MessageRole.ASSISTANT,
+            "",
+            MessageType.TEXT,
+            tool_calls=self._tool_calls(),
+        )
+        d = msg.to_dict()
+        self.assertIsNone(d["content"])
+        self.assertIn("tool_calls", d)
+
+    def test_assistant_with_tool_calls_none_content_becomes_none(self):
+        msg = Message(
+            MessageRole.ASSISTANT,
+            None,  # type: ignore[arg-type]
+            MessageType.TEXT,
+            tool_calls=self._tool_calls(),
+        )
+        d = msg.to_dict()
+        self.assertIsNone(d["content"])
+
+    def test_assistant_without_tool_calls_keeps_empty_content(self):
+        msg = Message(MessageRole.ASSISTANT, "", MessageType.TEXT, tool_calls=None)
+        d = msg.to_dict()
+        self.assertEqual(d["content"], "")
+        self.assertNotIn("tool_calls", d)
+
+    def test_tool_role_empty_content_preserved(self):
+        msg = Message(
+            MessageRole.TOOL,
+            "",
+            MessageType.TOOL_RESULT,
+            tool_call_id="tc1",
+        )
+        d = msg.to_dict()
+        self.assertEqual(d["content"], "")
+
+    def test_user_role_content_preserved(self):
+        msg = Message(MessageRole.USER, "hi", MessageType.TEXT)
+        d = msg.to_dict()
+        self.assertEqual(d["content"], "hi")
+
+    def test_system_role_content_preserved(self):
+        msg = Message(MessageRole.SYSTEM, "sys", MessageType.TEXT)
+        d = msg.to_dict()
+        self.assertEqual(d["content"], "sys")
+
+    def test_tool_call_id_included_when_truthy(self):
+        msg = Message(
+            MessageRole.TOOL,
+            "result",
+            MessageType.TOOL_RESULT,
+            tool_call_id="tc1",
+        )
+        d = msg.to_dict()
+        self.assertEqual(d["tool_call_id"], "tc1")
+
+    def test_tool_call_id_omitted_when_falsy(self):
+        msg = Message(
+            MessageRole.TOOL,
+            "result",
+            MessageType.TOOL_RESULT,
+            tool_call_id=None,
+        )
+        d = msg.to_dict()
+        self.assertNotIn("tool_call_id", d)
+
+    def test_tool_calls_deep_copied(self):
+        msg = Message(
+            MessageRole.ASSISTANT,
+            "",
+            MessageType.TEXT,
+            tool_calls=self._tool_calls(),
+        )
+        d = msg.to_dict()
+        assert d["tool_calls"] is not None  # for type narrowing
+        d["tool_calls"][0]["function"]["arguments"] = "mutated"
+        self.assertEqual(
+            msg.tool_calls[0]["function"]["arguments"], "{}"  # type: ignore[index]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

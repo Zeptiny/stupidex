@@ -1,5 +1,9 @@
 """Tests for RAG vector store (U9)."""
 
+import tempfile
+import unittest
+
+import numpy as np
 import pytest
 
 from stupidex.rag.chunker import Chunk
@@ -160,3 +164,136 @@ def test_store_clear_removes_everything(tmp_path):
 
     assert not (tmp_path / ".stupidex" / "rag" / "index.db").exists()
     assert not (tmp_path / ".stupidex" / "rag" / "vectors.npy").exists()
+
+
+class TestUpsertFileVectorRebuild(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.store = RAGStore(self._tmp.name)
+        self.store.init_db()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _files_row(self, file_path):
+        conn = self.store._get_conn()
+        try:
+            return conn.execute(
+                "SELECT hash, chunk_count FROM files WHERE file_path = ?",
+                (file_path,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+    def _chunk_file_paths_in_order(self):
+        return [c["file_path"] for c in self.store._get_all_chunks()]
+
+    def _vectors(self):
+        v = self.store._load_vectors()
+        return v if v is not None else []
+
+    def test_upsert_two_files_vectors_in_chunk_id_order(self):
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f2.py", content="b=2", start_line=1, end_line=1)
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+
+        self.store.upsert_file("f1.py", [c1], [v1])
+        self.store.upsert_file("f2.py", [c2], [v2])
+
+        self.assertEqual(self._chunk_file_paths_in_order(), ["f1.py", "f2.py"])
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 2)
+        self.assertEqual(list(vectors[0]), v1)
+        self.assertEqual(list(vectors[1]), v2)
+
+    def test_upsert_second_file_preserves_first_file_vectors(self):
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f1.py", content="a=2", start_line=2, end_line=2)
+        c3 = Chunk(file_path="f2.py", content="b=3", start_line=1, end_line=1)
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+        v3 = [0.0, 0.0, 1.0]
+
+        self.store.upsert_file("f1.py", [c1, c2], [v1, v2])
+        self.store.upsert_file("f2.py", [c3], [v3])
+
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 3)
+        self.assertEqual(list(vectors[0]), v1)
+        self.assertEqual(list(vectors[1]), v2)
+        self.assertEqual(list(vectors[2]), v3)
+
+    def test_upsert_empty_chunks_creates_stub_files_row(self):
+        self.store.upsert_file("f1.py", [], [])
+
+        row = self._files_row("f1.py")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "")
+        self.assertEqual(row[1], 0)
+        self.assertEqual(self.store.status().total_chunks, 0)
+        self.assertEqual(self._vectors(), [])
+
+    def test_upsert_replace_existing_file_realigns_vectors(self):
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f1.py", content="a=2", start_line=2, end_line=2)
+        c3 = Chunk(file_path="f1.py", content="b=9", start_line=1, end_line=1)
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+        v3 = [0.5, 0.5, 0.5]
+
+        self.store.upsert_file("f1.py", [c1, c2], [v1, v2])
+        self.store.upsert_file("f1.py", [c3], [v3])
+
+        self.assertEqual(self.store.status().total_chunks, 1)
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 1)
+        self.assertEqual(list(vectors[0]), v3)
+
+    def test_upsert_no_existing_vectors_all_new_embeddings(self):
+        self.assertFalse(self.store.vectors_file.exists())
+
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f1.py", content="a=2", start_line=2, end_line=2)
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+
+        self.store.upsert_file("f1.py", [c1, c2], [v1, v2])
+
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 2)
+        self.assertEqual(list(vectors[0]), v1)
+        self.assertEqual(list(vectors[1]), v2)
+
+    def test_upsert_vector_count_mismatch_uses_all_new_embeddings(self):
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f1.py", content="a=2", start_line=2, end_line=2)
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+        self.store.upsert_file("f1.py", [c1, c2], [v1, v2])
+
+        np.save(str(self.store.vectors_file), np.array([v1], dtype=np.float32))
+
+        v3 = [0.5, 0.5, 0.0]
+        v4 = [0.0, 0.5, 0.5]
+        self.store.upsert_file("f1.py", [c1, c2], [v3, v4])
+
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 2)
+        self.assertEqual(list(vectors[0]), v3)
+        self.assertEqual(list(vectors[1]), v4)
+
+    def test_upsert_then_delete_then_upsert_realigns(self):
+        c1 = Chunk(file_path="f1.py", content="a=1", start_line=1, end_line=1)
+        c2 = Chunk(file_path="f1.py", content="b=2", start_line=1, end_line=1)
+        v1 = [1.0, 0.0, 0.0]
+        v2 = [0.0, 1.0, 0.0]
+
+        self.store.upsert_file("f1.py", [c1], [v1])
+        self.store.delete_by_file("f1.py")
+        self.store.upsert_file("f1.py", [c2], [v2])
+
+        self.assertEqual(self.store.status().total_chunks, 1)
+        vectors = self._vectors()
+        self.assertEqual(len(vectors), 1)
+        self.assertEqual(list(vectors[0]), v2)

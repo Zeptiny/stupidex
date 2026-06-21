@@ -1,6 +1,15 @@
+import os
+from unittest.mock import MagicMock, patch
+
 import pytest
 
-from stupidex.tools.file_manipulation import execute_edit_tool, execute_write_tool
+from stupidex.tools.file_manipulation import (
+    execute_edit_tool,
+    execute_glob_tool,
+    execute_read_directory_tool,
+    execute_read_tool,
+    execute_write_tool,
+)
 
 
 @pytest.mark.asyncio
@@ -96,4 +105,153 @@ async def test_write_tool_creates_parent_directories(tmp_path, monkeypatch):
     result = await execute_write_tool("nested/deep/dir/file.txt", "content\n")
     assert (tmp_path / "nested" / "deep" / "dir" / "file.txt").read_text() == "content\n"
     assert "Wrote" in result.display
+
+
+class TestExecuteReadTool:
+    @pytest.mark.asyncio
+    async def test_read_full_file(self, tmp_path):
+        target = tmp_path / "five.txt"
+        target.write_text("line1\nline2\nline3\nline4\nline5\n")
+        result = await execute_read_tool(str(target), offset=1, limit=10)
+        assert result.content.count(" | ") == 5
+        assert "1 | line1" in result.content
+        assert "5 | line5" in result.content
+
+    @pytest.mark.asyncio
+    async def test_read_with_offset_and_limit(self, tmp_path):
+        target = tmp_path / "ten.txt"
+        target.write_text("\n".join(f"line{i}" for i in range(1, 11)) + "\n")
+        result = await execute_read_tool(str(target), offset=3, limit=2)
+        assert "3 | line3" in result.content
+        assert "4 | line4" in result.content
+        assert "line1" not in result.content
+        assert "line5" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_read_limit_none_uses_config(self, tmp_path):
+        target = tmp_path / "many.txt"
+        target.write_text("\n".join(f"line{i}" for i in range(1, 11)) + "\n")
+        mock_cfg = MagicMock(read_line_limit=3)
+        with patch("stupidex.tools.file_manipulation.get_config", return_value=mock_cfg):
+            result = await execute_read_tool(str(target), offset=1, limit=None)
+        assert result.content.count(" | ") == 3
+        assert "1 | line1" in result.content
+        assert "3 | line3" in result.content
+        assert "line4" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_read_empty_file(self, tmp_path):
+        target = tmp_path / "empty.txt"
+        target.write_text("")
+        result = await execute_read_tool(str(target))
+        assert "empty" in result.content
+
+    @pytest.mark.asyncio
+    async def test_read_offset_out_of_range(self, tmp_path):
+        target = tmp_path / "three.txt"
+        target.write_text("a\nb\nc\n")
+        result = await execute_read_tool(str(target), offset=10)
+        assert "out of range" in result.display
+        assert "greater than the file line count" in result.content
+
+    @pytest.mark.asyncio
+    async def test_read_unreadable_file_returns_error(self, tmp_path):
+        if os.geteuid() == 0:
+            pytest.skip("chmod is not effective for root")
+        target = tmp_path / "noperm.txt"
+        target.write_text("secret\n")
+        os.chmod(target, 0o000)
+        try:
+            result = await execute_read_tool(str(target))
+            assert "error" in result.content.lower()
+        finally:
+            os.chmod(target, 0o644)
+
+
+class TestExecuteGlobTool:
+    @pytest.mark.asyncio
+    async def test_glob_matches_files(self, tmp_path):
+        (tmp_path / "a.py").write_text("x")
+        (tmp_path / "b.py").write_text("x")
+        (tmp_path / "c.txt").write_text("x")
+        result = await execute_glob_tool(str(tmp_path), "*.py")
+        assert "2 file(s)" in result.content
+        assert "a.py" in result.content
+        assert "b.py" in result.content
+        assert "c.txt" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_glob_recursive_pattern(self, tmp_path):
+        sub = tmp_path / "src"
+        sub.mkdir()
+        (sub / "nested.py").write_text("x")
+        (tmp_path / "top.py").write_text("x")
+        result = await execute_glob_tool(str(tmp_path), "**/*.py")
+        assert "nested.py" in result.content
+        assert "top.py" in result.content
+        assert "2 file(s)" in result.content
+
+    @pytest.mark.asyncio
+    async def test_glob_include_hidden_false_excludes(self, tmp_path):
+        (tmp_path / ".hidden.py").write_text("x")
+        (tmp_path / "visible.py").write_text("x")
+        result = await execute_glob_tool(str(tmp_path), "*.py", include_hidden=False)
+        assert "1 file(s)" in result.content
+        assert "visible.py" in result.content
+        assert ".hidden.py" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_glob_no_matches(self, tmp_path):
+        (tmp_path / "a.py").write_text("x")
+        result = await execute_glob_tool(str(tmp_path), "*.nonexistent")
+        assert "No files found" in result.content
+
+    @pytest.mark.asyncio
+    async def test_glob_unscannable_path_returns_error(self, tmp_path):
+        bad_path = str(tmp_path) + "\x00readonly"
+        result = await execute_glob_tool(bad_path, "*.py")
+        assert "error" in result.content.lower()
+
+
+class TestExecuteReadDirectoryTool:
+    @pytest.mark.asyncio
+    async def test_read_directory_happy_path(self, tmp_path):
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "child.py").write_text("x")
+        (tmp_path / "top.py").write_text("x")
+        result = await execute_read_directory_tool(str(tmp_path), max_depth=2)
+        assert "top.py" in result.content
+        assert "sub/" in result.content
+        assert "child.py" in result.content
+        assert "├──" in result.content or "└──" in result.content
+
+    @pytest.mark.asyncio
+    async def test_read_directory_max_depth_none_uses_config(self, tmp_path):
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "deep.py").write_text("x")
+        (tmp_path / "top.py").write_text("x")
+        mock_cfg = MagicMock(directory_tree_depth=1, ignored_dirs=[])
+        with patch("stupidex.tools.file_manipulation.get_config", return_value=mock_cfg):
+            result = await execute_read_directory_tool(str(tmp_path), max_depth=None)
+        assert "top.py" in result.content
+        assert "sub/" in result.content
+        assert "deep.py" not in result.content
+
+    @pytest.mark.asyncio
+    async def test_read_directory_include_hidden(self, tmp_path):
+        (tmp_path / ".hidden_dir").mkdir()
+        (tmp_path / ".hidden_dir" / "secret.py").write_text("x")
+        excluded = await execute_read_directory_tool(str(tmp_path), max_depth=2, include_hidden=False)
+        assert "secret.py" not in excluded.content
+        assert ".hidden_dir" not in excluded.content
+        included = await execute_read_directory_tool(str(tmp_path), max_depth=2, include_hidden=True)
+        assert ".hidden_dir" in included.content
+        assert "secret.py" in included.content
+
+    @pytest.mark.asyncio
+    async def test_read_directory_nonexistent_returns_error(self, tmp_path):
+        result = await execute_read_directory_tool(str(tmp_path / "does_not_exist"))
+        assert "error" in result.content.lower()
+
 

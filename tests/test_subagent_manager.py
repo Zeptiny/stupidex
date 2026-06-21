@@ -640,5 +640,147 @@ class SubagentManagerTests(unittest.IsolatedAsyncioTestCase):
             await r2.async_task
 
 
+class TestWaitEdgeCases(unittest.IsolatedAsyncioTestCase):
+    async def test_wait_empty_list_returns_empty_dict_immediately(self):
+        real_gather = asyncio.gather
+        gather_calls: list = []
+
+        async def gather_spy(*args, **kwargs):
+            gather_calls.append((args, kwargs))
+            return await real_gather(*args, **kwargs)
+
+        with patch.object(asyncio, "gather", gather_spy):
+            manager = SubagentManager()
+            result = await manager.wait([])
+        self.assertEqual(result, {})
+        self.assertEqual(gather_calls, [])
+
+    async def test_wait_all_unknown_ids_returns_empty_dict(self):
+        real_gather = asyncio.gather
+        gather_calls: list = []
+
+        async def gather_spy(*args, **kwargs):
+            gather_calls.append((args, kwargs))
+            return await real_gather(*args, **kwargs)
+
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            with patch.object(asyncio, "gather", gather_spy):
+                result = await manager.wait(["unknown1", "unknown2"])
+        self.assertEqual(result, {})
+        self.assertEqual(gather_calls, [])
+
+    async def test_wait_mix_done_and_unknown_returns_only_done(self):
+        real_gather = asyncio.gather
+        gather_calls: list = []
+
+        async def gather_spy(*args, **kwargs):
+            gather_calls.append((args, kwargs))
+            return await real_gather(*args, **kwargs)
+
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            done = await manager.spawn("sub1", "t1", "Subagent")
+            await done.async_task
+            self.assertEqual(done.state, SubagentState.COMPLETED)
+
+            with patch.object(asyncio, "gather", gather_spy):
+                result = await manager.wait([done.id, "unknown-id"])
+        self.assertEqual(set(result.keys()), {done.id})
+        self.assertIs(result[done.id], done)
+        self.assertNotIn("unknown-id", result)
+        self.assertEqual(gather_calls, [])
+
+    async def test_wait_does_not_await_already_done_tasks(self):
+        real_gather = asyncio.gather
+        gather_calls: list = []
+
+        async def gather_spy(*args, **kwargs):
+            gather_calls.append((args, kwargs))
+            return await real_gather(*args, **kwargs)
+
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            await record.async_task
+            self.assertTrue(record.async_task.done())
+
+            with patch.object(asyncio, "gather", gather_spy):
+                result = await manager.wait([record.id])
+        self.assertIs(result[record.id], record)
+        self.assertEqual(gather_calls, [])
+
+
+class TestCallbackFailureIsolation(unittest.IsolatedAsyncioTestCase):
+    async def test_on_message_user_callback_raising_does_not_crash_run(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+
+            async def on_message(msg):
+                raise RuntimeError("boom")
+
+            record.on_message = on_message
+            await record.async_task
+            await drain()
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+        self.assertGreaterEqual(record.messages_mounted, 1)
+
+    async def test_on_message_streamed_callback_raising_does_not_crash_run(self):
+        streamed = [
+            Message(MessageRole.ASSISTANT, "a", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, "ab", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, "abc", MessageType.TEXT),
+        ]
+        with patch_registry(), patch_stream(stream_yielding(streamed)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            streamed_calls: list[Message] = []
+
+            async def on_message(msg):
+                if msg.role != MessageRole.USER:
+                    streamed_calls.append(msg)
+                    raise RuntimeError("boom")
+
+            record.on_message = on_message
+            await record.async_task
+            await drain()
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+        self.assertEqual(len(streamed_calls), len(streamed))
+        self.assertEqual(record.result, "abc")
+
+    async def test_on_message_first_callback_raises_second_still_processed(self):
+        streamed = [Message(MessageRole.ASSISTANT, "ok", MessageType.TEXT)]
+        with patch_registry(), patch_stream(stream_yielding(streamed)):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+            calls: list[Message] = []
+
+            async def on_message(msg):
+                calls.append(msg)
+                if len(calls) == 1:
+                    raise RuntimeError("boom")
+
+            record.on_message = on_message
+            await record.async_task
+            await drain()
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+        self.assertEqual(len(calls), 1 + len(streamed))
+        self.assertEqual(record.messages_mounted, 1 + len(streamed))
+
+    async def test_on_state_change_callback_raising_does_not_crash_run(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            record = await manager.spawn("sub1", "do thing", "Subagent")
+
+            async def on_state_change(state):
+                raise RuntimeError("boom")
+
+            record.on_state_change = on_state_change
+            await record.async_task
+            await drain()
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from stupidex.rag.chunker import Chunk
 from stupidex.rag.embedder import Embedder
 from stupidex.rag.indexer import (
     _discover_files,
@@ -10,6 +11,7 @@ from stupidex.rag.indexer import (
     clear_index,
     get_status,
     index_project,
+    update_file,
 )
 from stupidex.rag.store import RAGStore
 
@@ -330,3 +332,218 @@ async def test_clear_index(tmp_path):
     s = get_status(project_path=str(tmp_path))
     assert s.total_files == 0
     assert s.total_chunks == 0
+
+
+# ---------------------------------------------------------------------------
+# update_file — single-file re-index branches
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateFile:
+    @pytest.mark.asyncio
+    async def test_update_file_happy_path_reindexes_changed_file(
+        self, tmp_path, monkeypatch
+    ):
+        f = tmp_path / "app.py"
+        f.write_text("x = 1\n")
+        embedder = FakeEmbedder()
+        await index_project(project_path=str(tmp_path), embedder=embedder)
+
+        store = RAGStore(str(tmp_path))
+        old_hash = store.get_file_hashes().get("app.py")
+        assert old_hash
+
+        monkeypatch.setattr(
+            "stupidex.rag.indexer.Embedder", lambda model=None: FakeEmbedder()
+        )
+
+        f.write_text("def new():\n    return 42\n")
+        await update_file(str(f), project_path=str(tmp_path))
+
+        store2 = RAGStore(str(tmp_path))
+        hashes = store2.get_file_hashes()
+        assert hashes.get("app.py")
+        assert hashes["app.py"] != old_hash
+        chunks = [
+            c for c in store2._get_all_chunks() if c["file_path"] == "app.py"
+        ]
+        assert chunks
+        assert "def new" in chunks[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_update_file_outside_project_no_op(self, tmp_path, monkeypatch):
+        (tmp_path / "app.py").write_text("x = 1\n")
+        embedder = FakeEmbedder()
+        await index_project(project_path=str(tmp_path), embedder=embedder)
+
+        store = RAGStore(str(tmp_path))
+        before_chunks = store._get_all_chunks()
+        before_hashes = store.get_file_hashes()
+
+        monkeypatch.setattr(
+            "stupidex.rag.indexer.Embedder", lambda model=None: FakeEmbedder()
+        )
+        await update_file(
+            "/nonexistent_root/outside.py", project_path=str(tmp_path)
+        )
+
+        store2 = RAGStore(str(tmp_path))
+        assert store2._get_all_chunks() == before_chunks
+        assert store2.get_file_hashes() == before_hashes
+
+    @pytest.mark.asyncio
+    async def test_update_file_wrong_extension_deletes_existing(
+        self, tmp_path, monkeypatch
+    ):
+        store = RAGStore(str(tmp_path))
+        store.init_db()
+        store.upsert_file(
+            "compiled.pyc",
+            [Chunk(file_path="compiled.pyc", content="stale", start_line=1, end_line=1)],
+            [[0.1] * 8],
+        )
+        assert "compiled.pyc" in store.get_file_hashes()
+
+        pyc = tmp_path / "compiled.pyc"
+        pyc.write_text("garbage")
+
+        await update_file(str(pyc), project_path=str(tmp_path))
+
+        hashes = RAGStore(str(tmp_path)).get_file_hashes()
+        assert "compiled.pyc" not in hashes
+
+    @pytest.mark.asyncio
+    async def test_update_file_binary_deletes_existing(self, tmp_path, monkeypatch):
+        store = RAGStore(str(tmp_path))
+        store.init_db()
+        store.upsert_file(
+            "blob.py",
+            [Chunk(file_path="blob.py", content="good", start_line=1, end_line=1)],
+            [[0.2] * 8],
+        )
+        assert "blob.py" in store.get_file_hashes()
+
+        f = tmp_path / "blob.py"
+        f.write_bytes(b"\x00\x01\x02")
+
+        await update_file(str(f), project_path=str(tmp_path))
+
+        hashes = RAGStore(str(tmp_path)).get_file_hashes()
+        assert "blob.py" not in hashes
+
+    @pytest.mark.asyncio
+    async def test_update_file_zero_chunks_deletes_existing(
+        self, tmp_path, monkeypatch
+    ):
+        store = RAGStore(str(tmp_path))
+        store.init_db()
+        store.upsert_file(
+            "ws.py",
+            [Chunk(file_path="ws.py", content="good", start_line=1, end_line=1)],
+            [[0.3] * 8],
+        )
+        assert "ws.py" in store.get_file_hashes()
+
+        f = tmp_path / "ws.py"
+        f.write_text("   \n  \n")
+
+        await update_file(str(f), project_path=str(tmp_path))
+
+        hashes = RAGStore(str(tmp_path)).get_file_hashes()
+        assert "ws.py" not in hashes
+
+    @pytest.mark.asyncio
+    async def test_update_file_embedding_failure_no_store_mutation(
+        self, tmp_path, monkeypatch
+    ):
+        store = RAGStore(str(tmp_path))
+        store.init_db()
+        store.upsert_file(
+            "fail.py",
+            [Chunk(file_path="fail.py", content="original", start_line=1, end_line=1)],
+            [[0.5] * 8],
+        )
+        store.update_file_hash("fail.py", "ORIGHASH")
+        before_hashes = store.get_file_hashes()
+        before_chunks = store._get_all_chunks()
+
+        class FailingEmbedder(Embedder):
+            async def embed(self, texts: list[str]) -> list[list[float]]:
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            "stupidex.rag.indexer.Embedder",
+            lambda model=None: FailingEmbedder(model="x"),
+        )
+
+        f = tmp_path / "fail.py"
+        f.write_text("def newer():\n    return 99\n")
+        await update_file(str(f), project_path=str(tmp_path))
+
+        store2 = RAGStore(str(tmp_path))
+        assert store2.get_file_hashes() == before_hashes
+        assert store2._get_all_chunks() == before_chunks
+
+
+# ---------------------------------------------------------------------------
+# force=True re-index and deleted-file handling (P1-52)
+# ---------------------------------------------------------------------------
+
+
+class TestForceReindexDeletedFiles:
+    @pytest.mark.asyncio
+    async def test_force_true_does_not_remove_deleted_files(self, tmp_path):
+        (tmp_path / "a.py").write_text("aa = 1\n")
+        (tmp_path / "b.py").write_text("bb = 2\n")
+        embedder = FakeEmbedder()
+        await index_project(project_path=str(tmp_path), embedder=embedder)
+
+        store = RAGStore(str(tmp_path))
+        b_before = [c for c in store._get_all_chunks() if c["file_path"] == "b.py"]
+        assert b_before
+
+        (tmp_path / "b.py").unlink()
+
+        r = await index_project(project_path=str(tmp_path), embedder=embedder, force=True)
+        # FIXME: P1-52
+        store2 = RAGStore(str(tmp_path))
+        b_after = [c for c in store2._get_all_chunks() if c["file_path"] == "b.py"]
+        assert b_after
+        assert r.files_deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_non_force_removes_deleted_files(self, tmp_path):
+        (tmp_path / "a.py").write_text("aa = 1\n")
+        (tmp_path / "b.py").write_text("bb = 2\n")
+        embedder = FakeEmbedder()
+        await index_project(project_path=str(tmp_path), embedder=embedder)
+
+        (tmp_path / "b.py").unlink()
+
+        r = await index_project(project_path=str(tmp_path), embedder=embedder, force=False)
+        assert r.files_deleted == 1
+
+        store = RAGStore(str(tmp_path))
+        b_after = [c for c in store._get_all_chunks() if c["file_path"] == "b.py"]
+        assert not b_after
+
+    @pytest.mark.asyncio
+    async def test_force_true_no_deletions_reindexes_all(self, tmp_path):
+        (tmp_path / "a.py").write_text("a = 1\n")
+        (tmp_path / "b.py").write_text("b = 2\n")
+        embedder = FakeEmbedder()
+        await index_project(project_path=str(tmp_path), embedder=embedder)
+        first_calls = embedder._call_count
+
+        r = await index_project(project_path=str(tmp_path), embedder=embedder, force=True)
+        assert r.files_indexed == 2
+        assert r.files_skipped == 0
+        assert embedder._call_count > first_calls
+
+    @pytest.mark.asyncio
+    async def test_force_true_empty_project_no_error(self, tmp_path):
+        embedder = FakeEmbedder()
+        r = await index_project(project_path=str(tmp_path), embedder=embedder, force=True)
+        assert r.files_scanned == 0
+        assert r.files_indexed == 0
+        assert r.errors == []
