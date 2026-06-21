@@ -130,6 +130,8 @@ async def execute_command(
                 process.kill()
             await process.wait()
 
+        await process.wait()
+
         stdout = stdout_bytes.decode("utf-8", errors="replace").strip() if stdout_bytes else ""
         stderr = stderr_bytes.decode("utf-8", errors="replace").strip() if stderr_bytes else ""
 

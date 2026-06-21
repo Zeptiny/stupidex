@@ -211,10 +211,8 @@ class MCPManager:
         # the loop continues. Transports already entered via ``self._exit_stack``
         # are torn down later by ``_run``'s ``finally`` -> ``aclose()``.
         try:
-            await asyncio.wait_for(
-                self._connect_server(server_name, config),
-                timeout=self._per_server_timeout,
-            )
+            async with asyncio.timeout(self._per_server_timeout):
+                await self._connect_server(server_name, config)
         except TimeoutError as e:
             raise TimeoutError(
                 f"MCP server '{server_name}' startup timed out after {self._per_server_timeout}s"
