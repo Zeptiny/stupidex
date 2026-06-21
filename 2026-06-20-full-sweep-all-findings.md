@@ -41,6 +41,7 @@
 > P1-1, P1-2, P1-3, P1-4, P1-6, P1-7, P1-8, P1-13, P1-14, P1-15, P1-16, P1-18, P1-19, P1-20, P1-21 have been **fixed** (see `docs/plans/2026-06-20-001-fix-p1-code-review-findings-plan.md`).
 > P1-12, P1-17, P1-22 moved to `README.md` → "P1 - Code Review".
 > P1-25, P1-27 **fixed**; P1-24 **false-positive** (intentional design, deep-copied at persist time); P1-26 **false-positive** (rebind was already done at all transition sites) — context binding centralized into `SessionManager._bind_context` for maintainability.
+> P1-28 through P1-53 (20 testing gaps) **fixed** (see `docs/plans/2026-06-20-002-fix-p1-testing-gaps-plan.md`); 2 bugs pinned with FIXME markers: P1-52 (force=True stale chunks) and P1-53 (rename silent overwrite).
 
 ### Correctness / Reliability
 
@@ -83,32 +84,32 @@
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P1-28 | domain | domain/skill.py:32 | Skill.validate() validation gate entirely untested — _NAME_PATTERN, _MAX_NAME_LEN, _MAX_DESC_LEN, leading/trailing-hyphen cases all enforcement branches | testing | 100 | gated_auto | N |
-| P1-29 | domain | domain/chain.py:71 | _reconcile_orphan_tool_results has no direct test for the mutation it performs on persisted message list | testing | 75 | gated_auto | N |
-| P1-30 | domain | domain/message.py:40 | Message.to_dict() content=null contract for tool-call-only turns is untested (documented behavioral contract with strict providers) | testing | 75 | gated_auto | N |
-| P1-31 | llm | llm/client.py:438 | stream_response multi-turn tool-call loop is untested — the central agentic behavior (loop termination condition, api_messages growth) | testing | 75 | gated_auto | N |
-| P1-32 | llm | llm/client.py:174 | _execute_tool error-path branches have zero direct tests (JSONDecodeError, args-not-a-dict, unknown tool, _validate_tool_args failure, TimeoutError, generic Exception) | testing | 75 | gated_auto | N |
-| P1-33 | llm | llm/client.py:74 | _validate_tool_args has no tests despite branching logic (pure function, ideal unit-test target) | testing | 75 | gated_auto | N |
-| P1-34 | llm | llm/dynamic_system_prompt.py:17 | build_dynamic_system_prompt has no tests — TTL cache, directory_tree execution, XML escaping of subagents/todos | testing | 75 | gated_auto | N |
+| P1-28 | domain | domain/skill.py:32 | Skill.validate() validation gate entirely untested — _NAME_PATTERN, _MAX_NAME_LEN, _MAX_DESC_LEN, leading/trailing-hyphen cases all enforcement branches **[FIXED — tests/test_skill_domain.py, 21 tests]** | testing | 100 | gated_auto | N |
+| P1-29 | domain | domain/chain.py:71 | _reconcile_orphan_tool_results has no direct test for the mutation it performs on persisted message list **[FIXED — tests/test_chain.py, 14 tests]** | testing | 75 | gated_auto | N |
+| P1-30 | domain | domain/message.py:40 | Message.to_dict() content=null contract for tool-call-only turns is untested (documented behavioral contract with strict providers) **[FIXED — tests/test_message.py TestMessageToDict, 10 tests]** | testing | 75 | gated_auto | N |
+| P1-31 | llm | llm/client.py:438 | stream_response multi-turn tool-call loop is untested — the central agentic behavior (loop termination condition, api_messages growth) **[FIXED — tests/test_streaming_messages.py TestStreamResponseMultiTurn, 3 tests]** | testing | 75 | gated_auto | N |
+| P1-32 | llm | llm/client.py:174 | _execute_tool error-path branches have zero direct tests (JSONDecodeError, args-not-a-dict, unknown tool, _validate_tool_args failure, TimeoutError, generic Exception) **[FIXED — tests/test_streaming_messages.py TestExecuteToolErrorPaths, 9 tests]** | testing | 75 | gated_auto | N |
+| P1-33 | llm | llm/client.py:74 | _validate_tool_args has no tests despite branching logic (pure function, ideal unit-test target) **[FIXED — tests/test_streaming_messages.py TestValidateToolArgs, 4 tests]** | testing | 75 | gated_auto | N |
+| P1-34 | llm | llm/dynamic_system_prompt.py:17 | build_dynamic_system_prompt has no tests — TTL cache, directory_tree execution, XML escaping of subagents/todos **[FIXED — tests/test_dynamic_system_prompt.py, 11 tests]** | testing | 75 | gated_auto | N |
 | P1-35 | agents | agents/manager.py:150 | SubagentRecord persistence round-trip and RUNNING→INTERRUPTED migration untested — the persistence-replay entry point **[FIXED — U9 tests]** | testing | 100 | gated_auto | Y |
 | P1-36 | agents | agents/manager.py:173 | cancel_one / cancel_all / cancel_running have no tests; behavioral differences unverifiable **[FIXED — U9 tests]** | testing | 100 | gated_auto | Y |
-| P1-37 | agents | agents/manager.py:285 | wait() semantics — already-done and unknown-id handling untested | testing | 100 | gated_auto | N |
-| P1-38 | agents | agents/manager.py:246 | on_message and on_state_change callback failure-isolation behavior untested | testing | 100 | gated_auto | Y |
+| P1-37 | agents | agents/manager.py:285 | wait() semantics — already-done and unknown-id handling untested **[FIXED — tests/test_subagent_manager.py TestWaitEdgeCases, 4 tests]** | testing | 100 | gated_auto | N |
+| P1-38 | agents | agents/manager.py:246 | on_message and on_state_change callback failure-isolation behavior untested **[FIXED — tests/test_subagent_manager.py TestCallbackFailureIsolation, 4 tests]** | testing | 100 | gated_auto | Y |
 | P1-39 | mcp | mcp/__init__.py:169 | MCPManager.call_tool has zero test coverage — both branches (session None + happy path joining block.text) **[FIXED — U6/U7 tests]** | testing | 75 | gated_auto | N |
 | P1-40 | mcp | mcp/__init__.py:192 | read_resource BlobResourceContents branch untested (and behaviorally suspect) **[FIXED — U6 tests]** | testing | 75 | gated_auto | N |
-| P1-41 | mcp | mcp/__init__.py:128 | SSE transport branch in _start_server is never exercised | testing | 75 | gated_auto | N |
-| P1-42 | mcp | mcp/__init__.py:81 | Per-server failure recovery in _run is untested | testing | 75 | gated_auto | N |
-| P1-43 | mcp | mcp/__init__.py:68 | start_all startup-error propagation branch untested | testing | 75 | gated_auto | N |
+| P1-41 | mcp | mcp/__init__.py:128 | SSE transport branch in _start_server is never exercised **[FIXED — tests/test_mcp_lifecycle.py TestSSETransport, 2 tests]** | testing | 75 | gated_auto | N |
+| P1-42 | mcp | mcp/__init__.py:81 | Per-server failure recovery in _run is untested **[FIXED — tests/test_mcp_lifecycle.py TestStartAllErrorPropagation, 4 tests]** | testing | 75 | gated_auto | N |
+| P1-43 | mcp | mcp/__init__.py:68 | start_all startup-error propagation branch untested **[FIXED — tests/test_mcp_lifecycle.py TestStartAllErrorPropagation, 4 tests]** | testing | 75 | gated_auto | N |
 | P1-44 | tools | tools/exec.py:41 | execute_command has zero test coverage — timeout/SIGKILL, shell=False, nonzero exit, exception paths **[FIXED — U4 tests]** | testing | 90 | gated_auto | Y |
 | P1-45 | tools | tools/search.py:52 | execute_grep_tool has zero test coverage — invalid regex, dir-not-found, binary skip, include_pattern translation, max_results truncation **[FIXED — U5 tests]** | testing | 90 | gated_auto | Y |
-| P1-46 | tools | tools/skill.py:197 | execute_skill resource-read path traversal guard is security-critical and untested | testing | 90 | gated_auto | Y |
-| P1-47 | tools | tools/subagent.py:53 | All four subagent executors (delegate, wait, list, interrupt) have zero test coverage | testing | 90 | gated_auto | Y |
-| P1-48 | tools | tools/todo.py:112 | All four todo executors (create, update, list, delete) have zero test coverage | testing | 90 | gated_auto | Y |
-| P1-49 | tools | tools/file_manipulation.py:38 | execute_read_tool, execute_write_tool, execute_glob_tool, execute_read_directory_tool all untested; only execute_edit_tool has 2 tests | testing | 90 | gated_auto | Y |
-| P1-50 | rag | rag/indexer.py:54 | update_file (single-file re-index) is completely untested despite 5 branches | testing | 75 | gated_auto | Y |
-| P1-51 | rag | rag/store.py:325 | RAGStore.upsert_file vector-rebuild logic is untested | testing | 75 | gated_auto | Y |
-| P1-52 | rag | rag/indexer.py:280 | force=True re-index does not remove deleted files — branch and behavior untested | testing | 75 | gated_auto | Y |
-| P1-53 | screens | screens/settings.py:852 | Provider/MCP rename flow silently keeps old key untested | testing, correctness | 80/75 | gated_auto | Y |
+| P1-46 | tools | tools/skill.py:197 | execute_skill resource-read path traversal guard is security-critical and untested **[FIXED — tests/test_skill_tools.py TestResourceReadPathTraversal, 14 tests]** | testing | 90 | gated_auto | Y |
+| P1-47 | tools | tools/subagent.py:53 | All four subagent executors (delegate, wait, list, interrupt) have zero test coverage **[FIXED — tests/test_subagent_tools.py, 15 tests]** | testing | 90 | gated_auto | Y |
+| P1-48 | tools | tools/todo.py:112 | All four todo executors (create, update, list, delete) have zero test coverage **[FIXED — tests/test_todo_tools.py, 15 tests]** | testing | 90 | gated_auto | Y |
+| P1-49 | tools | tools/file_manipulation.py:38 | execute_read_tool, execute_write_tool, execute_glob_tool, execute_read_directory_tool all untested; only execute_edit_tool has 2 tests **[FIXED — tests/test_file_manipulation.py, 15 new tests]** | testing | 90 | gated_auto | Y |
+| P1-50 | rag | rag/indexer.py:54 | update_file (single-file re-index) is completely untested despite 5 branches **[FIXED — tests/test_rag_indexer.py TestUpdateFile, 6 tests]** | testing | 75 | gated_auto | Y |
+| P1-51 | rag | rag/store.py:325 | RAGStore.upsert_file vector-rebuild logic is untested **[FIXED — tests/test_rag_store.py TestUpsertFileVectorRebuild, 7 tests]** | testing | 75 | gated_auto | Y |
+| P1-52 | rag | rag/indexer.py:280 | force=True re-index does not remove deleted files — branch and behavior untested **[FIXED — tests/test_rag_indexer.py TestForceReindexDeletedFiles, 4 tests; bug pinned with # FIXME: P1-52]** | testing | 75 | gated_auto | Y |
+| P1-53 | screens | screens/settings.py:852 | Provider/MCP rename flow silently keeps old key untested **[FIXED — tests/test_settings_screen.py, 10 tests; silent-overwrite bug pinned with # FIXME: P1-53]** | testing, correctness | 80/75 | gated_auto | Y |
 
 ## P2 — Moderate (~70 deduplicated)
 
