@@ -66,6 +66,14 @@
 - Correspondência difusa (fuzzy matching) na ferramenta edit
   - Por exemplo, opencode tem 9 maneira de fuzzy matching
 
+
+### Comandos
+- Comandos que precisam de input
+  - Ex: Perssione y para instalar
+  - Agente deve ser capaz de responder
+- Visualizar comandos executando em tempo real
+- Visualizar o comando que foi executado
+
 ### Bugs
 - Rolagem automática para baixo após o fim de uma mensagem do agente
   - A conversa também não está indo automaticamente para baixo enquanto faz o streaming
