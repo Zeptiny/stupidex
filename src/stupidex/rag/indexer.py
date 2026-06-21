@@ -169,11 +169,11 @@ async def _index_project_impl(
     if embedder is None:
         embedder = Embedder(model=cfg.rag.embedding_model or None)
 
-    existing_hashes: dict[str, str] = {}
-    if not force:
-        existing_hashes = await loop.run_in_executor(
-            None, store.get_file_hashes
-        )
+    existing_hashes: dict[str, str] = await loop.run_in_executor(
+        None, store.get_file_hashes
+    )
+    if force:
+        existing_hashes = {path: "" for path in existing_hashes}
 
     indexed_files: set[str] = set()
     file_hashes: dict[str, str] = {}
@@ -217,7 +217,7 @@ async def _index_project_impl(
 
             if content is None:
                 logger.debug("Skipping %s (binary, empty, or too large)", rel)
-                if not force and existing_hashes.get(rel):
+                if rel in existing_hashes:
                     await loop.run_in_executor(None, store.delete_by_file, rel)
                 continue
 
@@ -230,7 +230,7 @@ async def _index_project_impl(
             # chunk
             chunks = chunk_file(rel, content, cfg.rag.chunk_size, cfg.rag.chunk_overlap)
             if not chunks:
-                if not force and existing_hashes.get(rel):
+                if rel in existing_hashes:
                     await loop.run_in_executor(None, store.delete_by_file, rel)
                 indexed_files.add(rel)
                 continue
@@ -263,7 +263,7 @@ async def _index_project_impl(
                 pass
 
     # remove files deleted since last index
-    if not force and existing_hashes:
+    if existing_hashes:
         current_rels: set[str] = set()
         for f in files:
             try:

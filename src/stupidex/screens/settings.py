@@ -853,6 +853,13 @@ class SettingsScreen(ModalScreen[Config | None]):
         if result is not None:
             alias = result.pop("_alias")
             if original_alias and original_alias != alias:
+                if alias in self._config.providers:
+                    self.notify(
+                        f"Provider '{alias}' already exists; rename cancelled.",
+                        severity="warning",
+                    )
+                    self._config.providers[original_alias] = result
+                    return
                 self._config.providers.pop(original_alias, None)
             self._config.providers[alias] = result
             self._refresh_tab()
@@ -971,6 +978,13 @@ class SettingsScreen(ModalScreen[Config | None]):
         if result is not None:
             name = result.pop("_name")
             if original_name and original_name != name:
+                if name in self._config.mcp_servers:
+                    self.notify(
+                        f"MCP server '{name}' already exists; rename cancelled.",
+                        severity="warning",
+                    )
+                    self._config.mcp_servers[original_name] = result
+                    return
                 self._config.mcp_servers.pop(original_name, None)
             self._config.mcp_servers[name] = result
             self._refresh_tab()

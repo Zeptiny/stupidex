@@ -41,7 +41,7 @@
 > P1-1, P1-2, P1-3, P1-4, P1-6, P1-7, P1-8, P1-13, P1-14, P1-15, P1-16, P1-18, P1-19, P1-20, P1-21 have been **fixed** (see `docs/plans/2026-06-20-001-fix-p1-code-review-findings-plan.md`).
 > P1-12, P1-17, P1-22 moved to `README.md` → "P1 - Code Review".
 > P1-25, P1-27 **fixed**; P1-24 **false-positive** (intentional design, deep-copied at persist time); P1-26 **false-positive** (rebind was already done at all transition sites) — context binding centralized into `SessionManager._bind_context` for maintainability.
-> P1-28 through P1-53 (20 testing gaps) **fixed** (see `docs/plans/2026-06-20-002-fix-p1-testing-gaps-plan.md`); 2 bugs pinned with FIXME markers: P1-52 (force=True stale chunks) and P1-53 (rename silent overwrite).
+> P1-28 through P1-53 (20 testing gaps) **fixed** (see `docs/plans/2026-06-20-002-fix-p1-testing-gaps-plan.md`); P1-52 and P1-53 bugs **fixed** — force=True now cleans up deleted files; rename to existing alias now rejected with warning.
 
 ### Correctness / Reliability
 
@@ -108,8 +108,8 @@
 | P1-49 | tools | tools/file_manipulation.py:38 | execute_read_tool, execute_write_tool, execute_glob_tool, execute_read_directory_tool all untested; only execute_edit_tool has 2 tests **[FIXED — tests/test_file_manipulation.py, 15 new tests]** | testing | 90 | gated_auto | Y |
 | P1-50 | rag | rag/indexer.py:54 | update_file (single-file re-index) is completely untested despite 5 branches **[FIXED — tests/test_rag_indexer.py TestUpdateFile, 6 tests]** | testing | 75 | gated_auto | Y |
 | P1-51 | rag | rag/store.py:325 | RAGStore.upsert_file vector-rebuild logic is untested **[FIXED — tests/test_rag_store.py TestUpsertFileVectorRebuild, 7 tests]** | testing | 75 | gated_auto | Y |
-| P1-52 | rag | rag/indexer.py:280 | force=True re-index does not remove deleted files — branch and behavior untested **[FIXED — tests/test_rag_indexer.py TestForceReindexDeletedFiles, 4 tests; bug pinned with # FIXME: P1-52]** | testing | 75 | gated_auto | Y |
-| P1-53 | screens | screens/settings.py:852 | Provider/MCP rename flow silently keeps old key untested **[FIXED — tests/test_settings_screen.py, 10 tests; silent-overwrite bug pinned with # FIXME: P1-53]** | testing, correctness | 80/75 | gated_auto | Y |
+| P1-52 | rag | rag/indexer.py:280 | force=True re-index does not remove deleted files — branch and behavior untested **[FIXED — tests/test_rag_indexer.py TestForceReindexDeletedFiles, 4 tests; bug fixed: force=True now removes stale chunks]** | testing | 75 | gated_auto | Y |
+| P1-53 | screens | screens/settings.py:852 | Provider/MCP rename flow silently keeps old key untested **[FIXED — tests/test_settings_screen.py, 10 tests; bug fixed: rename to existing alias now rejected with warning]** | testing, correctness | 80/75 | gated_auto | Y |
 
 ## P2 — Moderate (~70 deduplicated)
 

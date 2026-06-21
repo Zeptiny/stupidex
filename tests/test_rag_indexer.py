@@ -492,7 +492,7 @@ class TestUpdateFile:
 
 class TestForceReindexDeletedFiles:
     @pytest.mark.asyncio
-    async def test_force_true_does_not_remove_deleted_files(self, tmp_path):
+    async def test_force_true_removes_deleted_files(self, tmp_path):
         (tmp_path / "a.py").write_text("aa = 1\n")
         (tmp_path / "b.py").write_text("bb = 2\n")
         embedder = FakeEmbedder()
@@ -505,11 +505,10 @@ class TestForceReindexDeletedFiles:
         (tmp_path / "b.py").unlink()
 
         r = await index_project(project_path=str(tmp_path), embedder=embedder, force=True)
-        # FIXME: P1-52
         store2 = RAGStore(str(tmp_path))
         b_after = [c for c in store2._get_all_chunks() if c["file_path"] == "b.py"]
-        assert b_after
-        assert r.files_deleted == 0
+        assert not b_after
+        assert r.files_deleted == 1
 
     @pytest.mark.asyncio
     async def test_non_force_removes_deleted_files(self, tmp_path):
