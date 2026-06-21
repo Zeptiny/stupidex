@@ -9,6 +9,7 @@ from stupidex.agents.manager import (
     SubagentManager,
     SubagentRecord,
     SubagentState,
+    format_subagent_attrs,
 )
 from stupidex.domain.agent import Agent, AgentTypes, ModelTier
 from stupidex.domain.message import Message, MessageRole, MessageType
@@ -787,6 +788,114 @@ class TestCallbackFailureIsolation(unittest.IsolatedAsyncioTestCase):
             await record.async_task
             await drain()
         self.assertEqual(record.state, SubagentState.COMPLETED)
+
+
+class TestFormatSubagentAttrs(unittest.TestCase):
+    def test_escapes_lt_gt_amp_in_all_attribute_values(self):
+        evil = 'a<b>&c'
+        out = format_subagent_attrs(evil, evil, evil, evil)
+        self.assertNotIn('<', out)
+        self.assertNotIn('>', out.replace('&gt;', ''))
+        self.assertNotIn('&c', out)
+        self.assertIn('&lt;', out)
+        self.assertIn('&gt;', out)
+        self.assertIn('&amp;', out)
+        self.assertEqual(out.count('&lt;'), 4)
+        self.assertEqual(out.count('&gt;'), 4)
+        self.assertEqual(out.count('&amp;'), 4)
+
+    def test_quote_not_escaped_known_bug_documents_attribute_breakout(self):
+        out = format_subagent_attrs('a"b', 'n', 't', 's')
+        self.assertIn('a"b', out)
+        self.assertNotIn('&quot;', out)
+
+    def test_omits_elapsed_when_none(self):
+        out = format_subagent_attrs('id1', 'n', 't', 's', elapsed=None)
+        self.assertNotIn('elapsed', out)
+
+    def test_includes_elapsed_when_float(self):
+        out = format_subagent_attrs('id1', 'n', 't', 's', elapsed=12.3)
+        self.assertIn('elapsed="12.3s"', out)
+
+
+class TestElapsedSeconds(unittest.TestCase):
+    def _record(self, **kw) -> SubagentRecord:
+        return SubagentRecord(
+            id="r1",
+            agent=make_agent(),
+            state=SubagentState.COMPLETED,
+            label="s",
+            task="t",
+            **kw,
+        )
+
+    def test_completed_record_uses_end_minus_start(self):
+        rec = self._record(start_time=10.0, end_time=12.45)
+        self.assertEqual(rec.elapsed_seconds, 2.4)
+
+    def test_running_record_uses_now_minus_start(self):
+        rec = self._record(start_time=100.0, end_time=None)
+        with patch("stupidex.agents.manager.time.time", return_value=130.7):
+            self.assertEqual(rec.elapsed_seconds, 30.7)
+
+    def test_restored_record_with_neither_returns_none(self):
+        rec = self._record(start_time=0.0, end_time=None)
+        self.assertIsNone(rec.elapsed_seconds)
+
+
+class TestResultAssignmentEdgeCases(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_then_none_then_truthy_assigns_last_truthy(self):
+        msgs = [
+            Message(MessageRole.ASSISTANT, "", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, None, MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, "final", MessageType.TEXT),
+        ]
+        with patch_registry(), patch_stream(stream_yielding(msgs)):
+            manager = SubagentManager()
+            record = await manager.spawn("s1", "t", "Subagent")
+            await record.async_task
+            await drain()
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+        self.assertEqual(record.result, "final")
+
+    async def test_only_empty_content_leaves_result_none_no_crash(self):
+        msgs = [
+            Message(MessageRole.ASSISTANT, "", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, None, MessageType.TEXT),
+        ]
+        with patch_registry(), patch_stream(stream_yielding(msgs)):
+            manager = SubagentManager()
+            record = await manager.spawn("s1", "t", "Subagent")
+            await record.async_task
+            await drain()
+        self.assertEqual(record.state, SubagentState.COMPLETED)
+        self.assertIsNone(record.result)
+
+
+class TestCancelAllClearsOnSpawn(unittest.IsolatedAsyncioTestCase):
+    async def test_cancel_all_clears_on_spawn_and_subsequent_spawn_skips_callback(self):
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            calls: list[SubagentRecord] = []
+
+            async def on_spawn(rec):
+                calls.append(rec)
+
+            manager.on_spawn = on_spawn
+            r1 = await manager.spawn("s1", "t1", "Subagent")
+            await r1.async_task
+            await drain()
+            self.assertEqual(len(calls), 1)
+
+            manager.cancel_all()
+            self.assertIsNone(manager.on_spawn)
+
+            r2 = await manager.spawn("s2", "t2", "Subagent")
+            await r2.async_task
+            await drain()
+
+            self.assertEqual(len(calls), 1)
+            self.assertIsNone(manager.on_spawn)
 
 
 if __name__ == "__main__":

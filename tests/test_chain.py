@@ -2,7 +2,7 @@
 
 import unittest
 
-from stupidex.domain.chain import Chain, _reconcile_orphan_tool_results
+from stupidex.domain.chain import Chain, ChainStatus, _reconcile_orphan_tool_results
 from stupidex.domain.message import Message, MessageRole, MessageType
 
 
@@ -166,6 +166,77 @@ class TestReconcileOrphanToolResults(unittest.TestCase):
         self.assertEqual(len(chain.messages), 2)
         self.assertEqual(chain.messages[0].role, MessageRole.ASSISTANT)
         self.assertEqual(chain.messages[1].tool_call_id, "tc1")
+
+
+class TestChainFinishIdempotency(unittest.TestCase):
+    """P2-14: Chain.finish() must be a no-op once the chain has left RUNNING."""
+
+    def test_finish_completes_running_chain(self):
+        chain = Chain()
+        self.assertIsNone(chain.end_time)
+        chain.finish()
+        self.assertIsNotNone(chain.end_time)
+        self.assertEqual(chain.status, ChainStatus.COMPLETED)
+
+    def test_finish_twice_second_call_is_noop(self):
+        chain = Chain()
+        chain.finish(ChainStatus.COMPLETED)
+        first_end = chain.end_time
+        first_status = chain.status
+        self.assertIsNotNone(first_end)
+        chain.finish(ChainStatus.FAILED)
+        self.assertEqual(chain.end_time, first_end)
+        self.assertEqual(chain.status, first_status)
+
+    def test_finish_failed_is_terminal_idempotent(self):
+        chain = Chain()
+        chain.finish(ChainStatus.FAILED)
+        first_end = chain.end_time
+        chain.finish(ChainStatus.COMPLETED)
+        self.assertEqual(chain.end_time, first_end)
+        self.assertEqual(chain.status, ChainStatus.FAILED)
+
+    def test_finish_interrupted_is_terminal_idempotent(self):
+        chain = Chain()
+        chain.finish(ChainStatus.INTERRUPTED)
+        first_end = chain.end_time
+        chain.finish(ChainStatus.COMPLETED)
+        self.assertEqual(chain.end_time, first_end)
+        self.assertEqual(chain.status, ChainStatus.INTERRUPTED)
+
+
+class TestChainFormatElapsed(unittest.TestCase):
+    """P2-14: Chain.format_elapsed boundary outputs."""
+
+    def test_zero_seconds_renders_milliseconds(self):
+        self.assertEqual(Chain.format_elapsed(0), "0ms")
+
+    def test_sub_second_renders_milliseconds(self):
+        self.assertEqual(Chain.format_elapsed(0.5), "500ms")
+
+    def test_just_under_one_second_renders_milliseconds(self):
+        self.assertEqual(Chain.format_elapsed(0.999), "999ms")
+
+    def test_exactly_one_second_renders_seconds(self):
+        self.assertEqual(Chain.format_elapsed(1), "1.0s")
+
+    def test_just_under_one_minute_renders_seconds(self):
+        self.assertEqual(Chain.format_elapsed(59.9), "59.9s")
+
+    def test_exactly_fifty_nine_seconds(self):
+        self.assertEqual(Chain.format_elapsed(59), "59.0s")
+
+    def test_exactly_sixty_seconds_rolls_to_minutes(self):
+        self.assertEqual(Chain.format_elapsed(60), "1m 0s")
+
+    def test_one_hour(self):
+        self.assertEqual(Chain.format_elapsed(3600), "60m 0s")
+
+    def test_one_hour_fifty_nine_minutes(self):
+        self.assertEqual(Chain.format_elapsed(3600 + 59 * 60), "119m 0s")
+
+    def test_one_hour_fifty_nine_minutes_thirty_seconds(self):
+        self.assertEqual(Chain.format_elapsed(3600 + 59 * 60 + 30), "119m 30s")
 
 
 if __name__ == "__main__":

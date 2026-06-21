@@ -1,5 +1,6 @@
 """Tests for RAG vector store (U9)."""
 
+import math
 import tempfile
 import unittest
 
@@ -533,3 +534,100 @@ def test_search_correct_after_batch_index(tmp_path):
     filtered = store.search([1.0, 0.0], top_k=10, file_pattern="src/*")
     assert len(filtered) == 2
     assert all(r.file_path.startswith("src/") for r in filtered)
+
+
+# ---------------------------------------------------------------------------
+# Testing-gap sweep 2026-06-21
+# ---------------------------------------------------------------------------
+
+
+def test_store_search_dimension_mismatch_raises(tmp_path):
+    """P2-162: search with query vector of wrong dimension -> ValueError, not crash."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1),
+    ]
+    store.upsert(chunks, [[0.5, 0.5], [0.6, 0.6]])
+
+    with pytest.raises(ValueError, match=r"Query embedding dimension \(3\) does not match"):
+        store.search([0.5, 0.5, 0.5], top_k=10)
+
+
+def test_store_search_truncates_on_vector_chunk_count_mismatch(tmp_path):
+    """P2-163: stale-index truncation — when len(vectors) != len(chunks),
+    search truncates to the shorter and returns partial results."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1),
+        Chunk(file_path="c.py", content="z=3", start_line=1, end_line=1),
+    ]
+    store.upsert(chunks, [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]])
+
+    # Force a mismatch: 3 chunks but only 2 vectors on disk.
+    store._save_vectors([[1.0, 0.0], [0.0, 1.0]])
+
+    results = store.search([1.0, 0.0], top_k=10)
+    assert len(results) == 2  # truncated to min(2 vecs, 3 chunks)
+    file_paths = {r.file_path for r in results}
+    assert file_paths <= {"a.py", "b.py", "c.py"}
+
+
+def test_store_delete_by_file_mismatched_vectors_skips_realignment(tmp_path):
+    """P2-170: when vectors count != chunk count, delete_by_file skips the
+    realignment branch (vectors.npy is left untouched, stale)."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1),
+    ]
+    store.upsert(chunks, [[1.0, 0.0], [0.0, 1.0]])
+
+    # Create the mismatch: 2 chunks, 1 vector.
+    store._save_vectors([[1.0, 0.0]])
+
+    store.delete_by_file("a.py")
+
+    # Vectors untouched because len mismatch -> realignment skipped.
+    vectors = store._load_vectors()
+    assert vectors is not None
+    assert len(vectors) == 1
+    assert vectors[0] == [1.0, 0.0]
+    # Chunks reflect the deletion.
+    assert store.status().total_chunks == 1
+
+
+def test_store_record_index_duration_persists(tmp_path):
+    """P3-77: record_index_duration writes a duration meta value retrievable via status()."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    assert store.status().last_index_duration is None
+
+    store.record_index_duration(1.25)
+    assert store.status().last_index_duration == 1.25
+
+    store.record_index_duration(42.5)
+    assert store.status().last_index_duration == 42.5
+
+
+def test_store_cosine_similarity_zero_vector_returns_zero(tmp_path):
+    """P3-79: zero query/vectors -> 0.0 score (no NaN, no ZeroDivisionError)."""
+    scores = RAGStore._cosine_similarity([0.0, 0.0, 0.0], [[0.0, 0.0, 0.0]])
+    assert len(scores) == 1
+    assert scores[0] == 0.0
+    assert not math.isnan(scores[0])
+
+    # Mixed: zero vector among non-zero vectors still returns finite scores.
+    scores = RAGStore._cosine_similarity([0.0, 0.0], [[1.0, 0.0], [0.0, 0.0]])
+    assert len(scores) == 2
+    for s in scores:
+        assert not math.isnan(s)
+        assert math.isfinite(s)

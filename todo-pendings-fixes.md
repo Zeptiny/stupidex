@@ -130,11 +130,11 @@
 | P2-11 | domain | domain/agent.py:75 | Inconsistent serialization method naming across domain models (to_dict vs to_storage_dict vs both) | maintainability | 75 | gated_auto | Y |
 | P2-12 | domain | domain/session.py:8 | Domain layer imports from agents layer — creating a domain↔agents circular dependency | maintainability | 50 | manual | Y |
 | P2-13 | domain | domain/todo.py:162 | get_todo_store silently creates an orphan, unpersisted TodoStore when no store is bound | maintainability | 50 | manual | Y |
-| P2-14 | domain | domain/chain.py:32 | Chain.finish() idempotency guard and format_elapsed boundaries untested | testing | 75 | gated_auto | N |
-| P2-15 | domain | domain/agent.py:10 | AgentTypes/ModelTier from_str error paths and Agent dict round-trip untested | testing | 75 | gated_auto | N |
-| P2-16 | domain | domain/session.py:40 | Session.to/from_storage_dict round-trip and corrupt-subagent resilience untested | testing | 75 | gated_auto | N |
+| P2-14 | domain | domain/chain.py:32 | Chain.finish() idempotency guard and format_elapsed boundaries untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
+| P2-15 | domain | domain/agent.py:10 | AgentTypes/ModelTier from_str error paths and Agent dict round-trip untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
+| P2-16 | domain | domain/session.py:40 | Session.to/from_storage_dict round-trip and corrupt-subagent resilience untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
 | P2-17 | domain | domain/todo.py:150 (alt) | TodoStore.from_storage_dict crashes whole session on a single corrupt status field | testing | 75 | manual | N |
-| P2-18 | domain | domain/tool.py:35 | Tool.to_dict() OpenAI function-schema serialization untested | testing | 75 | gated_auto | N |
+| P2-18 | domain | domain/tool.py:35 | Tool.to_dict() OpenAI function-schema serialization untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
 | P2-19 | domain | domain/message.py:38 | tool_calls modeled as list[dict[str, Any]] instead of a dataclass | kieran-python | 75 | manual | Y |
 | P2-20 | domain | domain/skill.py:49 | Skill.to_dict silently collapses references/scripts/assets to integer counts (lossy/asymmetric round-trip) | kieran-python | 75 | manual | Y |
 
@@ -170,10 +170,10 @@
 | P2-46 | agents | agents/manager.py:188 | cancel_all() mutates self.on_spawn — unrelated side effect on a cancel path | kieran-python | 75 | manual | Y |
 | P2-47 | agents | agents/manager.py:279 | record.async_task = None # set below dead assignment plus timing race during on_spawn | kieran-python, maintainability, agent-native | 75/100 | manual | Y |
 | P2-48 | agents | agents/manager.py:191 (alt) | cancel_all and cancel_running duplicate cancel logic — single non-terminal status set diverges silently | kieran-python | 50 | manual | Y |
-| P2-49 | agents | agents/manager.py:63 | format_subagent_attrs escape + elapsed branches untested; security boundary for XML injection | testing | 100 | gated_auto | Y |
-| P2-50 | agents | agents/manager.py:101 (alt) | elapsed_seconds property has three branches, none tested | testing | 100 | gated_auto | Y |
-| P2-51 | agents | agents/manager.py:263 | Empty/blank content handling in result assignment not pinned by test | testing | 75 | gated_auto | Y |
-| P2-52 | agents | agents/manager.py:188 (alt) | cancel_all clearing on_spawn=None is an unobserved side effect with no test | testing | 100 | gated_auto | Y |
+| P2-49 | agents | agents/manager.py:63 | format_subagent_attrs escape + elapsed branches untested; security boundary for XML injection **[BLOCKED — testing-gap sweep 2026-06-21: `<`/`&`/`>` escaping covered by TestFormatSubagentAttrs; `"` is NOT escaped by xml.sax.saxutils.escape default — attribute-injection gap, production fix needed]** | testing | 100 | gated_auto | Y |
+| P2-50 | agents | agents/manager.py:101 (alt) | elapsed_seconds property has three branches, none tested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
+| P2-51 | agents | agents/manager.py:263 | Empty/blank content handling in result assignment not pinned by test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-52 | agents | agents/manager.py:188 (alt) | cancel_all clearing on_spawn=None is an unobserved side effect with no test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
 
 ### tools/
 
@@ -196,9 +196,9 @@
 | P2-67 | tools | tools/file_manipulation.py:307 | glob_tool description claims results sorted by modification time but code sorts alphabetically **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 75 | safe_auto | Y |
 | P2-68 | tools | tools/search.py:129 | Grep early-break on max_results leaves remaining as_completed tasks running (resource leak / awaited) | correctness, performance | 50 | gated_auto | Y |
 | P2-69 | tools | tools/file_manipulation.py:38 (alt) | execute_read_tool treats offset=0 silently and lacks validation for non-positive offset/limit **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 50 | safe_auto | Y |
-| P2-70 | tools | tools/file_manipulation.py:162 | execute_edit_tool replace_all=true branch, multiple_matches branch, and generic Exception error path untested | testing | 80 | gated_auto | Y |
+| P2-70 | tools | tools/file_manipulation.py:162 | execute_edit_tool replace_all=true branch, multiple_matches branch, and generic Exception error path untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 80 | gated_auto | Y |
 | P2-71 | tools | tools/mcp_resource.py:28 | execute_read_mcp_resource has no error handling around manager.read_resource — test enshrines the bug | testing | 85 | manual | Y |
-| P2-72 | tools | tools/rag.py:107 | execute_rag_search ValueError branch and generic Exception embedding branch untested | testing | 75 | gated_auto | Y |
+| P2-72 | tools | tools/rag.py:107 | execute_rag_search ValueError branch and generic Exception embedding branch untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-73 | tools | tests/test_rag_tools.py:85 | Weak assertion in test_rag_search_with_results — `assert "result" in result.content` is vacuous | testing | 75 | advisory | Y |
 | P2-74 | tools | tests/test_file_manipulation.py:10 | Brittle implementation-coupled mock patches aiofiles.open with FakeAsyncFile that ignores mode semantics | testing | 60 | advisory | Y |
 | P2-75 | tools | tools/web_fetch.py:235 | _choice_content duck-types litellm response as object and falls back to str(response) — leaks ModelResponse repr as the answer | kieran-python | 80 | manual | Y |
@@ -233,10 +233,10 @@
 | P2-99 | llm | llm/client.py:24 | _TOOLS_WITHOUT_TIMEOUT hardcodes tool identity in the LLM client layer | maintainability | 80 | manual | Y |
 | P2-100 | llm | llm/client.py:483 | Loop-continuation decision relies on side-effect flag set in a sibling task (dual signaling via queues+Event) | maintainability | 60 | manual | Y |
 | P2-101 | llm | llm/dynamic_system_prompt.py:7 | Cross-module imports: dynamic_system_prompt reaches into agents.manager and domain.todo internals | maintainability | 60 | manual | Y |
-| P2-102 | llm | llm/static_system_prompt.py:22 | build_static_system_prompt and _get_os_info OS branches untested | testing | 75 | gated_auto | Y |
-| P2-103 | llm | llm/client.py:56 | classify_error missing BadGatewayError branch test | testing | 75 | gated_auto | Y |
-| P2-104 | llm | llm/client.py:114 | _history_to_api_messages THINKING-between-tool_calls-and-result invariant untested | testing | 75 | gated_auto | Y |
-| P2-105 | llm | llm/client.py:210 | _TOOLS_WITHOUT_TIMEOUT bypass branch in _execute_tool untested | testing | 75 | gated_auto | Y |
+| P2-102 | llm | llm/static_system_prompt.py:22 | build_static_system_prompt and _get_os_info OS branches untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-103 | llm | llm/client.py:56 | classify_error missing BadGatewayError branch test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-104 | llm | llm/client.py:114 | _history_to_api_messages THINKING-between-tool_calls-and-result invariant untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-105 | llm | llm/client.py:210 | _TOOLS_WITHOUT_TIMEOUT bypass branch in _execute_tool untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-106 | llm | llm/client.py:86 | OpenAI chat-message shape passed around as bare dict[str, Any] — no TypedDict | kieran-python | 50 | manual | Y |
 | P2-107 | llm | llm/client.py:179 | _execute_tool accesses typed dict fields without a TypedDict guard (tc["function"]["name"] KeyError-prone) | kieran-python | 50 | manual | Y |
 | P2-108 | llm | llm/dynamic_system_prompt.py:13 | Module-level _TREE_CACHE global has no concurrency guard | kieran-python | 50 | manual | Y |
@@ -264,8 +264,8 @@
 | P2-125 | mcp | mcp/__init__.py:169/181 | Triple-duplicated 'manager unavailable / server not connected → error ExecutorResult' pattern | maintainability | 60 | manual | Y |
 | P2-126 | mcp | mcp/schema.py:50 | make_mcp_executor typed Callable[..., Any], abandoning signature guarantees documented in docstring | maintainability, kieran-python | 55/75 | manual | Y |
 | P2-127 | mcp | config.py:88 / mcp/example_server.py | Example MCP server is wired as a production default in user config | maintainability | 60 | manual | Y |
-| P2-128 | mcp | mcp/__init__.py:113 (alt) | _await_runner timeout/cancel branch untested | testing | 75 | gated_auto | Y |
-| P2-129 | mcp | mcp/example_server.py:44 | example_server.py has zero test coverage despite being the MCP integration entrypoint | testing | 75 | gated_auto | Y |
+| P2-128 | mcp | mcp/__init__.py:113 (alt) | _await_runner timeout/cancel branch untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-129 | mcp | mcp/example_server.py:44 | example_server.py has zero test coverage despite being the MCP integration entrypoint **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-130 | mcp | mcp/__init__.py:176 (alt) | Tool-call failure semantics undefined and untested — call_tool does not catch exceptions | testing | 75 | manual | Y |
 | P2-131 | mcp | mcp/schema.py:30 | convert_mcp_tool defaults missing type in property schema to "string", misrepresenting schema to the LLM **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 75 | safe_auto | Y |
 | P2-132 | mcp | mcp/__init__.py:128/187 (alt) | SSE MCP server URLs unvalidated — no scheme/host allowlist | security | 75 | gated_auto | Y |
@@ -303,15 +303,15 @@
 | P2-159 | rag | rag/indexer.py:257 (alt) | Full index_project flush wipes and re-inserts every chunk even on incremental runs | performance | 50 | manual | Y |
 | P2-160 | rag | rag/embedder.py:81 | _embed_fastembed converts each vector to a Python list, then store re-converts to numpy | performance | 50 | manual | Y |
 | P2-161 | rag | rag/indexer.py:241 | Per-file embed() calls prevent cross-file batching for API providers | performance | 50 | manual | Y |
-| P2-162 | rag | rag/store.py:236 | search dimension-mismatch error path is untested | testing | 75 | gated_auto | Y |
-| P2-163 | rag | rag/store.py:226 | search vector/chunk count mismatch (stale-index truncation) is untested | testing | 75 | gated_auto | Y |
-| P2-164 | rag | rag/indexer.py:190 | Embedding pre-check unexpected format branch in index_project is untested | testing | 75 | gated_auto | Y |
-| P2-165 | rag | rag/embedder.py:105 | Litellm ImportError branch in _embed_litellm is untested | testing | 75 | gated_auto | Y |
-| P2-166 | rag | rag/embedder.py:104 | aembedding returning empty/malformed response.data is untested (would surface as ValueError deep in store) | testing | 75 | gated_auto | Y |
-| P2-167 | rag | rag/embedder.py:49 | Embedding batching (BATCH_SIZE=100) never tested with >100 texts | testing | 75 | gated_auto | Y |
-| P2-168 | rag | rag/indexer.py:392 | _read_and_hash max_file_size branch is untested | testing | 75 | gated_auto | Y |
-| P2-169 | rag | rag/indexer.py:120 | _indexing re-entrancy guard returns empty IndexResult with no test | testing | 75 | gated_auto | Y |
-| P2-170 | rag | rag/store.py:405 | delete_by_file vector-realignment branch (len mismatch) untested | testing | 75 | gated_auto | Y |
+| P2-162 | rag | rag/store.py:236 | search dimension-mismatch error path is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-163 | rag | rag/store.py:226 | search vector/chunk count mismatch (stale-index truncation) is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-164 | rag | rag/indexer.py:190 | Embedding pre-check unexpected format branch in index_project is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-165 | rag | rag/embedder.py:105 | Litellm ImportError branch in _embed_litellm is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-166 | rag | rag/embedder.py:104 | aembedding returning empty/malformed response.data is untested (would surface as ValueError deep in store) **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-167 | rag | rag/embedder.py:49 | Embedding batching (BATCH_SIZE=100) never tested with >100 texts **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-168 | rag | rag/indexer.py:392 | _read_and_hash max_file_size branch is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-169 | rag | rag/indexer.py:120 | _indexing re-entrancy guard returns empty IndexResult with no test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P2-170 | rag | rag/store.py:405 | delete_by_file vector-realignment branch (len mismatch) untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-171 | rag | rag/embedder.py:22 | _resolve_ref returns a discriminated-union-of-tuples and call sites dispatch on len(ref) — fragile, untyped shape | kieran-python | 75 | manual | Y |
 | P2-172 | rag | rag/indexer.py:210 | Repeated silent except Exception: pass swallows hash-update and progress-callback errors with no diagnostic | kieran-python | 75 | manual | Y |
 | P2-173 | rag | rag/indexer.py:105 | progress_callback: Callable | None carries no parameter contract | kieran-python | 75 | manual | Y |
@@ -354,13 +354,13 @@
 | P2-205 | screens | screens/settings.py:766 | _items_cache is state-shared between Providers and MCP keyword lists with no guard | maintainability | 50 | manual | Y |
 | P2-206 | screens | screens/settings.py:28 (input_modal) | InputModal conform: Pressing Cancel vs submitting empty value both return None (indistinguishable) | correctness, testing | 50 | advisory | Y |
 | P2-207 | screens | screens/settings.py:217 | Focus call after mounting model row is swallowed by bare except — newly added model rows are never focused | correctness | 75 | manual | Y |
-| P2-208 | screens | screens/input_modal.py:7 | InputModal has zero test coverage (all branches) | testing | 100 | gated_auto | Y |
-| P2-209 | screens | screens/picker.py:15 | OptionPicker has zero test coverage | testing | 100 | gated_auto | Y |
-| P2-210 | screens | screens/settings.py:282 | NewProviderForm model-row removal branch is untested | testing | 90 | gated_auto | Y |
-| P2-211 | screens | screens/settings.py:286 | NewProviderForm on_input_changed / on_select_changed state-sync untested | testing | 85 | gated_auto | Y |
-| P2-212 | screens | screens/settings.py:541 | ConfirmScreen 'Close and Save' path and _on_confirm_discard('save_close') untested | testing | 85 | gated_auto | Y |
-| P2-213 | screens | screens/settings.py:859 | SettingsScreen.on_button_pressed routing branches untested | testing | 80 | gated_auto | Y |
-| P2-214 | screens | screens/settings.py:1064 | SettingsScreen picker flows (theme/personality/default_model/embedding) untested | testing | 75 | gated_auto | Y |
+| P2-208 | screens | screens/input_modal.py:7 | InputModal has zero test coverage (all branches) **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
+| P2-209 | screens | screens/picker.py:15 | OptionPicker has zero test coverage **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
+| P2-210 | screens | screens/settings.py:282 | NewProviderForm model-row removal branch is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 90 | gated_auto | Y |
+| P2-211 | screens | screens/settings.py:286 | NewProviderForm on_input_changed / on_select_changed state-sync untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 85 | gated_auto | Y |
+| P2-212 | screens | screens/settings.py:541 | ConfirmScreen 'Close and Save' path and _on_confirm_discard('save_close') untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 85 | gated_auto | Y |
+| P2-213 | screens | screens/settings.py:859 | SettingsScreen.on_button_pressed routing branches untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 80 | gated_auto | Y |
+| P2-214 | screens | screens/settings.py:1064 | SettingsScreen picker flows (theme/personality/default_model/embedding) untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 
 ### Cross-module
 
@@ -395,7 +395,7 @@
 | P3-10 | domain | domain/skill.py:49 (alt) | Skill.to_dict emits reference/script/asset COUNTS, not the resources themselves — fields unreadable from serialized form | correctness | 75 | advisory | Y |
 | P3-11 | domain | domain/skill.py:32 (alt) | Skill.validate allows 'content', 'requires', 'scripts', 'references', 'assets' to be any type without validation | correctness | 75 | advisory | Y |
 | P3-12 | domain | domain/tool.py:33 | Tool.to_dict always emits strict=true and additionalProperties flag; strict=false tools (e.g., MCP) may break provider schema validation | correctness | 50 | advisory | Y |
-| P3-13 | domain | domain/message.py:148 (alt) | record_streamed_message SYSTEM-role and catch-all branches untested | testing | 50 | gated_auto | N |
+| P3-13 | domain | domain/message.py:148 (alt) | record_streamed_message SYSTEM-role and catch-all branches untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 50 | gated_auto | N |
 | P3-14 | domain | domain/message.py:78 (alt) | Usage(**data) in Message.from_storage_dict not resilient to schema drift — untested | testing | 50 | manual | N |
 | P3-15 | domain | tests/test_streaming_messages.py:84 | test_record_streamed_message-updates_cumulative_snapshots asserts history length indirectly via list comprehension, not appended-flag returns | testing | 50 | advisory | N |
 | P3-16 | domain | domain/todo.py:64 (alt) | Concurrent-access behavior of TodoStore and SessionManager is undocumented and untested | testing | 50 | advisory | N |
@@ -452,9 +452,9 @@
 | P3-52 | llm | llm/client.py:34 | classify_error ordering silently treats ServiceUnavailableError before generic APIError | kieran-python | 50 | manual | Y |
 | P3-53 | llm | llm/client.py:415 (alt) | Dynamic system prompt appended after history in api_messages | maintainability | 40 | manual | Y |
 | P3-54 | llm | llm/client.py:235 | _stream_task closure-based state machine is hard to unit-test (7 nonlocals) | maintainability | 55 | manual | Y |
-| P3-55 | llm | tests/test_streaming_messages.py | _history_to_api_messages orphan/tool_calls invariants untested | maintainability (testing) | 65 | gated_auto | Y |
-| P3-56 | llm | llm/client.py:34 (alt) | classify_error exception-type ladder is exercised by neither test nor type discipline | maintainability (testing) | 55 | gated_auto | Y |
-| P3-57 | llm | llm/client.py:467 (alt) | Stream-cancel propagation path (the duplicated except block) has no concurrency test | maintainability (testing) | 60 | gated_auto | Y |
+| P3-55 | llm | tests/test_streaming_messages.py | _history_to_api_messages orphan/tool_calls invariants untested **[FIXED — testing-gap sweep 2026-06-21]** | maintainability (testing) | 65 | gated_auto | Y |
+| P3-56 | llm | llm/client.py:34 (alt) | classify_error exception-type ladder is exercised by neither test nor type discipline **[FIXED — testing-gap sweep 2026-06-21]** | maintainability (testing) | 55 | gated_auto | Y |
+| P3-57 | llm | llm/client.py:467 (alt) | Stream-cancel propagation path (the duplicated except block) has no concurrency test **[FIXED — testing-gap sweep 2026-06-21]** | maintainability (testing) | 60 | gated_auto | Y |
 | P3-58 | llm | llm/client.py:74 (alt) | _validate_tool_args parameter lacks value-type annotation | kieran-python | 75 | manual | Y |
 | P3-59 | llm | llm/client.py:295 (alt) | Streaming response object never closed via async ctx (residual after reliability fix) | maintainability | — | manual | N |
 | P3-60 | llm | llm/providers.py:236 (alt) | Discovery cache permanently caches empty list on transient network failure | reliability | 75 | manual | Y |
@@ -484,9 +484,9 @@
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
 | P3-76 | rag | rag/indexer.py:279 | Incremental path with deleted files skews stats.files_deleted: deletes already-wiped rows from upsert | correctness | 55 | manual | Y |
-| P3-77 | rag | rag/store.py:313 | record_index_duration is never directly tested | testing | 50 | gated_auto | Y |
-| P3-78 | rag | rag/embedder.py:128 (alt) | embed_single public method is untested | testing | 75 | gated_auto | Y |
-| P3-79 | rag | rag/store.py:273 | _cosine_similarity zero-vector guard is untested | testing | 75 | gated_auto | Y |
+| P3-77 | rag | rag/store.py:313 | record_index_duration is never directly tested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 50 | gated_auto | Y |
+| P3-78 | rag | rag/embedder.py:128 (alt) | embed_single public method is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
+| P3-79 | rag | rag/store.py:273 | _cosine_similarity zero-vector guard is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P3-80 | rag | rag/indexer.py:184 (alt 2) | Throwaway embed(["test"]) probe runs on every index_project call (advisory — comment documents the deliberate tradeoff) | performance | 25 | advisory | Y |
 
 ### screens/
@@ -504,8 +504,8 @@
 | P3-89 | screens | screens/picker.py:12 | PickerItem.id shadows the id builtin | kieran-python | 50 | manual | Y |
 | P3-90 | screens | screens/settings.py:1253 | _do_save constructs error string with a generated bullet but never strips existing bullets | kieran-python | 50 | manual | Y |
 | P3-91 | screens | screens/settings.py:931 (alt) | _render_mcp_list duplicates _render_keyed_list with a different action prefix (residual variance) | kieran-python | 50 | manual | Y |
-| P3-92 | screens | screens/settings.py:453 (Cancel branch untested) | NewMCPServerForm Cancel button and Escape paths untested | testing | 90 | gated_auto | Y |
-| P3-93 | screens | screens/settings.py:1274 | key_ctrl_s save-in-place path untested | testing | 85 | gated_auto | Y |
+| P3-92 | screens | screens/settings.py:453 (Cancel branch untested) | NewMCPServerForm Cancel button and Escape paths untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 90 | gated_auto | Y |
+| P3-93 | screens | screens/settings.py:1274 | key_ctrl_s save-in-place path untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 85 | gated_auto | Y |
 | P3-94 | screens | screens/settings.py:773 | SIM117: nested with statements should be combined into a single with — pyproject.toml ruff violation **[NO-OP — safe_auto sweep 2026-06-21: already combined into `with Vertical(...), Horizontal(...):` form]** | project-standards | 100 | safe_auto | N |
 | P3-95 | screens | screens/picker.py:24 | OptionPicker.compose is missing its return type annotation | project-standards | 100 | manual | Y |
 

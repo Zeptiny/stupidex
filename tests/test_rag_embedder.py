@@ -17,13 +17,14 @@ provider-metadata cache isolated across tests).
 """
 
 import asyncio
+import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from stupidex.config import Config
 from stupidex.llm import providers as providers_mod
 from stupidex.llm.providers import ProviderResolutionError, reset_cache
-from stupidex.rag.embedder import MAX_RETRIES, Embedder, EmbeddingError
+from stupidex.rag.embedder import BATCH_SIZE, MAX_RETRIES, Embedder, EmbeddingError
 
 
 def _cfg(providers: dict) -> Config:
@@ -217,6 +218,136 @@ class TestEmbedErrors(EmbedderTestCase):
         self.assertIn("boom", str(ctx.exception))
         # MAX_RETRIES (3) attempts yield MAX_RETRIES - 1 backoff sleeps.
         self.assertEqual(mock_sleep.await_count, MAX_RETRIES - 1)
+
+
+class TestEmbedLitellmErrorPaths(EmbedderTestCase):
+    """P2-165 / P2-166: litellm ImportError + empty/malformed response.data."""
+
+    _FAKE_REF = ("openai", "text-embedding-3-small", "https://example.com", "sk-x")
+
+    def test_litellm_import_error_raises_embedding_error(self):
+        """P2-165: when `from litellm import aembedding` raises ImportError,
+        Embedder raises a clean EmbeddingError pointing to the package name."""
+        e = Embedder("work-openai/text-embedding-3-small")
+        with (
+            patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=self._FAKE_REF),
+            patch.dict(sys.modules, {"litellm": None}),
+            self.assertRaises(EmbeddingError) as ctx,
+        ):
+            asyncio.run(e.embed(["hi"]))
+        self.assertIn("litellm is required for embeddings", str(ctx.exception))
+
+    def test_litellm_empty_response_data_returns_empty_list(self):
+        """P2-166 (characterization): `response.data == []` -> _embed_litellm
+        returns [] silently (no ValueError). Pinned because this swallows a
+        provider error; flagged as a behavioral gap."""
+        response = MagicMock()
+        response.data = []
+        e = Embedder("work-openai/text-embedding-3-small")
+        with (
+            patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=self._FAKE_REF),
+            patch("litellm.aembedding", new_callable=AsyncMock, return_value=response),
+        ):
+            result = asyncio.run(e.embed(["hi"]))
+        self.assertEqual(result, [])
+
+    def test_litellm_malformed_response_data_raises_embedding_error(self):
+        """P2-166: `response.data` items missing the `embedding` key surface
+        as EmbeddingError after MAX_RETRIES retries."""
+        response = MagicMock()
+        response.data = [{}]  # no "embedding" key
+        e = Embedder("work-openai/text-embedding-3-small")
+        with (
+            patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=self._FAKE_REF),
+            patch("litellm.aembedding", new_callable=AsyncMock, return_value=response),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            self.assertRaises(EmbeddingError) as ctx,
+        ):
+            asyncio.run(e.embed(["hi"]))
+        self.assertIn("Embedding failed after", str(ctx.exception))
+
+
+class TestEmbedBatching(EmbedderTestCase):
+    """P2-167: batches of >BATCH_SIZE texts are split into multiple calls."""
+
+    def test_more_than_batch_size_text_is_split_into_multiple_calls(self):
+        e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
+        texts = [f"t{i}" for i in range(BATCH_SIZE * 2 + 50)]  # 250
+
+        captured_batches: list[list[str]] = []
+
+        async def fake_embed(model, batch):
+            captured_batches.append(list(batch))
+            return [[0.1, 0.2, 0.3] for _ in batch]
+
+        with patch.object(
+            Embedder, "_embed_fastembed", new_callable=AsyncMock, side_effect=fake_embed
+        ) as mock_fe:
+            result = asyncio.run(e.embed(texts))
+
+        self.assertEqual(mock_fe.await_count, 3)
+        self.assertEqual(len(captured_batches[0]), BATCH_SIZE)
+        self.assertEqual(len(captured_batches[1]), BATCH_SIZE)
+        self.assertEqual(len(captured_batches[2]), 50)
+        self.assertEqual(len(result), len(texts))
+        self.assertEqual(len(result), 250)
+
+    def test_exactly_batch_size_is_single_call(self):
+        e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
+        texts = [f"t{i}" for i in range(BATCH_SIZE)]
+
+        async def fake_embed(model, batch):
+            return [[0.1, 0.2, 0.3] for _ in batch]
+
+        with patch.object(
+            Embedder, "_embed_fastembed", new_callable=AsyncMock, side_effect=fake_embed
+        ) as mock_fe:
+            result = asyncio.run(e.embed(texts))
+
+        self.assertEqual(mock_fe.await_count, 1)
+        self.assertEqual(len(result), BATCH_SIZE)
+
+
+class TestEmbedSingle(EmbedderTestCase):
+    """P3-78: embed_single public method."""
+
+    def test_returns_single_vector_with_correct_dimension(self):
+        e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
+        with patch.object(
+            Embedder,
+            "_embed_fastembed",
+            new_callable=AsyncMock,
+            return_value=[[0.1, 0.2, 0.3]],
+        ) as mock_fe:
+            vec = asyncio.run(e.embed_single("text"))
+        self.assertEqual(vec, [0.1, 0.2, 0.3])
+        mock_fe.assert_awaited_once()
+
+    def test_empty_text_characterization(self):
+        """Characterization: with a normal embedder, embed_single("") returns
+        a vector (no IndexError). The IndexError path only triggers when the
+        underlying provider returns an empty list (see test_empty_provider_raises_indexerror)."""
+
+        class FakeEmpty(Embedder):
+            async def embed(self, texts: list[str]) -> list[list[float]]:
+                return [[0.0, 0.0, 0.0, 0.0] for _ in texts]
+
+        e = FakeEmpty(model="fake")
+        vec = asyncio.run(e.embed_single(""))
+        self.assertEqual(vec, [0.0, 0.0, 0.0, 0.0])
+
+    def test_empty_provider_raises_indexerror(self):
+        """Characterization (P2-187 batch C): when embed() returns [], embed_single
+        raises IndexError on `results[0]`. Pinned to surface regressions; this is a
+        gap — the empty-provider error is not wrapped as EmbeddingError."""
+
+        class EmptyEmbedder(Embedder):
+            async def embed(self, texts: list[str]) -> list[list[float]]:
+                return []
+
+        e = EmptyEmbedder(model="fake")
+        with self.assertRaises(IndexError):
+            asyncio.run(e.embed_single("anything"))
 
 
 if __name__ == "__main__":

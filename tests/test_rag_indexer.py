@@ -7,6 +7,7 @@ from stupidex.rag.chunker import Chunk
 from stupidex.rag.embedder import Embedder
 from stupidex.rag.indexer import (
     _discover_files,
+    _read_and_hash,
     _should_include,
     clear_index,
     get_status,
@@ -641,3 +642,78 @@ async def test_save_vectors_called_once_incremental_changed_and_deleted(
     # Search still works
     results = store.search(vectors[0], top_k=10)
     assert len(results) == len(chunk_ids)
+
+
+# ---------------------------------------------------------------------------
+# Testing-gap sweep 2026-06-21
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_precheck_unexpected_format_branch(tmp_path):
+    """P2-164: when the embedding pre-check returns a non-float scalar,
+    index_project surfaces 'Embedding provider returned unexpected format'."""
+    (tmp_path / "a.py").write_text("x = 1\n")
+
+    class MalformedEmbedder(Embedder):
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            # Pre-check inspects test_embeddings[0][0]; ints (not float) trip it.
+            return [[1, 2, 3] for _ in texts]
+
+    r = await index_project(project_path=str(tmp_path), embedder=MalformedEmbedder())
+
+    assert r.files_indexed == 0
+    assert r.errors == ["Embedding provider returned unexpected format"]
+
+
+def test_read_and_hash_skips_file_exceeding_max_size(tmp_path, monkeypatch):
+    """P2-168: _read_and_hash returns (None, None) for files exceeding max_file_size."""
+    from stupidex.config import Config, RAGConfig
+
+    cfg = Config(rag=RAGConfig(max_file_size=4))
+    monkeypatch.setattr("stupidex.rag.indexer.get_config", lambda: cfg)
+
+    f = tmp_path / "big.py"
+    f.write_text("x" * 100)  # 100 bytes > 4-byte limit
+
+    content, file_hash = _read_and_hash(f)
+    assert content is None
+    assert file_hash is None
+
+
+@pytest.mark.asyncio
+async def test_index_skips_file_exceeding_max_size(tmp_path, monkeypatch):
+    """P2-168 integration: index_project skips oversized files."""
+    from stupidex.config import Config, RAGConfig
+
+    cfg = Config(rag=RAGConfig(max_file_size=10))
+    monkeypatch.setattr("stupidex.rag.indexer.get_config", lambda: cfg)
+
+    (tmp_path / "big.py").write_text("x" * 100)  # exceeds 10-byte limit
+    (tmp_path / "small.py").write_text("y = 1")  # 7 bytes, fits
+
+    r = await index_project(project_path=str(tmp_path), embedder=FakeEmbedder())
+    assert r.files_scanned == 2
+    assert r.files_indexed == 1  # only small.py
+
+    store = RAGStore(str(tmp_path))
+    paths = {c["file_path"] for c in store._get_all_chunks()}
+    assert "small.py" in paths
+    assert "big.py" not in paths
+
+
+@pytest.mark.asyncio
+async def test_index_project_reentrancy_guard_returns_empty(tmp_path, monkeypatch):
+    """P2-169: a second concurrent index_project call returns an empty IndexResult."""
+    from stupidex.rag import indexer as indexer_mod
+
+    monkeypatch.setattr(indexer_mod, "_indexing", True)
+
+    r = await index_project(project_path=str(tmp_path), embedder=FakeEmbedder())
+    assert r.files_scanned == 0
+    assert r.files_indexed == 0
+    assert r.files_skipped == 0
+    assert r.files_deleted == 0
+    assert r.chunks_created == 0
+    assert r.errors == []
+    assert r.duration_seconds == 0.0

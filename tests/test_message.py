@@ -2,7 +2,14 @@
 
 import unittest
 
-from stupidex.domain.message import Message, MessageRole, MessageType, Usage
+from stupidex.domain.message import (
+    Message,
+    MessageRole,
+    MessageType,
+    StreamHistoryState,
+    Usage,
+    record_streamed_message,
+)
 
 
 class TestUsageDeserializationForwardCompat(unittest.TestCase):
@@ -207,6 +214,93 @@ class TestMessageToDict(unittest.TestCase):
         self.assertEqual(
             msg.tool_calls[0]["function"]["arguments"], "{}"  # type: ignore[index]
         )
+
+
+class TestRecordStreamedMessageSystemAndCatchAll(unittest.TestCase):
+    """P3-13: SYSTEM-role routing and catch-all branch of record_streamed_message.
+
+    There is no dedicated SYSTEM-role branch; SYSTEM+TEXT messages are routed
+    through the generic TEXT branch (mutating an existing assistant snapshot
+    in place rather than appending — pinned here as regression coverage), while
+    SYSTEM messages of a non-TEXT type fall through to the catch-all.
+    """
+
+    def test_system_text_with_no_prior_state_appended_and_anchors_state(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+        sys_msg = Message(MessageRole.SYSTEM, "you are helpful", MessageType.TEXT)
+        appended = record_streamed_message(history, sys_msg, state)
+        self.assertTrue(appended)
+        self.assertIs(state.content, sys_msg)
+        self.assertEqual(history, [sys_msg])
+
+    def test_system_text_with_prior_assistant_mutates_existing_snapshot(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+        prior = Message(MessageRole.ASSISTANT, "partial", MessageType.TEXT)
+        record_streamed_message(history, prior, state)
+        self.assertEqual(len(history), 1)
+
+        sys_msg = Message(MessageRole.SYSTEM, "sys", MessageType.TEXT)
+        appended = record_streamed_message(history, sys_msg, state)
+
+        # Pins current behavior: SYSTEM+TEXT does not append a new entry —
+        # it overwrites the existing assistant snapshot's content. Pinned so
+        # any future fix is intentional rather than silent drift.
+        self.assertFalse(appended)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].role, MessageRole.ASSISTANT)
+        self.assertEqual(history[0].content, "sys")
+
+    def test_system_non_text_type_hits_catch_all_and_appends(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+        prior = Message(MessageRole.ASSISTANT, "x", MessageType.TEXT)
+        record_streamed_message(history, prior, state)
+        self.assertIsNotNone(state.content)
+
+        sys_err = Message(MessageRole.SYSTEM, "sys-error", MessageType.ERROR)
+        appended = record_streamed_message(history, sys_err, state)
+        self.assertTrue(appended)
+        self.assertIn(sys_err, history)
+        self.assertIsNone(state.thinking)
+        self.assertIsNone(state.content)
+
+    def test_catch_all_appends_unknown_combination_without_raising(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+        # TOOL role + ERROR type matches no named branch → catch-all.
+        weird = Message(MessageRole.TOOL, "stray", MessageType.ERROR)
+        appended = record_streamed_message(history, weird, state)
+        self.assertTrue(appended)
+        self.assertEqual(history, [weird])
+        self.assertIsNone(state.thinking)
+        self.assertIsNone(state.content)
+
+    def test_catch_all_resets_prior_stream_state(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+        prior = Message(MessageRole.ASSISTANT, "x", MessageType.TEXT)
+        record_streamed_message(history, prior, state)
+        self.assertIsNotNone(state.content)
+
+        err = Message(MessageRole.ASSISTANT, "boom", MessageType.ERROR)
+        appended = record_streamed_message(history, err, state)
+        self.assertTrue(appended)
+        self.assertIn(err, history)
+        self.assertIsNone(state.thinking)
+        self.assertIsNone(state.content)
+
+    def test_catch_all_appends_each_call_exactly_once(self):
+        history: list[Message] = []
+        state = StreamHistoryState()
+        m1 = Message(MessageRole.ASSISTANT, "note", MessageType.ERROR)
+        m2 = Message(MessageRole.ASSISTANT, "note2", MessageType.ERROR)
+        self.assertTrue(record_streamed_message(history, m1, state))
+        self.assertTrue(record_streamed_message(history, m2, state))
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0].content, "note")
+        self.assertEqual(history[1].content, "note2")
 
 
 if __name__ == "__main__":

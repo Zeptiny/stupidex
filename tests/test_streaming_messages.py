@@ -1248,6 +1248,176 @@ class ClassifyErrorTest(unittest.TestCase):
         self.assertEqual(title, "Unknown Provider")
         self.assertIn("ProviderResolutionError", detail)
 
+    def test_bad_gateway_error_is_classified(self):
+        exc = litellm.BadGatewayError(
+            message="Bad gateway", llm_provider="openai", model="gpt-4"
+        )
+        title, detail = classify_error(exc)
+        self.assertEqual(title, "Bad Gateway")
+        self.assertIn("Bad gateway", detail)
+
+
+class ClassifyErrorLadderTest(unittest.TestCase):
+    """P2-103 + P3-56 -- exhaustive coverage of the classify_error exception-type
+    ladder. Each branch must map to its exact (title, detail) contract so future
+    re-ordering of the isinstance chain is caught."""
+
+    def _litellm_kwargs(self, exc_cls, **extra):
+        kwargs = {"message": "boom", "llm_provider": "openai", "model": "gpt-4"}
+        kwargs.update(extra)
+        return exc_cls(**kwargs)
+
+    def test_provider_resolution_error_branch(self):
+        title, _ = classify_error(ProviderResolutionError("alias 'x' unknown"))
+        self.assertEqual(title, "Unknown Provider")
+
+    def test_authentication_error_branch(self):
+        title, _ = classify_error(
+            self._litellm_kwargs(litellm.AuthenticationError)
+        )
+        self.assertEqual(title, "Authentication Failed")
+
+    def test_rate_limit_error_branch(self):
+        title, _ = classify_error(self._litellm_kwargs(litellm.RateLimitError))
+        self.assertEqual(title, "Rate Limit Exceeded")
+
+    def test_timeout_branch(self):
+        title, _ = classify_error(self._litellm_kwargs(litellm.Timeout))
+        self.assertEqual(title, "Request Timed Out")
+
+    def test_api_connection_error_branch(self):
+        title, _ = classify_error(
+            self._litellm_kwargs(litellm.APIConnectionError)
+        )
+        self.assertEqual(title, "Connection Failed")
+
+    def test_bad_request_error_branch(self):
+        title, _ = classify_error(self._litellm_kwargs(litellm.BadRequestError))
+        self.assertEqual(title, "Invalid Request")
+
+    def test_internal_server_error_branch(self):
+        title, _ = classify_error(
+            self._litellm_kwargs(litellm.InternalServerError)
+        )
+        self.assertEqual(title, "Server Error")
+
+    def test_service_unavailable_error_branch(self):
+        title, _ = classify_error(
+            self._litellm_kwargs(litellm.ServiceUnavailableError)
+        )
+        self.assertEqual(title, "Service Unavailable")
+
+    def test_bad_gateway_error_branch(self):
+        title, _ = classify_error(self._litellm_kwargs(litellm.BadGatewayError))
+        self.assertEqual(title, "Bad Gateway")
+
+    def test_generic_api_error_branch(self):
+        exc = litellm.APIError(
+            status_code=500, message="boom",
+            llm_provider="openai", model="gpt-4",
+        )
+        title, _ = classify_error(exc)
+        self.assertEqual(title, "API Error")
+
+    def test_httpx_timeout_branch(self):
+        title, _ = classify_error(httpx.TimeoutException("t"))
+        self.assertEqual(title, "Request Timed Out")
+
+    def test_httpx_http_error_branch(self):
+        title, _ = classify_error(httpx.HTTPError("h"))
+        self.assertEqual(title, "HTTP Error")
+
+    def test_generic_exception_branch(self):
+        title, _ = classify_error(RuntimeError("unexpected"))
+        self.assertEqual(title, "Unexpected Error")
+
+
+class HistoryToApiMessagesInvariantTest(unittest.TestCase):
+    """P2-104 + P3-55 -- _history_to_api_messages ordering + orphan invariants
+    that the prior tests did not exercise directly."""
+
+    def test_thinking_between_tool_calls_and_tool_result_preserved_in_order(self):
+        """P2-104: a THINKING chunk arriving between an assistant tool_calls
+        block and its matching TOOL_RESULT must be preserved in message order
+        AND must NOT break the tool_call/tool_result pairing."""
+        tool_calls = [{"id": "call-0", "type": "function",
+                       "function": {"name": "read", "arguments": '{"file_path":"a"}'}}]
+        history = [
+            Message(MessageRole.USER, "hi"),
+            Message(MessageRole.ASSISTANT, "Let me check", MessageType.TEXT, tool_calls=tool_calls),
+            Message(MessageRole.ASSISTANT, "Reasoning mid-flight", MessageType.THINKING),
+            Message(MessageRole.TOOL, "contents", MessageType.TOOL_RESULT, tool_call_id="call-0"),
+            Message(MessageRole.ASSISTANT, "final", MessageType.TEXT),
+        ]
+        replayed = llm_client._history_to_api_messages(history)
+        roles = [m["role"] for m in replayed]
+        self.assertEqual(
+            roles, ["user", "assistant", "assistant", "tool", "assistant"]
+        )
+        thinking_msg = next(m for m in replayed if m["role"] == "assistant" and m.get("content") == "Reasoning mid-flight")
+        tool_msg = next(m for m in replayed if m["role"] == "tool")
+        self.assertEqual(thinking_msg["content"], "Reasoning mid-flight")
+        self.assertEqual(tool_msg["tool_call_id"], "call-0")
+        assistant_with_calls = next(
+            m for m in replayed
+            if m["role"] == "assistant" and m.get("tool_calls")
+        )
+        self.assertEqual([tc["id"] for tc in assistant_with_calls["tool_calls"]], ["call-0"])
+
+    def test_orphan_tool_call_with_no_matching_result_is_filtered(self):
+        """P3-55: an assistant tool_calls block whose id never receives a
+        TOOL_RESULT is filtered (dangling tool_calls removed), and if the
+        assistant message has no content it is dropped entirely."""
+        history = [
+            Message(MessageRole.USER, "hi"),
+            Message(
+                MessageRole.ASSISTANT, "", MessageType.TEXT,
+                tool_calls=[{"id": "call-9", "type": "function",
+                             "function": {"name": "read", "arguments": '{}'}}],
+            ),
+            Message(MessageRole.ASSISTANT, "after", MessageType.TEXT),
+        ]
+        replayed = llm_client._history_to_api_messages(history)
+        self.assertEqual(replayed, [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "after"},
+        ])
+
+    def test_tool_result_with_no_preceding_tool_calls_is_dropped(self):
+        """P3-55: a TOOL_RESULT whose tool_call_id was never announced by a
+        preceding assistant tool_calls block is an orphan and must be dropped
+        (no exception raised)."""
+        history = [
+            Message(MessageRole.USER, "hi"),
+            Message(MessageRole.TOOL, "stray", MessageType.TOOL_RESULT, tool_call_id="call-7"),
+            Message(MessageRole.ASSISTANT, "ok", MessageType.TEXT),
+        ]
+        replayed = llm_client._history_to_api_messages(history)
+        self.assertEqual(replayed, [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "ok"},
+        ])
+
+    def test_tool_calls_with_content_survives_when_result_orphaned(self):
+        """P3-55 variant: an assistant tool_calls block with content but no
+        matching TOOL_RESULT keeps its content but loses the tool_calls field
+        on replay (strict providers reject dangling tool_calls)."""
+        history = [
+            Message(MessageRole.USER, "hi"),
+            Message(
+                MessageRole.ASSISTANT, "Thinking out loud", MessageType.TEXT,
+                tool_calls=[{"id": "call-9", "type": "function",
+                             "function": {"name": "read", "arguments": '{}'}}],
+            ),
+            Message(MessageRole.ASSISTANT, "done", MessageType.TEXT),
+        ]
+        replayed = llm_client._history_to_api_messages(history)
+        self.assertEqual(replayed, [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "Thinking out loud"},
+            {"role": "assistant", "content": "done"},
+        ])
+
 
 class StreamResponseProviderResolutionTest(unittest.IsolatedAsyncioTestCase):
     """U3 -- stream_response resolves `alias/model` via resolve_model_ref
@@ -2125,6 +2295,176 @@ class TestExecuteToolErrorPaths(unittest.IsolatedAsyncioTestCase):
         tc = self._tc(arguments='{"path":"x"}', tc_id="tc123")
         result = await llm_client._execute_tool(tc, self._filtered_tools(executor=executor))
         self.assertEqual(result.tool_call_id, "tc123")
+
+
+class ToolsWithoutTimeoutBypassTest(unittest.IsolatedAsyncioTestCase):
+    """P2-105 -- _execute_tool bypass branch for _TOOLS_WITHOUT_TIMEOUT.
+    Asserts the load-bearing contract directly: a tool name in the allowlist
+    runs without an asyncio.wait_for deadline (long sleeps succeed), and a
+    tool name NOT in the allowlist is bounded by _TOOL_TIMEOUT (long sleeps
+    are cancelled and surfaced as a timeout result)."""
+
+    def _make_tool(self, name):
+        return Tool(
+            name=name,
+            description="d",
+            parameters=ToolParameter(
+                properties={"path": ToolParameterProperties(type="string", description="p")},
+                required=[],
+            ),
+        )
+
+    def _filtered_tools(self, name, executor):
+        return {name: {"tool": self._make_tool(name), "executor": executor}}
+
+    async def test_tool_in_allowlist_bypasses_timeout(self):
+        self.assertIn("wait_for_subagent", llm_client._TOOLS_WITHOUT_TIMEOUT)
+
+        async def executor(**args):
+            await asyncio.sleep(0.1)
+            return ExecutorResult(display="ok", content="bypass")
+
+        mock_exec = AsyncMock(side_effect=executor)
+        tc = {"id": "tc1", "function": {"name": "wait_for_subagent", "arguments": "{}"}}
+        with patch.object(llm_client, "_TOOL_TIMEOUT", 0.01):
+            result = await llm_client._execute_tool(
+                tc, self._filtered_tools("wait_for_subagent", mock_exec)
+            )
+        self.assertEqual(result.content, "bypass")
+        self.assertNotIn("timed out", result.content.lower())
+        mock_exec.assert_awaited_once()
+
+    async def test_tool_not_in_allowlist_applies_timeout(self):
+        self.assertNotIn("read", llm_client._TOOLS_WITHOUT_TIMEOUT)
+
+        async def executor(**args):
+            await asyncio.sleep(0.2)
+            return ExecutorResult(display="ok", content="should-not-reach")
+
+        mock_exec = AsyncMock(side_effect=executor)
+        tc = {"id": "tc1", "function": {"name": "read", "arguments": "{}"}}
+        with patch.object(llm_client, "_TOOL_TIMEOUT", 0.01):
+            result = await llm_client._execute_tool(
+                tc, self._filtered_tools("read", mock_exec)
+            )
+        self.assertIn("timed out", result.content.lower())
+        self.assertIn("read", result.content)
+        mock_exec.assert_awaited_once()
+
+
+class StreamCancelPropagationTest(unittest.IsolatedAsyncioTestCase):
+    """P3-57 -- stream_response cancel-propagation path (the deduplicated
+    except BaseException branch). When the consumer abandons the stream
+    mid-flight, both _stream_task and _executor_task must be cancelled and
+    awaited (no dangling tasks); the generator must close cleanly without
+    leaving the underlying task graph running."""
+
+    def _providers(self):
+        return {
+            "default": {
+                "base_url": "https://example.test/v1",
+                "litellm_provider": "openai",
+                "models": {"mimo-v2.5": {}},
+            }
+        }
+
+    def _run_stream_response(self, *, cfg, fake_acompletion):
+        acompletion_mock = AsyncMock(side_effect=fake_acompletion)
+        dummy_dynamic = Message(MessageRole.SYSTEM, "<dynamic/>", MessageType.TEXT)
+        patches = [
+            patch("stupidex.llm.client.get_config", return_value=cfg),
+            patch("stupidex.llm.providers.get_config", return_value=cfg),
+            patch("stupidex.llm.client.build_dynamic_system_prompt",
+                  new=AsyncMock(return_value=dummy_dynamic)),
+            patch("stupidex.llm.client.get_tool_registry", return_value={}),
+            patch("stupidex.llm.client.litellm.acompletion", new=acompletion_mock),
+        ]
+        stack = contextlib.ExitStack()
+        for p in patches:
+            stack.enter_context(p)
+        stack.__enter__()
+        gen = llm_client.stream_response(
+            messages=[],
+            model="default/mimo-v2.5",
+            allowed_tools=[],
+            system_prompt="",
+        )
+        return stack, gen
+
+    async def test_mid_stream_cancellation_cleans_up_tasks(self):
+        """Consumer iterates one message, then closes the generator
+        mid-stream. The formerly-duplicated except block must cancel + gather
+        both tasks; no _stream_task / _executor_task must remain pending."""
+        cfg = Config(providers=self._providers(), llm_stream_idle_timeout=5.0)
+
+        async def fake_acompletion(**kwargs):
+            async def _stream():
+                yield chunk(content="first")
+                await asyncio.sleep(10)  # never completes; consumer will cancel
+
+            return _stream()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        seen: list[Message] = []
+        try:
+            async for msg in gen:
+                seen.append(msg)
+                break
+            await gen.aclose()
+        finally:
+            stack.__exit__(None, None, None)
+
+        self.assertTrue(seen, "consumer must have received at least one message")
+        await asyncio.sleep(0)  # let any deferred cancellation callbacks run
+        pending = [
+            t for t in asyncio.all_tasks()
+            if not t.done()
+            and ("_stream_task" in t.get_name() or "_executor_task" in t.get_name())
+        ]
+        # Either both tasks are done, or none carry the stream/executor names.
+        self.assertEqual(pending, [], "no dangling stream/executor tasks after cancel")
+
+    async def test_mid_stream_cancellation_via_baseexception_propagates(self):
+        """Consumer raises mid-flight (simulating a prompt-injection abort).
+        The cancel branch must re-raise after gathering both tasks; both
+        tasks must be cancelled and observed as done."""
+        cfg = Config(providers=self._providers(), llm_stream_idle_timeout=5.0)
+        captured: dict[str, asyncio.Task] = {}
+
+        original_stream_task = llm_client._stream_task
+        original_executor_task = llm_client._executor_task
+
+        async def tracking_stream_task(*args, **kwargs):
+            captured["stream"] = asyncio.current_task()
+            return await original_stream_task(*args, **kwargs)
+
+        async def tracking_executor_task(*args, **kwargs):
+            captured["executor"] = asyncio.current_task()
+            return await original_executor_task(*args, **kwargs)
+
+        async def fake_acompletion(**kwargs):
+            async def _stream():
+                yield chunk(content="first")
+                await asyncio.sleep(10)
+
+            return _stream()
+
+        stack, gen = self._run_stream_response(cfg=cfg, fake_acompletion=fake_acompletion)
+        try:
+            with patch.object(llm_client, "_stream_task", tracking_stream_task), \
+                    patch.object(llm_client, "_executor_task", tracking_executor_task), \
+                    self.assertRaises(RuntimeError):
+                async for _ in gen:
+                    raise RuntimeError("consumer abort")
+        finally:
+            stack.__exit__(None, None, None)
+            await gen.aclose()
+
+        await asyncio.sleep(0)
+        if "stream" in captured:
+            self.assertTrue(captured["stream"].done())
+        if "executor" in captured:
+            self.assertTrue(captured["executor"].done())
 
 
 class TestStreamResponseMultiTurn(unittest.IsolatedAsyncioTestCase):

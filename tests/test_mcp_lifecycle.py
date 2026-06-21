@@ -406,3 +406,44 @@ class TestStartAllErrorPropagation(unittest.IsolatedAsyncioTestCase):
                 "connected",
             )
             await manager.shutdown()
+
+
+class TestAwaitRunnerTimeoutBranch(unittest.IsolatedAsyncioTestCase):
+    async def test_runner_that_does_not_stop_within_timeout_is_cancelled(self):
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        state = {"cancelled": False}
+
+        async def _hung_runner():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                state["cancelled"] = True
+                raise
+
+        manager._runner = asyncio.create_task(_hung_runner())
+        await manager._await_runner(timeout=0.05)
+
+        self.assertIsNone(manager._runner)
+        self.assertTrue(state["cancelled"])
+
+    async def test_runner_that_stops_cleanly_returns_without_cancel(self):
+        from stupidex.mcp import MCPManager
+
+        manager = MCPManager()
+        cancelled = {"value": False}
+
+        async def _polite_runner():
+            try:
+                await manager._stop.wait()
+            except asyncio.CancelledError:
+                cancelled["value"] = True
+                raise
+
+        manager._runner = asyncio.create_task(_polite_runner())
+        await asyncio.sleep(0.01)
+        await manager._await_runner(timeout=1.0)
+
+        self.assertIsNone(manager._runner)
+        self.assertFalse(cancelled["value"])

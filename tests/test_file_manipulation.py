@@ -53,6 +53,54 @@ async def test_edit_tool_not_found_uses_structured_error(tmp_path, monkeypatch):
     assert '<diff format="unified" />' in result.content
 
 
+@pytest.mark.asyncio
+async def test_edit_tool_replace_all_replaces_every_match(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "multi.txt").write_text("foo\nbar\nfoo\nbaz\nfoo\n")
+
+    result = await execute_edit_tool("multi.txt", "foo", "qux", replace_all=True)
+
+    assert result.display == "Edited multi.txt (+3 -3)"
+    assert (tmp_path / "multi.txt").read_text() == "qux\nbar\nqux\nbaz\nqux\n"
+    assert 'success="true"' in result.content
+    assert 'replacements="3"' in result.content
+    assert 'replace_all="true"' in result.content
+
+
+@pytest.mark.asyncio
+async def test_edit_tool_multiple_matches_without_replace_all_errors(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "multi.txt").write_text("foo\nbar\nfoo\nbaz\nfoo\n")
+
+    result = await execute_edit_tool("multi.txt", "foo", "qux")
+
+    assert result.display == "Multiple matches in multi.txt"
+    assert 'success="false"' in result.content
+    assert 'replacements="0"' in result.content
+    assert 'error="multiple_matches"' in result.content
+    assert "found 3 times" in result.content
+    assert (tmp_path / "multi.txt").read_text() == "foo\nbar\nfoo\nbaz\nfoo\n"
+
+
+@pytest.mark.asyncio
+async def test_edit_tool_generic_exception_returned_as_error_result(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "boom.txt").write_text("content\n")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr("stupidex.tools.file_manipulation.atomic_write", _boom)
+
+    result = await execute_edit_tool("boom.txt", "content", "other")
+
+    assert result.display == "Edit error boom.txt"
+    assert 'success="false"' in result.content
+    assert 'error="edit_error"' in result.content
+    assert "disk on fire" in result.content
+    assert (tmp_path / "boom.txt").read_text() == "content\n"
+
+
 # ---------------------------------------------------------------------------
 # P1-14: atomic writes
 # ---------------------------------------------------------------------------
