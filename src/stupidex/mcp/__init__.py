@@ -135,6 +135,7 @@ class MCPManager:
                 )
             self._sessions.clear()
             self._tools.clear()
+            self._uri_map.clear()
             return
         if self._start_error is not None:
             # Startup itself failed; ensure the runner has torn down.
@@ -148,7 +149,8 @@ class MCPManager:
                 try:
                     await self._start_server(server_name, config)
                     tool_count = sum(1 for k in self._tools if k.startswith(f"mcp::{server_name}::"))
-                    self._server_status[server_name] = {"status": "connected", "tool_count": tool_count, "error": None}
+                    if self._server_status[server_name]["status"] != "failed":
+                        self._server_status[server_name] = {"status": "connected", "tool_count": tool_count, "error": None}
                 except Exception as e:
                     self._server_status[server_name] = {"status": "failed", "tool_count": 0, "error": str(e)[:80]}
                     logger.warning("Failed to start MCP server '%s'", server_name, exc_info=True)
@@ -214,6 +216,12 @@ class MCPManager:
             async with asyncio.timeout(self._per_server_timeout):
                 await self._connect_server(server_name, config)
         except TimeoutError as e:
+            self._sessions.pop(server_name, None)
+            prefix = f"mcp::{server_name}::"
+            for k in [k for k in self._tools if k.startswith(prefix)]:
+                del self._tools[k]
+            for uri in [uri for uri, srv in self._uri_map.items() if srv == server_name]:
+                del self._uri_map[uri]
             raise TimeoutError(
                 f"MCP server '{server_name}' startup timed out after {self._per_server_timeout}s"
             ) from e

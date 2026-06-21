@@ -324,6 +324,13 @@ class SubagentManagerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(set(cancelled), {r1.id, r2.id})
             self.assertIsNone(manager.on_spawn)
 
+            for t in (r1.async_task, r2.async_task):
+                if t is not None:
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+
     async def test_cancel_running_skips_terminal_records(self):
         proceed = asyncio.Event()
         stalled = stream_stalled([Message(MessageRole.ASSISTANT, "x", MessageType.TEXT)], proceed)

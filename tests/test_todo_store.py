@@ -18,9 +18,11 @@ from stupidex.domain.todo import (
 @pytest.fixture
 def fresh_store():
     """Return a fresh TodoStore and install it on the ContextVar."""
+    prior = _current_store.get()
     store = TodoStore()
     set_todo_store(store)
-    return store
+    yield store
+    _current_store.set(prior)
 
 
 def test_from_str_valid_statuses():
@@ -229,11 +231,11 @@ def test_from_storage_dict_status_fallback_default_open():
 
 def test_get_todo_store_lazy_init_and_set_todo_store():
     """get_todo_store() lazily creates and caches; set_todo_store() overrides."""
-    # Capture and reset the ContextVar so this test is isolated.
+    # Capture prior state and reset to None to exercise the lazy-init path.
     prior = _current_store.get()
-    token = _current_store.set(TodoStore())
+    token = _current_store.set(None)
     try:
-        first = get_todo_store()
+        first = get_todo_store()  # lazy init: store was None -> creates new
         second = get_todo_store()
         assert first is second  # cached.
 

@@ -15,6 +15,7 @@ from stupidex.domain.session import (
     Session,
     SessionManager,
     get_current_session_id,
+    set_current_session_id,
 )
 from stupidex.domain.todo import TodoStore, get_todo_store, set_todo_store
 
@@ -24,6 +25,7 @@ def _reset_contextvars():
     # ContextVar.reset requires a token from a prior .set(); simplest is to
     # set a None/empty value and let the next test's setup override.
     set_todo_store(TodoStore())
+    set_current_session_id(None)
 
 
 class TestSessionManagerContextVarBinding(unittest.TestCase):

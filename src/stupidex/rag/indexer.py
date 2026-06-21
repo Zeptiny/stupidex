@@ -157,6 +157,7 @@ async def _index_project_impl(
         store = RAGStore(project_path)
         store.init_db()
         await loop.run_in_executor(None, store.clear)
+        store.init_db()
         await loop.run_in_executor(None, store.touch_last_indexed)
         if embedder is None:
             embedder = Embedder(model=cfg.rag.embedding_model or None)

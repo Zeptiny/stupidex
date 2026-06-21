@@ -72,13 +72,14 @@ class SubagentUIManager:
         except Exception:
             log.debug("on_message: pane not found for subagent_id=%r", subagent_id)
             return
-        try:
-            container = pane.query_one(ScrollableContainer)
-        except Exception:
-            container = ScrollableContainer()
-            await pane.mount(container)
 
         async with self._mount_locks.setdefault(subagent_id, asyncio.Lock()):
+            try:
+                container = pane.query_one(ScrollableContainer)
+            except Exception:
+                container = ScrollableContainer()
+                await pane.mount(container)
+
             raw = self._widgets.setdefault(subagent_id, {"temp": []})
             existing_temp = raw.get("temp")
             temp_list = list(existing_temp) if isinstance(existing_temp, list) else []

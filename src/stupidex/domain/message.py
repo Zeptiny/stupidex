@@ -87,11 +87,14 @@ class Message:
             # defaults so a drifted usage dict never raises TypeError and
             # aborts the whole session load (session.py:56/130).
             src = data["usage"]
-            usage = Usage(
-                prompt_tokens=src.get("prompt_tokens", 0),
-                completion_tokens=src.get("completion_tokens", 0),
-                total_tokens=src.get("total_tokens", 0),
-            )
+            if not isinstance(src, dict):
+                usage = Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+            else:
+                usage = Usage(
+                    prompt_tokens=src.get("prompt_tokens", 0),
+                    completion_tokens=src.get("completion_tokens", 0),
+                    total_tokens=src.get("total_tokens", 0),
+                )
         return cls(
             role=MessageRole(data["role"]),
             content=data.get("content", ""),
