@@ -824,12 +824,6 @@ async def stream_response(
                             break
                         delivered_any = True
                         yield msg
-                except asyncio.CancelledError:
-                    stream_t.cancel()
-                    executor_t.cancel()
-                    _raise_first_task_exception(
-                        await asyncio.gather(stream_t, executor_t, return_exceptions=True))
-                    raise
                 except BaseException:
                     stream_t.cancel()
                     executor_t.cancel()

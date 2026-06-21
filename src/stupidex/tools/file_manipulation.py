@@ -9,6 +9,7 @@ import aiofiles
 
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
+from stupidex.tools._xml_utils import _cdata_text, _count_diff_changes, _xml_attr
 from stupidex.tools.ast import atomic_write, post_write_callbacks
 from stupidex.utils import directory_tree
 
@@ -38,6 +39,16 @@ read_tool = Tool(
 async def execute_read_tool(file_path: str, offset: int = 1, limit: int | None = None) -> ExecutorResult:
     if limit is None:
         limit = get_config().read_line_limit
+    if offset < 0:
+        return ExecutorResult(
+            display=f"Read error {file_path}",
+            content=f"Error reading file {file_path}: offset must be >= 0 (got {offset}).",
+        )
+    if limit <= 0:
+        return ExecutorResult(
+            display=f"Read error {file_path}",
+            content=f"Error reading file {file_path}: limit must be > 0 (got {limit}).",
+        )
     try:
         selected_lines: list[tuple[int, str]] = []
         line_count = 0
@@ -96,33 +107,6 @@ edit_tool = Tool(
 
 def _normalize_diff_lines(diff: list[str]) -> list[str]:
     return [line.rstrip("\r\n") for line in diff]
-
-
-def _count_diff_changes(diff_text: str) -> tuple[int, int]:
-    added = 0
-    removed = 0
-    for line in diff_text.splitlines():
-        if line.startswith("+++ ") or line.startswith("--- "):
-            continue
-        if line.startswith("+"):
-            added += 1
-        elif line.startswith("-"):
-            removed += 1
-    return added, removed
-
-
-def _xml_attr(value: object) -> str:
-    return (
-        str(value)
-        .replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-
-
-def _cdata_text(value: str) -> str:
-    return value.replace("]]>", "]]]]><![CDATA[>")
 
 
 def _format_edit_result_content(
@@ -304,7 +288,7 @@ async def execute_read_directory_tool(
 
 glob_tool = Tool(
     name="glob",
-    description="Find files matching a glob pattern. Use to locate files by name when you know the pattern (e.g. '*.py', '**/*.test.ts'). Returns matching file paths sorted by modification time.",
+    description="Find files matching a glob pattern. Use to locate files by name when you know the pattern (e.g. '*.py', '**/*.test.ts'). Returns matching file paths sorted by modification time, newest first.",
     parameters=ToolParameter(
         properties={
             "directory_path": ToolParameterProperties(
@@ -341,8 +325,8 @@ async def execute_glob_tool(directory_path: str, pattern: str, include_hidden: b
                 content=f"No files found matching pattern '{pattern}' in '{directory_path}'.",
             )
 
-        # Convert to relative paths and sort
-        relative_paths = sorted(matches)
+        # Convert to relative paths and sort by modification time, newest first.
+        relative_paths = sorted(matches, key=lambda p: os.path.getmtime(p), reverse=True)
 
         result_lines = [f"Found {len(relative_paths)} file(s) matching '{pattern}':"]
         for path in relative_paths:

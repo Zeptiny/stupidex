@@ -21,12 +21,15 @@ class OptionPicker(Screen[str]):
         self._filtered: list[PickerItem] = list(items)
         self._header = header
 
+    def _build_options(self) -> list[Option]:
+        return [Option(item.label, id=item.id) for item in self._filtered]
+
     def compose(self):
         with Vertical(id="picker-container"):
             yield Input(placeholder="Search...", id="picker-search")
             if self._header:
                 yield Static(self._header, id="picker-header")
-            yield OptionList(*[Option(item.label, id=item.id) for item in self._filtered], id="picker-list")
+            yield OptionList(*self._build_options(), id="picker-list")
 
     def on_mount(self) -> None:
         self.query_one("#picker-search", Input).focus()
@@ -37,7 +40,7 @@ class OptionPicker(Screen[str]):
         option_list = self.query_one("#picker-list", OptionList)
         option_list.clear_options()
         if self._filtered:
-            option_list.add_options([Option(item.label, id=item.id) for item in self._filtered])
+            option_list.add_options(self._build_options())
             option_list.highlighted = 0
 
     def on_input_changed(self, event: Input.Changed) -> None:

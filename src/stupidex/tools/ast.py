@@ -14,6 +14,7 @@ from stupidex.ast.indexer import ensure_indexed
 from stupidex.ast.parser import lang_for_extension, load_query_file, parse_file, run_query
 from stupidex.ast.store import ASTStore
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
+from stupidex.tools._xml_utils import _cdata_text, _count_diff_changes, _xml_attr
 
 logger = logging.getLogger(__name__)
 
@@ -58,16 +59,6 @@ def _fnv1a(text: str) -> str:
     return format(h, "016x")
 
 
-def _xml_attr(value: object) -> str:
-    return (
-        str(value)
-        .replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-
-
 def _extract_call_names(
     node: tree_sitter.Node, content_bytes: bytes
 ) -> list[str]:
@@ -101,23 +92,6 @@ def _walk_for_calls(
                 out.append(name)
     for child in node.children:
         _walk_for_calls(child, out, content_bytes)
-
-
-def _cdata_text(value: str) -> str:
-    return value.replace("]]>", "]]]]><![CDATA[>")
-
-
-def _count_diff_changes(diff_text: str) -> tuple[int, int]:
-    added = 0
-    removed = 0
-    for line in diff_text.splitlines():
-        if line.startswith("+++") or line.startswith("---"):
-            continue
-        if line.startswith("+"):
-            added += 1
-        elif line.startswith("-"):
-            removed += 1
-    return added, removed
 
 
 def _generate_diff(old: str, new: str, path: str) -> str:
@@ -412,20 +386,10 @@ async def execute_get_file_skeleton(file_path: str) -> ExecutorResult:
 
         content_bytes = content.encode("utf-8")
         definitions = []
-        def_types = (
-            "function_definition",
-            "function_declaration",
-            "method_definition",
-            "class_definition",
-            "class_declaration",
-            "decorated_definition",
-        )
         for cap_name, results in captures.items():
             if cap_name.startswith("name.definition."):
                 for r in results:
                     parent_node = r.node.parent
-                    if parent_node is not None and parent_node.type not in def_types:
-                        parent_node = r.node.parent
                     definitions.append((r.start_line, r.text, parent_node))
 
         if not definitions:

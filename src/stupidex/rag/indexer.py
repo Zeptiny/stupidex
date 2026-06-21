@@ -159,8 +159,6 @@ async def _index_project_impl(
         await loop.run_in_executor(None, store.clear)
         store.init_db()
         await loop.run_in_executor(None, store.touch_last_indexed)
-        if embedder is None:
-            embedder = Embedder(model=cfg.rag.embedding_model or None)
         stats.duration_seconds = asyncio.get_event_loop().time() - t0
         return stats
 

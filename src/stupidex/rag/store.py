@@ -188,7 +188,7 @@ class RAGStore:
 
         if npy_path.exists():
             try:
-                arr = np.load(str(npy_path))
+                arr = np.load(str(npy_path), allow_pickle=False)
                 if arr.ndim != 2 or arr.dtype != np.float32:
                     raise ValueError("Invalid vectors array shape or dtype")
                 return arr.tolist()

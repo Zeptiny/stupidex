@@ -27,7 +27,7 @@ def convert_mcp_tool(server_name: str, mcp_tool: Any) -> tuple[str, Tool, dict]:
     properties: dict[str, ToolParameterProperties] = {}
     for param_name, param_schema in input_schema.get("properties", {}).items():
         properties[param_name] = ToolParameterProperties(
-            type=param_schema.get("type", "string"),
+            type=param_schema.get("type", ""),
             description=param_schema.get("description", ""),
             items=param_schema.get("items"),
         )

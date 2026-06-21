@@ -100,6 +100,8 @@ class MCPManager:
         self._stop = asyncio.Event()
         self._start_error = None
         self._exit_stack = contextlib.AsyncExitStack()
+        for stale in [n for n in self._server_status if n not in servers]:
+            del self._server_status[stale]
         for server_name in servers:
             self._server_status[server_name] = {"status": "starting", "tool_count": 0, "error": None}
         # The runner owns the exit stack; transports are entered AND exited in
@@ -152,7 +154,11 @@ class MCPManager:
                     if self._server_status[server_name]["status"] != "failed":
                         self._server_status[server_name] = {"status": "connected", "tool_count": tool_count, "error": None}
                 except Exception as e:
-                    self._server_status[server_name] = {"status": "failed", "tool_count": 0, "error": str(e)[:80]}
+                    self._server_status[server_name] = {
+                        "status": "failed",
+                        "tool_count": 0,
+                        "error": f"{type(e).__name__}: {str(e)[:80]}",
+                    }
                     logger.warning("Failed to start MCP server '%s'", server_name, exc_info=True)
         except BaseException as e:
             # Captured so start_all can re-raise after the runner unwinds.

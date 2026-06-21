@@ -57,6 +57,11 @@ def chunk_file(
             )
         ]
 
+    if chunk_overlap >= chunk_size:
+        raise ValueError(
+            f"chunk_overlap ({chunk_overlap}) must be less than chunk_size ({chunk_size})"
+        )
+
     break_points = _find_break_points(lines)
     chunks: list[Chunk] = []
     char_pos = 0
