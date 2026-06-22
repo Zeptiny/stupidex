@@ -1134,6 +1134,24 @@ class StreamCachedTokensTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage, Usage(1, 2, 3, 0))
         self.assertEqual(usage.cached_tokens, 0)
 
+    def test_prompt_tokens_details_takes_precedence_over_cache_read(self):
+        # When both provider shapes are present on the same usage object,
+        # prompt_tokens_details.cached_tokens (OpenAI) wins over
+        # cache_read_input_tokens (Anthropic) per the `if not cached:`
+        # fallback chain in _stream_task.
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=800),
+            cache_read_input_tokens=600,
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 800,
+                         "prompt_tokens_details must take precedence")
+
 
 class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
     def test_tool_result_without_display_uses_safe_collapsed_title(self):

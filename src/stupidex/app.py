@@ -568,6 +568,10 @@ class Stupidex(App):
             self._current_chain.chain.finish(status)
             self._current_chain.freeze()
             self._current_chain = None
+        # Clear the chain index so a subagent spawned outside a streaming turn
+        # (test harness, future dispatch paths) is attributed to no chain
+        # rather than the stale last-turn index.
+        set_current_chain_index(None)
 
     async def _auto_save_session(self, session: Session | None = None) -> None:
         """Fire-and-forget save of the given session (or active) to disk."""

@@ -9,7 +9,6 @@ from textual.timer import Timer
 from textual.widgets import TabbedContent, TabPane
 
 from stupidex.agents.manager import TERMINAL, SubagentRecord, SubagentState
-from stupidex.domain.chain import ChainStatus
 from stupidex.domain.message import Message
 from stupidex.widgets.message_widget import (
     ChainFooterWidget,
@@ -23,13 +22,6 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
-
-
-_SUBAGENT_STATE_TO_CHAIN_STATUS = {
-    SubagentState.COMPLETED: ChainStatus.COMPLETED,
-    SubagentState.FAILED: ChainStatus.FAILED,
-    SubagentState.INTERRUPTED: ChainStatus.INTERRUPTED,
-}
 
 
 class SubagentUIManager:
@@ -129,7 +121,6 @@ class SubagentUIManager:
         tab.update(self._tab_label(record))
         if state in TERMINAL:
             self.prune_lock(subagent_id)
-            self._sync_subagent_chain_terminal(record)
             footer = self._widgets.get(subagent_id, {}).get("footer")
             if footer is not None:
                 footer.freeze()
@@ -164,39 +155,12 @@ class SubagentUIManager:
             for msg in record.messages:
                 await self.on_message(record.id, msg)
             # Restored subagents are terminal (PENDING/RUNNING were migrated
-            # to INTERRUPTED during deserialization), so render their footer
-            # in its final state immediately — the UI timer only runs while
-            # live subagents are active, so we freeze at mount for restored
-            # records instead of waiting for a tick that will never come.
+            # to INTERRUPTED during deserialization) and their chain status is
+            # reconciled by finalize_chain_on_restore() in from_storage_dict,
+            # so render the footer in its final state immediately — the UI
+            # timer only runs while live subagents are active.
             if record.state in TERMINAL:
-                self._sync_subagent_chain_terminal(record)
                 footer.freeze()
-
-    def _sync_subagent_chain_terminal(self, record: SubagentRecord) -> None:
-        """Finalize a subagent's chain status to match its terminal state.
-
-        The subagent manager's ``_run`` closure does not explicitly finish
-        its composed ``Chain`` (``chain.status`` stays ``RUNNING`` even after
-        completion), so before freezing a footer we map the terminal
-        ``SubagentState`` onto the chain's ``ChainStatus``. Restored records
-        already carry their persisted chain status, which is only touched
-        here when still running.
-
-        For restored records with a persisted ``end_time``, set ``status``
-        directly rather than calling ``finish()``: ``finish()`` overwrites
-        ``end_time`` with the current process's ``time.monotonic()``, but a
-        restored chain's ``start_time`` belongs to the prior process, so
-        ``elapsed`` would be nonsensical.
-        """
-        if record.chain.status != ChainStatus.RUNNING:
-            return
-        target = _SUBAGENT_STATE_TO_CHAIN_STATUS.get(record.state)
-        if target is None:
-            return
-        if record.chain.end_time is not None:
-            record.chain.status = target
-        else:
-            record.chain.finish(target)
 
     def _tick_subagent_footers(self) -> None:
         """Tick (or freeze) mounted subagent footers.
@@ -220,7 +184,6 @@ class SubagentUIManager:
             if record is None:
                 continue
             if record.state in TERMINAL:
-                self._sync_subagent_chain_terminal(record)
                 footer.freeze()
             else:
                 footer.tick()

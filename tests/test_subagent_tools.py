@@ -101,6 +101,21 @@ class DelegateToSubagentTests(unittest.TestCase):
         self.assertIn("abc123", result.content)
         self.assertIn("<task>", result.content)
 
+    def test_parent_chain_index_forwarded_from_contextvar(self):
+        # The tool reads get_current_chain_index() and forwards it to spawn()
+        # as parent_chain_index — the binding's sole production caller.
+        mock_manager = MagicMock()
+        mock_manager.spawn = AsyncMock(return_value=SimpleNamespace(id="abc123"))
+        with patch_registry(), patch_model(), \
+                patch("stupidex.tools.subagent.get_subagent_manager", return_value=mock_manager), \
+                patch("stupidex.tools.subagent.get_current_chain_index", return_value=2):
+            asyncio.run(
+                execute_delegate_to_subagent(name="n", task="t", type="Subagent")
+            )
+        mock_manager.spawn.assert_called_once()
+        kwargs = mock_manager.spawn.call_args.kwargs
+        self.assertEqual(kwargs["parent_chain_index"], 2)
+
 
 class WaitForSubagentTests(unittest.TestCase):
     def test_empty_list_returns_error(self):

@@ -253,13 +253,17 @@ class TestSubagentFooter(unittest.IsolatedAsyncioTestCase):
             self.assertIn("↓200", text)
 
     async def test_sync_tabs_freezes_footer_for_restored_completed(self) -> None:
-        from stupidex.app import Stupidex
         from stupidex.agents.manager import SubagentManager
+        from stupidex.app import Stupidex
 
         app = Stupidex()
         async with app.run_test():
             record = self._record_with_usage()
             record.state = SubagentState.COMPLETED
+            # Simulate what SubagentRecord.from_storage_dict does at restore:
+            # the chain (persisted while still RUNNING) is reconciled to the
+            # terminal state before the UI ever sees it.
+            record.finalize_chain_on_restore()
             manager = SubagentManager()
             manager._subagents[record.id] = record
             await app._subagent_ui.sync_tabs(manager)
@@ -294,12 +298,80 @@ class TestSubagentFooter(unittest.IsolatedAsyncioTestCase):
                 app._subagent_ui._tick_subagent_footers()
                 tick_spy.assert_called_once()
 
-            # Now mark terminal and re-tick → chain finishes + footer freezes.
+            # Now mark terminal. The manager's _run finally (or
+            # finalize_chain_on_restore on restore) finalizes the chain; the
+            # UI timer then just freezes the already-terminal footer.
             record.state = SubagentState.COMPLETED
+            record.finalize_chain_on_restore()
+            self.assertEqual(record.chain.status, ChainStatus.COMPLETED)
             with patch.object(footer, "freeze") as freeze_spy:
                 app._subagent_ui._tick_subagent_footers()
                 freeze_spy.assert_called_once()
-            self.assertEqual(record.chain.status, ChainStatus.COMPLETED)
+
+    async def test_mount_all_messages_renders_chain_footer_with_subagent_subtotal(self) -> None:
+        # Integration: mount_all_messages → ChainContainer(subagent_subtotal=
+        # _make_subagent_subtotal_provider(...)) → ChainFooterWidget.freeze()
+        # must render both the chain's own usage AND the (sub: ...) segment
+        # attributed via parent_chain_index (U7 end-to-end, not just the unit
+        # _build_text path).
+        from stupidex.app import Stupidex
+
+        app = Stupidex()
+        async with app.run_test():
+            session = app.sessions.create()
+            # A chain whose own final assistant message carries usage.
+            user_msg = Message(MessageRole.USER, "hello")
+            assistant_msg = Message(
+                MessageRole.ASSISTANT, "answer",
+                usage=Usage(
+                    prompt_tokens=1000, cached_tokens=400,
+                    completion_tokens=200, total_tokens=1200,
+                ),
+            )
+            chain = Chain(model="m", messages=[user_msg, assistant_msg])
+            session.chains.append(chain)
+
+            # A subagent attributed to chain index 0, carrying its own usage.
+            sub = SubagentRecord(
+                id="sa-attr",
+                agent=self._make_agent(),
+                state=SubagentState.COMPLETED,
+                label="worker",
+                task="t",
+                start_time=1.0,
+                parent_chain_index=0,
+                model="sub-model",
+                chain=Chain(
+                    model="sub-model",
+                    messages=[
+                        Message(MessageRole.USER, "q"),
+                        Message(
+                            MessageRole.ASSISTANT, "a sub",
+                            usage=Usage(
+                                prompt_tokens=500, cached_tokens=100,
+                                completion_tokens=50, total_tokens=550,
+                            ),
+                        ),
+                    ],
+                ),
+            )
+            sub.finalize_chain_on_restore()
+            session.subagent_manager._subagents[sub.id] = sub
+
+            await app.mount_all_messages()
+
+            container = app.query_one("#output")
+            footer = container.query_one(ChainFooterWidget)
+            text = footer._build_text()
+            # Chain's own usage.
+            self.assertIn("↑1.0k", text)
+            self.assertIn("(⟲400)", text)
+            self.assertIn("↓200", text)
+            # Attributed subagent subtotal.
+            self.assertIn("(sub:", text)
+            self.assertIn("↑500", text)
+            self.assertIn("(⟲100)", text)
+            self.assertIn("↓50", text)
 
 
 if __name__ == "__main__":
