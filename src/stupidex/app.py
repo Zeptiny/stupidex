@@ -443,10 +443,12 @@ class Stupidex(App):
             return None
         if session.name.startswith("Session "):
             try:
-                from stupidex.config import get_model_for_tier
+                import litellm
+
+                from stupidex.config import get_config, get_model_for_tier
+                from stupidex.llm.providers import resolve_model_ref
+
                 model = get_model_for_tier("tolo")
-                from stupidex.config import get_config
-                cfg = get_config()
                 user_content = ""
                 assistant_content = ""
                 for chain in session.chains:
@@ -468,11 +470,17 @@ class Stupidex(App):
                 )
                 if assistant_content:
                     prompt += f"Assistant: {assistant_content}\n"
-                import litellm
+                litellm_provider, model_id, base_url, api_key = resolve_model_ref(
+                    model or get_config().default_model
+                )
+                litellm_model = (
+                    f"{litellm_provider}/{model_id}" if litellm_provider else model_id
+                )
                 response = await litellm.acompletion(
-                    model=cfg.provider_api_type + "/" + model,
+                    model=litellm_model,
                     messages=[{"role": "user", "content": prompt}],
-                    base_url=cfg.base_url,
+                    base_url=base_url,
+                    api_key=api_key,
                     timeout=60,
                 )
                 title = response.choices[0].message.content.strip().strip('"').strip("'")
@@ -518,10 +526,20 @@ class Stupidex(App):
             chain_container = ChainContainer(chain)
             await container.mount(chain_container)
             chain_container.freeze()
+            prev_was_thinking = False
             for msg in chain.messages:
-                widget = create_message_widget(msg, loaded=True)
+                classes = (
+                    "after-thinking"
+                    if msg.type == MessageType.TOOL_RESULT and prev_was_thinking
+                    else None
+                )
+                widget = create_message_widget(msg, loaded=True, classes=classes)
                 if widget is not None:
                     await chain_container.messages_area.mount(widget)
+                if msg.type == MessageType.THINKING:
+                    prev_was_thinking = True
+                elif msg.type != MessageType.TOOL_CALL:
+                    prev_was_thinking = False
 
     async def rerender_all(self) -> None:
         if not self.sessions.active:

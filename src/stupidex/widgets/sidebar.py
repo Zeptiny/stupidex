@@ -478,6 +478,11 @@ class Sidebar(Vertical):
                 title=finished_label,
                 collapsed=was_finished_collapsed,
             )
+            # Collapsible uses reactive(init=False) for `collapsed`, so the
+            # `-collapsed` CSS class (which hides Contents) is only applied in
+            # _on_mount — one render frame AFTER compose/mount. Pre-setting the
+            # class avoids a flash of the expanded dropdown on every rebuild.
+            collapse.set_class(was_finished_collapsed, "-collapsed", update=False)
             collapse.can_focus = True
             await container.mount(collapse)
 
@@ -612,6 +617,9 @@ class Sidebar(Vertical):
                 title=f"Done ({len(done)})",
                 collapsed=was_finished_collapsed,
             )
+            # Pre-set the -collapsed class before mount to avoid a one-frame
+            # flash of the expanded dropdown (see _refresh_subagent_display).
+            collapse.set_class(was_finished_collapsed, "-collapsed", update=False)
             await container.mount(collapse)
 
     @staticmethod

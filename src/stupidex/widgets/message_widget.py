@@ -421,21 +421,23 @@ class ToolResultMessageWidget(Static):
         )
 
 
-def create_message_widget(msg: Message, *, loaded: bool = False) -> Static | None:
+def create_message_widget(
+    msg: Message, *, loaded: bool = False, classes: str | None = None
+) -> Static | None:
     """Factory function to create the appropriate widget for a message."""
     match msg.type:
         case MessageType.THINKING:
-            return ThinkingMessageWidget(msg, loaded=loaded)
+            return ThinkingMessageWidget(msg, loaded=loaded, classes=classes)
         case MessageType.TOOL_CALL:
             return None
         case MessageType.TOOL_RESULT:
-            return ToolResultMessageWidget(msg)
+            return ToolResultMessageWidget(msg, classes=classes)
         case MessageType.ERROR:
-            return ErrorMessageWidget(msg)
+            return ErrorMessageWidget(msg, classes=classes)
         case _:
             if msg.role == MessageRole.USER:
-                return UserMessageWidget(msg)
-            return AssistantMessageWidget(msg)
+                return UserMessageWidget(msg, classes=classes)
+            return AssistantMessageWidget(msg, classes=classes)
 
 
 @dataclass
