@@ -36,6 +36,7 @@ _TOOLS_WITHOUT_OUTPUT_OFFLOAD = {
     "glob",
     "directory_tree",
     "web_fetch",
+    "skill",
 }
 _TOOLS_WITHOUT_TIMEOUT = {
     "wait_for_subagent",
