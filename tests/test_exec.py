@@ -10,7 +10,10 @@ from stupidex.tools.exec import MAX_OUTPUT_BYTES, execute_command
 @pytest.mark.asyncio
 async def test_happy_path_echo():
     result = await execute_command("echo hello", description="echo", shell=True)
-    assert result.content == "hello"
+    assert "hello" in result.content
+    assert "<command_result" in result.content
+    assert 'command="echo hello"' in result.content
+    assert 'exit_code="0"' in result.content
     assert "exit code: 0" in result.display
 
 
@@ -54,7 +57,7 @@ async def test_truncation_mocked():
     ):
         result = await execute_command("yes", description="yes", timeout=5)
 
-    assert "[output truncated at" in result.content
+    assert "<truncated>true</truncated>" in result.content
     assert "exit code: -9" in result.display
     process.kill.assert_called()
 
@@ -63,6 +66,8 @@ async def test_truncation_mocked():
 async def test_timeout_kills_process():
     result = await execute_command("sleep 10", description="sleep", timeout=1)
     assert "timed out" in result.display.lower()
+    assert "<command_result" in result.content
+    assert 'timed_out="true"' in result.content
     assert "timed out after 1 seconds" in result.content
 
 
@@ -70,6 +75,7 @@ async def test_timeout_kills_process():
 async def test_stderr_only():
     result = await execute_command("sh -c 'echo oops 1>&2'", description="stderr", timeout=5)
     assert "oops" in result.content
+    assert "<stderr>" in result.content
     assert "exit code: 0" in result.display
 
 
@@ -82,7 +88,8 @@ async def test_nonzero_exit_after_truncation(mocked_process_factory):
         new=AsyncMock(return_value=process),
     ):
         result = await execute_command("sh -c 'big; exit 3'", description="big", timeout=5)
-    assert "[output truncated at" in result.content
+    assert "<truncated>true</truncated>" in result.content
+    assert 'exit_code="3"' in result.content
     assert "exit code: 3" in result.display
 
 
@@ -111,7 +118,7 @@ async def test_binary_urandom_does_not_oom():
     ):
         result = await execute_command("cat /dev/urandom", description="urandom", timeout=5)
 
-    assert "[output truncated at" in result.content
+    assert "<truncated>true</truncated>" in result.content
     assert len(result.content) < MAX_OUTPUT_BYTES + 1024
 
 

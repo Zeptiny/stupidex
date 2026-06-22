@@ -5,6 +5,7 @@ import signal
 
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
+from stupidex.tools._xml_utils import _cdata_text, _xml_attr
 
 MAX_OUTPUT_BYTES = 1 * 1024 * 1024
 
@@ -91,6 +92,8 @@ async def execute_command(
     """Execute a system command using asyncio subprocess."""
     if timeout is None:
         timeout = get_config().command_timeout
+    if description is None:
+        description = command
     try:
         if shell:
             process = await asyncio.create_subprocess_shell(
@@ -120,7 +123,12 @@ async def execute_command(
             await process.wait()
             return ExecutorResult(
                 display=f"{description} - Timed out after {timeout} seconds",
-                content=f"Error: Command '{command}' timed out after {timeout} seconds.",
+                content=(
+                    f'<command_result command="{_xml_attr(command)}" exit_code="-1" '
+                    f'timed_out="true">\n'
+                    f"  <error><![CDATA[Command timed out after {timeout} seconds.]]></error>\n"
+                    f"</command_result>"
+                ),
             )
 
         if truncated and process.returncode is None:
@@ -135,35 +143,33 @@ async def execute_command(
         stdout = stdout_bytes.decode("utf-8", errors="replace").strip() if stdout_bytes else ""
         stderr = stderr_bytes.decode("utf-8", errors="replace").strip() if stderr_bytes else ""
 
-        truncation_note = f"\n[output truncated at {MAX_OUTPUT_BYTES} bytes]"
+        stdout_section = (
+            f"  <stdout><![CDATA[{_cdata_text(stdout)}]]></stdout>\n" if stdout else ""
+        )
+        stderr_section = (
+            f"  <stderr><![CDATA[{_cdata_text(stderr)}]]></stderr>\n" if stderr else ""
+        )
+        truncation_section = (
+            "  <truncated>true</truncated>\n" if truncated else ""
+        )
 
-        if process.returncode == 0:
-            output = stdout if stdout else "(no output)"
-            if stderr:
-                output += f"\n\nStderr:\n{stderr}"
-            if truncated:
-                output += truncation_note
-            return ExecutorResult(
-                display=f"{description} (exit code: {process.returncode})",
-                content=output,
-            )
-        else:
-            output = ""
-            if stdout:
-                output += f"Stdout:\n{stdout}\n\n"
-            if stderr:
-                output += f"Stderr:\n{stderr}"
-            if not output:
-                output = "(no output)"
-            if truncated:
-                output += truncation_note
-            return ExecutorResult(
-                display=f"{description} (exit code: {process.returncode})",
-                content=output,
-            )
+        return ExecutorResult(
+            display=f"{description} (exit code: {process.returncode})",
+            content=(
+                f'<command_result command="{_xml_attr(command)}" '
+                f'exit_code="{process.returncode}">\n'
+                f"{stdout_section}{stderr_section}{truncation_section}"
+                f"</command_result>"
+            ),
+        )
 
     except Exception as e:
         return ExecutorResult(
             display=f"{description} - Execution error",
-            content=f"Error executing command '{command}': {e}",
+            content=(
+                f'<command_result command="{_xml_attr(command)}" exit_code="-1" '
+                f'error="true">\n'
+                f"  <error><![CDATA[{_cdata_text(str(e))}]]></error>\n"
+                f"</command_result>"
+            ),
         )
