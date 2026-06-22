@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 from textual.widgets import Collapsible, Static
 
 from stupidex.domain.chain import Chain, ChainStatus
-from stupidex.domain.message import Message, MessageRole, MessageType
+from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.tools import get_tool_registry
 
 _THROTTLE_INTERVAL = 0.2
@@ -313,7 +313,24 @@ class ChainFooterWidget(Static):
 
     def _build_text(self) -> str:
         model = self._chain.model or "Unknown"
-        return f"{model} · {Chain.format_elapsed(self._chain.elapsed)}"
+        text = f"{model} · {Chain.format_elapsed(self._chain.elapsed)}"
+        usage = self._chain_usage()
+        if usage is not None:
+            # Cached tokens are a subset of prompt tokens (R7) — render as
+            # "of which" parenthetically, never summed into input.
+            text += (
+                f" · ↑{Chain.format_tokens(usage.prompt_tokens)}"
+                f" (⟲{Chain.format_tokens(usage.cached_tokens)})"
+                f" ↓{Chain.format_tokens(usage.completion_tokens)}"
+            )
+        return text
+
+    def _chain_usage(self) -> Usage | None:
+        """The chain's usage from its last message carrying usage (None if none)."""
+        for msg in reversed(self._chain.messages):
+            if msg.usage is not None:
+                return msg.usage
+        return None
 
     def tick(self) -> None:
         if self._chain.status == ChainStatus.RUNNING:

@@ -3,7 +3,7 @@
 import unittest
 
 from stupidex.domain.chain import Chain, ChainStatus, _reconcile_orphan_tool_results
-from stupidex.domain.message import Message, MessageRole, MessageType
+from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 
 
 def _assistant_with_tool_calls(tc_id: str | None) -> Message:
@@ -274,6 +274,101 @@ class TestChainFormatElapsed(unittest.TestCase):
 
     def test_one_hour_fifty_nine_minutes_thirty_seconds(self):
         self.assertEqual(Chain.format_elapsed(3600 + 59 * 60 + 30), "119m 30s")
+
+
+class TestChainFormatTokens(unittest.TestCase):
+    """U3: Chain.format_tokens boundary outputs."""
+
+    def test_below_thousand_is_raw(self):
+        self.assertEqual(Chain.format_tokens(0), "0")
+
+    def test_just_under_thousand_is_raw(self):
+        self.assertEqual(Chain.format_tokens(999), "999")
+
+    def test_thousand_rolls_to_k(self):
+        # 1000 / 1000 = 1.0 → "1.0k"
+        self.assertEqual(Chain.format_tokens(1000), "1.0k")
+
+    def test_twelve_hundred(self):
+        self.assertEqual(Chain.format_tokens(1200), "1.2k")
+
+    def test_twelve_thousand(self):
+        self.assertEqual(Chain.format_tokens(12345), "12.3k")
+
+    def test_just_under_million_stays_k(self):
+        self.assertEqual(Chain.format_tokens(999_999), "1000.0k")
+
+    def test_million_rolls_to_M(self):
+        self.assertEqual(Chain.format_tokens(1_000_000), "1.0M")
+
+    def test_one_and_a_half_million(self):
+        self.assertEqual(Chain.format_tokens(1_500_000), "1.5M")
+
+
+class TestChainFooterWidgetTokenDisplay(unittest.TestCase):
+    """U3: ChainFooterWidget renders per-chain input/cached/output tokens."""
+
+    def _footer_text(self, chain: Chain) -> str:
+        # Import lazily so a textual import failure in the test environment
+        # only affects these cases, not the rest of the test module.
+        from stupidex.widgets.message_widget import ChainFooterWidget
+
+        widget = ChainFooterWidget(chain)
+        return widget._build_text()
+
+    def test_footer_text_with_usage_shows_subset_format(self):
+        chain = Chain(model="gpt-4o")
+        chain.messages = [
+            Message(MessageRole.USER, "hi", MessageType.TEXT),
+            Message(
+                MessageRole.ASSISTANT,
+                "hello",
+                MessageType.TEXT,
+                usage=Usage(1000, 200, 1200, cached_tokens=400),
+            ),
+        ]
+        text = self._footer_text(chain)
+        self.assertIn("1.0k", text)  # input
+        self.assertIn("400", text)  # cached (parenthetical subset)
+        self.assertIn("200", text)  # output
+        self.assertIn("↑1.0k", text)
+        self.assertIn("(⟲400)", text)
+        self.assertIn("↓200", text)
+
+    def test_footer_text_no_usage_omits_token_segment(self):
+        chain = Chain(model="gpt-4o")
+        chain.messages = [
+            Message(MessageRole.USER, "hi", MessageType.TEXT),
+            Message(MessageRole.ASSISTANT, "hello", MessageType.TEXT),
+        ]
+        text = self._footer_text(chain)
+        self.assertIn("gpt-4o", text)
+        self.assertNotIn("↑", text)
+        self.assertNotIn("↓", text)
+        self.assertNotIn("⟲", text)
+
+    def test_footer_text_uses_last_usage_message(self):
+        chain = Chain(model="m")
+        chain.messages = [
+            Message(
+                MessageRole.ASSISTANT,
+                "first",
+                MessageType.TEXT,
+                usage=Usage(10, 5, 15, cached_tokens=1),
+            ),
+            Message(
+                MessageRole.ASSISTANT,
+                "second",
+                MessageType.TEXT,
+                usage=Usage(2000, 800, 2800, cached_tokens=500),
+            ),
+        ]
+        text = self._footer_text(chain)
+        # Should reflect the second (last) usage, not the first.
+        self.assertIn("2.0k", text)
+        self.assertIn("800", text)
+        self.assertIn("500", text)
+        self.assertNotIn("10", text)
 
 
 if __name__ == "__main__":
