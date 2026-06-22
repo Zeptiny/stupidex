@@ -30,6 +30,56 @@ from stupidex.widgets.subagent_ui import SubagentUIManager
 log = logging.getLogger(__name__)
 
 
+def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | None:
+    """Sum token usage across all chains in ``session``.
+
+    Each chain contributes only its own final message carrying ``usage``
+    (the last request's actual consumption); iterating chains avoids the
+    double-counting that walking ``session.messages`` would cause, since
+    each chain's messages list contains intermediate assistant snapshots that
+    share a cumulative usage.
+
+    Returns ``(prompt_tokens, cached_tokens, completion_tokens, total_tokens)``
+    when at least one chain has usage, otherwise ``None``.
+    """
+    prompt = cached = completion = total = 0
+    found = False
+    for chain in session.chains:
+        usage = None
+        for msg in reversed(chain.messages):
+            if msg.usage:
+                usage = msg.usage
+                break
+        if usage is None:
+            continue
+        found = True
+        prompt += usage.prompt_tokens
+        cached += usage.cached_tokens
+        completion += usage.completion_tokens
+        total += usage.total_tokens
+    if not found:
+        return None
+    return (prompt, cached, completion, total)
+
+
+def _format_session_model_label(
+    model: str, totals: tuple[int, int, int, int] | None
+) -> str:
+    """Render the ``#model`` footer label.
+
+    ``{model}`` alone when there is no usage, otherwise
+    ``{model} · ↑{input} (⟲{cached}) ↓{output}`` with cached shown as a
+    subset parenthetical (never summed with input).
+    """
+    if totals is None:
+        return model
+    prompt, cached, completion, _total = totals
+    return (
+        f"{model} · ↑{Chain.format_tokens(prompt)} "
+        f"(⟲{Chain.format_tokens(cached)}) ↓{Chain.format_tokens(completion)}"
+    )
+
+
 class InterruptState(Enum):
     IDLE = "idle"
     CONFIRM_AGENT = "confirm_agent"
@@ -591,7 +641,8 @@ class Stupidex(App):
             pass
 
         model_label = self.model or "No Model"
-        self.query_one("#model", Static).update(model_label)
+        totals = _session_usage_totals(self.sessions.active)
+        self.query_one("#model", Static).update(_format_session_model_label(model_label, totals))
 
         await self._subagent_ui.update_sidebar()
 
