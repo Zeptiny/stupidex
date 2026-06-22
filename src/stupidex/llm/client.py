@@ -32,14 +32,7 @@ _YIELD_THROTTLE = 0.1
 _TOOL_TIMEOUT = 60
 _ERROR_DETAIL_MAX_LEN = 200
 _TOOL_OUTPUT_INLINE_THRESHOLD = 10_000
-_TOOLS_WITHOUT_OUTPUT_OFFLOAD = {
-    "read",
-    "grep",
-    "glob",
-    "directory_tree",
-    "web_fetch",
-    "skill",
-}
+_TOOLS_WITHOUT_OUTPUT_OFFLOAD = {"read", "grep", "glob", "directory_tree", "web_fetch", "skill", "write"}
 _TOOLS_WITHOUT_TIMEOUT = {
     "wait_for_subagent",
     "get_file_skeleton",
@@ -153,11 +146,7 @@ def _patch_litellm_raise_on_model_repetition() -> None:
         if last is None or second is None:
             return
         last_content = last.choices[0].delta.content
-        if (
-            last_content is None
-            or not isinstance(last_content, str)
-            or len(last_content) <= 2
-        ):
+        if last_content is None or not isinstance(last_content, str) or len(last_content) <= 2:
             self._repeated_messages_count = 1
             return
         second_to_last_content = second.choices[0].delta.content
@@ -246,9 +235,7 @@ def cleanup_tool_output_cache(session_id: str) -> None:
         log.debug("Failed to clean tool-output cache for session %s", session_id, exc_info=True)
 
 
-def _maybe_offload_tool_output(
-    tool_name: str, content: str, tool_call_id: str
-) -> str:
+def _maybe_offload_tool_output(tool_name: str, content: str, tool_call_id: str) -> str:
     """Bound tool output size before it enters ``api_messages``.
 
     Outputs at or below ``_TOOL_OUTPUT_INLINE_THRESHOLD`` and tools that
@@ -258,10 +245,7 @@ def _maybe_offload_tool_output(
     so the provider context window is not blown out. When no session is
     active, the content is hard-truncated instead.
     """
-    if (
-        len(content) <= _TOOL_OUTPUT_INLINE_THRESHOLD
-        or tool_name in _TOOLS_WITHOUT_OUTPUT_OFFLOAD
-    ):
+    if len(content) <= _TOOL_OUTPUT_INLINE_THRESHOLD or tool_name in _TOOLS_WITHOUT_OUTPUT_OFFLOAD:
         return content
 
     session_id = get_current_session_id()
@@ -303,7 +287,7 @@ def _maybe_offload_tool_output(
 
     escaped_path = html.escape(str(path))
     return (
-        f"<{tool_name}_result length={len(content)} file=\"{escaped_path}\">\n"
+        f'<{tool_name}_result length={len(content)} file="{escaped_path}">\n'
         f"<warning>Output exceeded {_TOOL_OUTPUT_INLINE_THRESHOLD} characters and "
         f"was written to {escaped_path}. Use read (with offset/limit) or grep to inspect "
         f"it.</warning>\n</{tool_name}_result>"
@@ -351,11 +335,7 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
         # An emitted non-tool message breaks the sequence: results from a
         # later turn can no longer legitimately pair with earlier tool_calls.
         # A new assistant tool_calls block resets pending to its own ids.
-        pending_tool_call_ids = (
-            {tc.get("id") for tc in msg.tool_calls if tc.get("id")}
-            if msg.tool_calls
-            else set()
-        )
+        pending_tool_call_ids = {tc.get("id") for tc in msg.tool_calls if tc.get("id")} if msg.tool_calls else set()
 
     api_messages: list[dict[str, Any]] = []
     last_assistant_tool_call_ids: set[str] = set()
@@ -376,10 +356,12 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
             # to be dropped as orphaned.
             if not msg.content:
                 continue
-            api_messages.append({
-                "role": "assistant",
-                "content": msg.content,
-            })
+            api_messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content,
+                }
+            )
             continue
         if msg.role == MessageRole.TOOL:
             if not msg.tool_call_id:
@@ -401,10 +383,7 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
         # dangling assistant tool_calls (e.g. after a cancelled turn) that
         # strict providers reject with 400.
         if msg.tool_calls:
-            surviving = [
-                tc for tc in msg.tool_calls
-                if tc.get("id") in surviving_tool_call_ids
-            ]
+            surviving = [tc for tc in msg.tool_calls if tc.get("id") in surviving_tool_call_ids]
             if surviving:
                 d["tool_calls"] = surviving
             else:
@@ -416,9 +395,7 @@ def _history_to_api_messages(messages: list[Message]) -> list[dict[str, Any]]:
                     continue
         api_messages.append(d)
         if msg.tool_calls:
-            last_assistant_tool_call_ids = {
-                tc.get("id") for tc in msg.tool_calls if tc.get("id")
-            }
+            last_assistant_tool_call_ids = {tc.get("id") for tc in msg.tool_calls if tc.get("id")}
         else:
             last_assistant_tool_call_ids = set()
     return api_messages
@@ -499,9 +476,7 @@ class _StreamIdleTimeoutError(Exception):
     """
 
     def __init__(self, idle_timeout: float) -> None:
-        super().__init__(
-            f"LLM stream was idle for more than {idle_timeout:.1f}s with no deltas"
-        )
+        super().__init__(f"LLM stream was idle for more than {idle_timeout:.1f}s with no deltas")
 
 
 async def _safe_aclose(response: Any) -> None:
@@ -551,9 +526,7 @@ async def _idle_timed_stream(response: Any, idle_timeout: float) -> AsyncGenerat
     try:
         while True:
             try:
-                chunk = await asyncio.wait_for(
-                    response.__anext__(), timeout=idle_timeout
-                )
+                chunk = await asyncio.wait_for(response.__anext__(), timeout=idle_timeout)
             except StopAsyncIteration:
                 return
             except TimeoutError:
@@ -585,8 +558,7 @@ async def _idle_timed_stream(response: Any, idle_timeout: float) -> AsyncGenerat
                         )
                     else:
                         log.debug(
-                            "Suppressing benign litellm mid-stream error; "
-                            "continuing stream: %s",
+                            "Suppressing benign litellm mid-stream error; continuing stream: %s",
                             msfe,
                         )
                     continue
@@ -601,7 +573,7 @@ async def _idle_timed_stream(response: Any, idle_timeout: float) -> AsyncGenerat
 
 async def _backoff_sleep(attempt: int) -> None:
     """Exponential backoff with jitter between stream-idle retries."""
-    delay = _BACKOFF_BASE * (2 ** attempt)
+    delay = _BACKOFF_BASE * (2**attempt)
     jitter = random.uniform(0, _BACKOFF_BASE)
     await asyncio.sleep(delay + jitter)
 
@@ -642,10 +614,13 @@ def _log_stream_termination(
     tail = content[-80:] if content else ""
     has_tool_calls = bool(tool_calls)
     log.info(
-        "stream ended: cause=%s finish_reason=%s chunks=%d "
-        "content_len=%d thinking_len=%d tool_calls=%d",
-        cause, finish_reason, chunk_count,
-        content_len, len(thinking), len(tool_calls),
+        "stream ended: cause=%s finish_reason=%s chunks=%d content_len=%d thinking_len=%d tool_calls=%d",
+        cause,
+        finish_reason,
+        chunk_count,
+        content_len,
+        len(thinking),
+        len(tool_calls),
     )
     if tail:
         log.debug("stream final content tail: %r", tail)
@@ -676,7 +651,8 @@ def _log_stream_termination(
         log.warning(
             "stream ended after tool calls with short trailing content (%d "
             "chars, no terminal punctuation) — possible truncation; tail: %r",
-            content_len, tail,
+            content_len,
+            tail,
         )
 
 
@@ -720,11 +696,13 @@ async def _stream_task(
             last_thinking_yield = time.monotonic()
             thinking_dirty = False
             if thinking.strip():
-                await msg_q.put(Message(
-                    role=MessageRole.ASSISTANT,
-                    content=thinking,
-                    type=MessageType.THINKING,
-                ))
+                await msg_q.put(
+                    Message(
+                        role=MessageRole.ASSISTANT,
+                        content=thinking,
+                        type=MessageType.THINKING,
+                    )
+                )
 
         async def commit_assistant_with_tool_calls() -> None:
             """Anchor the assistant tool_calls block once.
@@ -762,14 +740,8 @@ async def _stream_task(
             snapshot so the filter + append path never double-adds.
             """
             nonlocal assistant_api_msg, committed_tool_calls, committed_indices
-            committed_tool_calls = [
-                tc for tc in tool_calls
-                if tc.get("id") and tc["function"].get("name")
-            ]
-            committed_indices = {
-                i for i, tc in enumerate(tool_calls)
-                if tc.get("id") and tc["function"].get("name")
-            }
+            committed_tool_calls = [tc for tc in tool_calls if tc.get("id") and tc["function"].get("name")]
+            committed_indices = {i for i, tc in enumerate(tool_calls) if tc.get("id") and tc["function"].get("name")}
             if committed_tool_calls:
                 assistant_api_msg = {
                     "role": "assistant",
@@ -779,33 +751,37 @@ async def _stream_task(
                 api_messages.append(assistant_api_msg)
                 assistant_appended.set()
                 tool_calls_started.set()
-                await msg_q.put(Message(
-                    role=MessageRole.ASSISTANT,
-                    content=content,
-                    type=MessageType.TEXT,
-                    tool_calls=committed_tool_calls,
-                ))
+                await msg_q.put(
+                    Message(
+                        role=MessageRole.ASSISTANT,
+                        content=content,
+                        type=MessageType.TEXT,
+                        tool_calls=committed_tool_calls,
+                    )
+                )
             else:
                 assistant_api_msg = {"role": "assistant", "content": content or None}
                 api_messages.append(assistant_api_msg)
                 assistant_appended.set()
                 tool_calls_started.set()
                 if content:
-                    await msg_q.put(Message(
-                        role=MessageRole.ASSISTANT,
-                        content=content,
-                        type=MessageType.TEXT,
-                    ))
+                    await msg_q.put(
+                        Message(
+                            role=MessageRole.ASSISTANT,
+                            content=content,
+                            type=MessageType.TEXT,
+                        )
+                    )
 
         async def emit_malformed_tool_call(prev_idx: int) -> None:
-            await msg_q.put(Message(
-                role=MessageRole.ASSISTANT,
-                content=(
-                    f"Malformed tool call: missing id or name for tool_call index {prev_idx}"
-                ),
-                type=MessageType.ERROR,
-                metadata={"error_title": "Malformed Tool Call"},
-            ))
+            await msg_q.put(
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content=(f"Malformed tool call: missing id or name for tool_call index {prev_idx}"),
+                    type=MessageType.ERROR,
+                    metadata={"error_title": "Malformed Tool Call"},
+                )
+            )
 
         async def maybe_enqueue(prev_idx: int) -> None:
             if prev_idx in enqueued_tool_calls:
@@ -860,11 +836,13 @@ async def _stream_task(
                     last_thinking_yield = now
                     thinking_dirty = False
                     if thinking.strip():
-                        await msg_q.put(Message(
-                            role=MessageRole.ASSISTANT,
-                            content=thinking,
-                            type=MessageType.THINKING,
-                        ))
+                        await msg_q.put(
+                            Message(
+                                role=MessageRole.ASSISTANT,
+                                content=thinking,
+                                type=MessageType.THINKING,
+                            )
+                        )
                 else:
                     thinking_dirty = True
 
@@ -885,11 +863,13 @@ async def _stream_task(
                 # cutting off the displayed and persisted final assistant
                 # message while the model still remembers the full text on
                 # the next turn.
-                await msg_q.put(Message(
-                    role=MessageRole.ASSISTANT,
-                    content=content,
-                    type=MessageType.TEXT,
-                ))
+                await msg_q.put(
+                    Message(
+                        role=MessageRole.ASSISTANT,
+                        content=content,
+                        type=MessageType.TEXT,
+                    )
+                )
 
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
@@ -900,8 +880,7 @@ async def _stream_task(
                     # aborting the turn with partial tool_calls already on disk.
                     idx = tc_delta.index if tc_delta.index is not None else len(tool_calls)
                     while idx >= len(tool_calls):
-                        tool_calls.append({"id": "", "type": "function", "function": {
-                                          "name": "", "arguments": ""}})
+                        tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
                     tc = tool_calls[idx]
                     if tc_delta.id:
                         tc["id"] = tc_delta.id
@@ -914,12 +893,14 @@ async def _stream_task(
                     if tc["function"]["name"] and idx not in emitted_tool_calls:
                         await flush_thinking()
                         emitted_tool_calls.add(idx)
-                        await msg_q.put(Message(
-                            role=MessageRole.ASSISTANT,
-                            content=f"Calling tool: {tc['function']['name']}",
-                            type=MessageType.TOOL_CALL,
-                            metadata={"tool_name": tc["function"]["name"]},
-                        ))
+                        await msg_q.put(
+                            Message(
+                                role=MessageRole.ASSISTANT,
+                                content=f"Calling tool: {tc['function']['name']}",
+                                type=MessageType.TOOL_CALL,
+                                metadata={"tool_name": tc["function"]["name"]},
+                            )
+                        )
 
                     if prev_index is not None and prev_index != idx:
                         await flush_thinking()
@@ -968,8 +949,12 @@ async def _stream_task(
             await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
 
         _log_stream_termination(
-            _termination_cause, _finish_reason, _chunk_count,
-            content, thinking, tool_calls,
+            _termination_cause,
+            _finish_reason,
+            _chunk_count,
+            content,
+            thinking,
+            tool_calls,
         )
     finally:
         await ready_q.put(None)
@@ -991,16 +976,20 @@ async def _executor_task(
             result_msg = await _execute_tool(tc, filtered_tools)
             trimmed = await asyncio.to_thread(
                 _maybe_offload_tool_output,
-                tc["function"]["name"], result_msg.content, tc["id"],
+                tc["function"]["name"],
+                result_msg.content,
+                tc["id"],
             )
             result_msg.content = trimmed
             await msg_q.put(result_msg)
             await assistant_appended.wait()
-            api_messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": trimmed,
-            })
+            api_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": trimmed,
+                }
+            )
     finally:
         await msg_q.put(None)
 
@@ -1013,21 +1002,23 @@ async def stream_response(
     allowed_skills: list[str] | None = None,
 ) -> AsyncGenerator[Message, None]:
     from stupidex.tools.skill import build_skill_tool, set_current_allowed_skills
+
     set_current_allowed_skills(allowed_skills)
 
     cfg = get_config()
     system_msg = build_static_system_prompt(system_prompt)
     dynamic_prompt = await build_dynamic_system_prompt()
-    api_messages: list[dict[str, Any]] = [system_msg.to_dict()] + \
-        _history_to_api_messages(messages) + \
-        [dynamic_prompt.to_dict()]
+    api_messages: list[dict[str, Any]] = (
+        [system_msg.to_dict()] + _history_to_api_messages(messages) + [dynamic_prompt.to_dict()]
+    )
 
     registry = get_tool_registry()
     from fnmatch import fnmatch
-    filtered_tools = {k: v for k, v in registry.items()
-                      if any(fnmatch(k, p) for p in allowed_tools)}
+
+    filtered_tools = {k: v for k, v in registry.items() if any(fnmatch(k, p) for p in allowed_tools)}
 
     from stupidex.mcp import get_mcp_manager
+
     mcp_manager = get_mcp_manager()
     if mcp_manager is not None:
         for name, tool_entry in mcp_manager.get_tools().items():
@@ -1039,9 +1030,7 @@ async def stream_response(
 
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
-    litellm_provider, model_id, base_url, api_key = resolve_model_ref(
-        model or cfg.default_model
-    )
+    litellm_provider, model_id, base_url, api_key = resolve_model_ref(model or cfg.default_model)
     litellm_model = f"{litellm_provider}/{model_id}" if litellm_provider else model_id
 
     idle_timeout = cfg.llm_stream_idle_timeout
@@ -1071,7 +1060,9 @@ async def stream_response(
                     del api_messages[snapshot_len:]
                     log.warning(
                         "LLM connect timed out after >%.1fs; retry %d/%d",
-                        idle_timeout, attempt + 1, retries,
+                        idle_timeout,
+                        attempt + 1,
+                        retries,
                     )
                     await _backoff_sleep(attempt)
                     attempt += 1
@@ -1082,7 +1073,9 @@ async def stream_response(
                     del api_messages[snapshot_len:]
                     log.warning(
                         "Transient provider error: %s; retry %d/%d",
-                        exc, attempt + 1, retries,
+                        exc,
+                        attempt + 1,
+                        retries,
                     )
                     await _backoff_sleep(attempt)
                     attempt += 1
@@ -1094,13 +1087,25 @@ async def stream_response(
             assistant_appended = asyncio.Event()
             tool_calls_started = asyncio.Event()
 
-            stream_t = asyncio.create_task(_stream_task(
-                _idle_timed_stream(response, idle_timeout),
-                msg_q, ready_q, api_messages, assistant_appended, tool_calls_started,
-            ))
-            executor_t = asyncio.create_task(_executor_task(
-                msg_q, ready_q, api_messages, filtered_tools, assistant_appended,
-            ))
+            stream_t = asyncio.create_task(
+                _stream_task(
+                    _idle_timed_stream(response, idle_timeout),
+                    msg_q,
+                    ready_q,
+                    api_messages,
+                    assistant_appended,
+                    tool_calls_started,
+                )
+            )
+            executor_t = asyncio.create_task(
+                _executor_task(
+                    msg_q,
+                    ready_q,
+                    api_messages,
+                    filtered_tools,
+                    assistant_appended,
+                )
+            )
 
             try:
                 try:
@@ -1113,18 +1118,18 @@ async def stream_response(
                 except BaseException:
                     stream_t.cancel()
                     executor_t.cancel()
-                    _raise_first_task_exception(
-                        await asyncio.gather(stream_t, executor_t, return_exceptions=True))
+                    _raise_first_task_exception(await asyncio.gather(stream_t, executor_t, return_exceptions=True))
                     raise
                 else:
-                    _raise_first_task_exception(
-                        await asyncio.gather(stream_t, executor_t, return_exceptions=True))
+                    _raise_first_task_exception(await asyncio.gather(stream_t, executor_t, return_exceptions=True))
             except _StreamIdleTimeoutError:
                 if attempt < retries and not delivered_any:
                     del api_messages[snapshot_len:]
                     log.warning(
                         "LLM stream idle for >%.1fs; retry %d/%d",
-                        idle_timeout, attempt + 1, retries,
+                        idle_timeout,
+                        attempt + 1,
+                        retries,
                     )
                     await _backoff_sleep(attempt)
                     attempt += 1
@@ -1135,7 +1140,9 @@ async def stream_response(
                     del api_messages[snapshot_len:]
                     log.warning(
                         "Transient provider error: %s; retry %d/%d",
-                        exc, attempt + 1, retries,
+                        exc,
+                        attempt + 1,
+                        retries,
                     )
                     await _backoff_sleep(attempt)
                     attempt += 1
