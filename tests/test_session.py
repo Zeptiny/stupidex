@@ -388,8 +388,9 @@ class TestSessionUsageTotals(unittest.TestCase):
         label = _format_session_model_label("gpt-4o", totals)
         self.assertEqual(label, "gpt-4o")
 
-    def test_each_chain_contributes_only_its_final_usage(self):
-        """A chain with multiple usage messages contributes only the last."""
+    def test_chain_sums_all_usage_messages(self):
+        """A chain with multiple usage messages contributes the cumulative sum
+        across all its agentic-loop LLM calls, not just the last snapshot."""
         session = Session(name="S", id="s6", model="m")
         session.chains = [
             Chain(
@@ -421,9 +422,9 @@ class TestSessionUsageTotals(unittest.TestCase):
         totals = _session_usage_totals(session)
         self.assertIsNotNone(totals)
         prompt, cached, completion, _total = totals
-        self.assertEqual(prompt, 1000)
+        self.assertEqual(prompt, 1010)
         self.assertEqual(cached, 400)
-        self.assertEqual(completion, 200)
+        self.assertEqual(completion, 205)
 
     def _subagent_record_with_usage(
         self,

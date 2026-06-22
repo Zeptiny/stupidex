@@ -11,7 +11,7 @@ from textual.app import ComposeResult
 from textual.widgets import Collapsible, Static
 
 from stupidex.domain.chain import Chain, ChainStatus
-from stupidex.domain.message import Message, MessageRole, MessageType, Usage
+from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.tools import get_tool_registry
 
 _THROTTLE_INTERVAL = 0.2
@@ -330,11 +330,15 @@ class ChainFooterWidget(Static):
         usage = self._chain_usage()
         if usage is not None:
             # Cached tokens are a subset of prompt tokens (R7) — render as
-            # "of which" parenthetically, never summed into input.
+            # "of which" parenthetically, never summed into input. The usage
+            # here is the chain's cumulative sum across all agentic-loop LLM
+            # calls, so it grows monotonically rather than fluctuating with
+            # each intermediate snapshot.
+            prompt, cached, completion, _total = usage
             text += (
-                f" · ↑{Chain.format_tokens(usage.prompt_tokens)}"
-                f" (⟲{Chain.format_tokens(usage.cached_tokens)})"
-                f" ↓{Chain.format_tokens(usage.completion_tokens)}"
+                f" · ↑{Chain.format_tokens(prompt)}"
+                f" (⟲{Chain.format_tokens(cached)})"
+                f" ↓{Chain.format_tokens(completion)}"
             )
         # Delegated subagent subtotal (R11): the tokens of subagents whose
         # ``parent_chain_index`` is this chain's index. Rendered as a separate
@@ -351,12 +355,25 @@ class ChainFooterWidget(Static):
                 )
         return text
 
-    def _chain_usage(self) -> Usage | None:
-        """The chain's usage from its last message carrying usage (None if none)."""
-        for msg in reversed(self._chain.messages):
-            if msg.usage is not None:
-                return msg.usage
-        return None
+    def _chain_usage(self) -> tuple[int, int, int, int] | None:
+        """Sum usage across all messages carrying ``usage`` in the chain.
+
+        Returns ``(prompt, cached, completion, total)`` or ``None`` when the
+        chain has no usage.
+        """
+        prompt = cached = completion = total = 0
+        found = False
+        for msg in self._chain.messages:
+            if msg.usage is None:
+                continue
+            found = True
+            prompt += msg.usage.prompt_tokens
+            cached += msg.usage.cached_tokens
+            completion += msg.usage.completion_tokens
+            total += msg.usage.total_tokens
+        if not found:
+            return None
+        return (prompt, cached, completion, total)
 
     def tick(self) -> None:
         if self._chain.status == ChainStatus.RUNNING:

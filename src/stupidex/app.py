@@ -17,7 +17,6 @@ from stupidex.domain.message import (
     MessageRole,
     MessageType,
     StreamHistoryState,
-    Usage,
     record_streamed_message,
 )
 from stupidex.domain.session import Session, SessionManager, set_current_session_id
@@ -38,26 +37,40 @@ from stupidex.widgets.subagent_ui import SubagentUIManager
 log = logging.getLogger(__name__)
 
 
-def _last_usage(messages: list) -> "Usage | None":
-    """Return the last ``Usage`` on ``messages`` (reversed scan), or ``None``."""
-    for msg in reversed(messages):
-        if msg.usage:
-            return msg.usage
-    return None
+def _sum_usage(messages: list) -> tuple[int, int, int, int] | None:
+    """Sum token usage across all messages carrying ``usage``.
+
+    Within a single agentic chain the model may make several LLM calls (think
+    -> tool -> assistant); each emits its own cumulative ``Usage`` snapshot.
+    Summing all of them yields the chain's true cumulative consumption, rather
+    than the last snapshot alone (which fluctuates as calls alternate).
+
+    Returns ``(prompt_tokens, cached_tokens, completion_tokens, total_tokens)``
+    when at least one message has usage, otherwise ``None``.
+    """
+    prompt = cached = completion = total = 0
+    found = False
+    for msg in messages:
+        if msg.usage is None:
+            continue
+        found = True
+        prompt += msg.usage.prompt_tokens
+        cached += msg.usage.cached_tokens
+        completion += msg.usage.completion_tokens
+        total += msg.usage.total_tokens
+    if not found:
+        return None
+    return (prompt, cached, completion, total)
 
 
 def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | None:
     """Sum token usage across chains and subagent records in ``session``.
 
-    Each chain contributes only its own final message carrying ``usage``
-    (the last request's actual consumption); iterating chains avoids the
-    double-counting that walking ``session.messages`` would cause, since
-    each chain's messages list contains intermediate assistant snapshots that
-    share a cumulative usage.
-
-    Subagent records (R5/R6) are reached via
-    ``session.subagent_manager.all_records()``; each contributes the final
-    usage on its composed ``record.chain``.
+    Each chain contributes the sum of every usage-bearing message it holds
+    (cumulative across the chain's agentic-loop calls), not just the last
+    snapshot. Subagent records (R5/R6) are reached via
+    ``session.subagent_manager.all_records()``; each contributes the same sum
+    over its composed ``record.chain``.
 
     Returns ``(prompt_tokens, cached_tokens, completion_tokens, total_tokens)``
     when at least one message-list has usage, otherwise ``None``.
@@ -65,26 +78,25 @@ def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | Non
     prompt = cached = completion = total = 0
     found = False
     for chain in session.chains:
-        usage = _last_usage(chain.messages)
+        usage = _sum_usage(chain.messages)
         if usage is None:
             continue
         found = True
-        prompt += usage.prompt_tokens
-        cached += usage.cached_tokens
-        completion += usage.completion_tokens
-        total += usage.total_tokens
+        prompt += usage[0]
+        cached += usage[1]
+        completion += usage[2]
+        total += usage[3]
     # Fold subagent usage into the session total (R6). Each subagent's
-    # composed chain contributes its own final-usage message, the same
-    # lookup used for main chains above.
+    # composed chain contributes its own usage sum.
     for record in session.subagent_manager.all_records():
-        usage = _last_usage(record.chain.messages)
+        usage = _sum_usage(record.chain.messages)
         if usage is None:
             continue
         found = True
-        prompt += usage.prompt_tokens
-        cached += usage.cached_tokens
-        completion += usage.completion_tokens
-        total += usage.total_tokens
+        prompt += usage[0]
+        cached += usage[1]
+        completion += usage[2]
+        total += usage[3]
     if not found:
         return None
     return (prompt, cached, completion, total)
@@ -115,23 +127,23 @@ def _chain_subagent_subtotals(
     ``parent_chain_index`` (R11).
 
     Mirrors the summation style of :func:`_session_usage_totals`: each
-    attributed subagent contributes only its composed ``record.chain``'s final
-    message carrying ``usage`` (reversed lookup). Returns ``None`` when no
-    attributed subagent record has usage.
+    attributed subagent contributes the sum of every usage-bearing message
+    on its composed ``record.chain``. Returns ``None`` when no attributed
+    subagent record has usage.
     """
     prompt = cached = completion = total = 0
     found = False
     for record in session.subagent_manager.all_records():
         if record.parent_chain_index != chain_index:
             continue
-        usage = _last_usage(record.chain.messages)
+        usage = _sum_usage(record.chain.messages)
         if usage is None:
             continue
         found = True
-        prompt += usage.prompt_tokens
-        cached += usage.cached_tokens
-        completion += usage.completion_tokens
-        total += usage.total_tokens
+        prompt += usage[0]
+        cached += usage[1]
+        completion += usage[2]
+        total += usage[3]
     if not found:
         return None
     return (prompt, cached, completion, total)

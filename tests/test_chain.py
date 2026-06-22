@@ -347,7 +347,7 @@ class TestChainFooterWidgetTokenDisplay(unittest.TestCase):
         self.assertNotIn("↓", text)
         self.assertNotIn("⟲", text)
 
-    def test_footer_text_uses_last_usage_message(self):
+    def test_footer_text_sums_all_usage_messages(self):
         chain = Chain(model="m")
         chain.messages = [
             Message(
@@ -364,11 +364,10 @@ class TestChainFooterWidgetTokenDisplay(unittest.TestCase):
             ),
         ]
         text = self._footer_text(chain)
-        # Should reflect the second (last) usage, not the first.
-        self.assertIn("2.0k", text)
-        self.assertIn("800", text)
-        self.assertIn("500", text)
-        self.assertNotIn("10", text)
+        # Cumulative sum across both agentic-loop calls: 2010 / 501 / 805.
+        self.assertIn("2.0k", text)  # 2010 -> "2.0k"
+        self.assertIn("501", text)  # cached sum
+        self.assertIn("805", text)  # output sum
 
 
 class TestChainFooterDelegatedSubtotal(unittest.TestCase):
