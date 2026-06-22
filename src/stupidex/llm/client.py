@@ -744,7 +744,7 @@ async def stream_response(
     system_prompt: str,
     allowed_skills: list[str] | None = None,
 ) -> AsyncGenerator[Message, None]:
-    from stupidex.tools.skill import set_current_allowed_skills
+    from stupidex.tools.skill import build_skill_tool, set_current_allowed_skills
     set_current_allowed_skills(allowed_skills)
 
     cfg = get_config()
@@ -765,6 +765,9 @@ async def stream_response(
         for name, tool_entry in mcp_manager.get_tools().items():
             if any(fnmatch(name, p) for p in allowed_tools):
                 filtered_tools[name] = tool_entry
+
+    if allowed_skills is not None and "skill" in filtered_tools:
+        filtered_tools["skill"] = {**filtered_tools["skill"], "tool": build_skill_tool(allowed_skills)}
 
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
