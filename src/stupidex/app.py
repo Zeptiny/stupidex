@@ -12,7 +12,14 @@ from stupidex.agents.manager import set_current_chain_index
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
-from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
+from stupidex.domain.message import (
+    Message,
+    MessageRole,
+    MessageType,
+    StreamHistoryState,
+    Usage,
+    record_streamed_message,
+)
 from stupidex.domain.session import Session, SessionManager, set_current_session_id
 from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback
 from stupidex.llm.client import classify_error, stream_response
@@ -31,6 +38,14 @@ from stupidex.widgets.subagent_ui import SubagentUIManager
 log = logging.getLogger(__name__)
 
 
+def _last_usage(messages: list) -> "Usage | None":
+    """Return the last ``Usage`` on ``messages`` (reversed scan), or ``None``."""
+    for msg in reversed(messages):
+        if msg.usage:
+            return msg.usage
+    return None
+
+
 def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | None:
     """Sum token usage across chains and subagent records in ``session``.
 
@@ -45,16 +60,12 @@ def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | Non
     usage on its composed ``record.chain``.
 
     Returns ``(prompt_tokens, cached_tokens, completion_tokens, total_tokens)``
-    when at least one chain or subagent record has usage, otherwise ``None``.
+    when at least one message-list has usage, otherwise ``None``.
     """
     prompt = cached = completion = total = 0
     found = False
     for chain in session.chains:
-        usage = None
-        for msg in reversed(chain.messages):
-            if msg.usage:
-                usage = msg.usage
-                break
+        usage = _last_usage(chain.messages)
         if usage is None:
             continue
         found = True
@@ -66,11 +77,7 @@ def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | Non
     # composed chain contributes its own final-usage message, the same
     # lookup used for main chains above.
     for record in session.subagent_manager.all_records():
-        usage = None
-        for msg in reversed(record.chain.messages):
-            if msg.usage:
-                usage = msg.usage
-                break
+        usage = _last_usage(record.chain.messages)
         if usage is None:
             continue
         found = True
@@ -117,11 +124,7 @@ def _chain_subagent_subtotals(
     for record in session.subagent_manager.all_records():
         if record.parent_chain_index != chain_index:
             continue
-        usage = None
-        for msg in reversed(record.chain.messages):
-            if msg.usage:
-                usage = msg.usage
-                break
+        usage = _last_usage(record.chain.messages)
         if usage is None:
             continue
         found = True
@@ -518,10 +521,11 @@ class Stupidex(App):
 
     def _start_chain(self) -> None:
         chain = Chain(model=self.model)
+        chain_index = None
         if self.sessions.active:
             self.sessions.active.chains.append(chain)
-            set_current_chain_index(len(self.sessions.active.chains) - 1)
-        chain_index = len(self.sessions.active.chains) - 1 if self.sessions.active else None
+            chain_index = len(self.sessions.active.chains) - 1
+            set_current_chain_index(chain_index)
         subtotal_provider = (
             _make_subagent_subtotal_provider(self.sessions.active, chain_index)
             if chain_index is not None

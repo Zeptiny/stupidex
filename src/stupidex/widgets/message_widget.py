@@ -338,7 +338,7 @@ class ChainFooterWidget(Static):
             )
         # Delegated subagent subtotal (R11): the tokens of subagents whose
         # ``parent_chain_index`` is this chain's index. Rendered as a separate
-        # parenthetical so it is visually attributabed, not conflated with the
+        # parenthetical so it is visually attributed, not conflated with the
         # chain's own usage.
         sub = self._subagent_subtotal() if self._subagent_subtotal else None
         if sub is not None:

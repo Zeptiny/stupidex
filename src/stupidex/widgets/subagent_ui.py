@@ -25,6 +25,13 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+_SUBAGENT_STATE_TO_CHAIN_STATUS = {
+    SubagentState.COMPLETED: ChainStatus.COMPLETED,
+    SubagentState.FAILED: ChainStatus.FAILED,
+    SubagentState.INTERRUPTED: ChainStatus.INTERRUPTED,
+}
+
+
 class SubagentUIManager:
     """Manages subagent tabs, widgets, and sidebar updates."""
 
@@ -122,6 +129,10 @@ class SubagentUIManager:
         tab.update(self._tab_label(record))
         if state in TERMINAL:
             self.prune_lock(subagent_id)
+            self._sync_subagent_chain_terminal(record)
+            footer = self._widgets.get(subagent_id, {}).get("footer")
+            if footer is not None:
+                footer.freeze()
         await self.update_sidebar()
 
     def prune_lock(self, subagent_id: str) -> None:
@@ -170,14 +181,22 @@ class SubagentUIManager:
         ``SubagentState`` onto the chain's ``ChainStatus``. Restored records
         already carry their persisted chain status, which is only touched
         here when still running.
+
+        For restored records with a persisted ``end_time``, set ``status``
+        directly rather than calling ``finish()``: ``finish()`` overwrites
+        ``end_time`` with the current process's ``time.monotonic()``, but a
+        restored chain's ``start_time`` belongs to the prior process, so
+        ``elapsed`` would be nonsensical.
         """
-        if record.chain.status == ChainStatus.RUNNING:
-            if record.state == SubagentState.COMPLETED:
-                record.chain.finish(ChainStatus.COMPLETED)
-            elif record.state == SubagentState.FAILED:
-                record.chain.finish(ChainStatus.FAILED)
-            elif record.state == SubagentState.INTERRUPTED:
-                record.chain.finish(ChainStatus.INTERRUPTED)
+        if record.chain.status != ChainStatus.RUNNING:
+            return
+        target = _SUBAGENT_STATE_TO_CHAIN_STATUS.get(record.state)
+        if target is None:
+            return
+        if record.chain.end_time is not None:
+            record.chain.status = target
+        else:
+            record.chain.finish(target)
 
     def _tick_subagent_footers(self) -> None:
         """Tick (or freeze) mounted subagent footers.
