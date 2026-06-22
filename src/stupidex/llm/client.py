@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import html
 import json
 import logging
@@ -585,7 +586,15 @@ async def _stream_task(
                 enqueued_tool_calls.add(prev_idx)
                 return
             enqueued_tool_calls.add(prev_idx)
-            await ready_q.put(tc)
+            # P2-87: snapshot the tool_call at transition time. The raw `tc`
+            # dict is the live working buffer; its `function.arguments` field
+            # is mutated in place by `+=` below as later argument-chunk deltas
+            # arrive. The executor task reads `tc["function"]["arguments"]`
+            # from the enqueued reference — without a snapshot, a parallel
+            # tool_call whose arguments arrive after enqueue time would let
+            # the executor `json.loads` a partial JSON string, surfacing as a
+            # spurious "Invalid arguments" tool error.
+            await ready_q.put(copy.deepcopy(tc))
 
         async for chunk in response:
             if not chunk.choices:

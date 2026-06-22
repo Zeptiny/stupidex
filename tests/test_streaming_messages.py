@@ -609,6 +609,68 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
         # The malformed placeholder is filtered out; only call-1 survives.
         self.assertEqual([tc["id"] for tc in anchored["tool_calls"]], ["call-1"])
 
+    async def test_maybe_enqueue_snapshots_tool_call_not_live_reference(self):
+        """P2-87: maybe_enqueue must put a deepcopy of the tool_call on ready_q,
+        not the live working-buffer reference. Without the snapshot, the
+        executor races with the stream loop's in-place `+=` on
+        `function.arguments`, producing spurious "Invalid arguments" errors
+        on parallel tool calls where args arrive in multiple chunks."""
+        captured: list[dict] = []
+
+        async def fake_execute_tool(tc, filtered_tools):
+            captured.append({
+                "id": tc["id"],
+                "args_at_exec": tc["function"]["arguments"],
+                "identity": id(tc),
+            })
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"result {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        original_execute_tool = llm_client._execute_tool
+        llm_client._execute_tool = fake_execute_tool
+        try:
+            async def response():
+                # Two parallel tool_calls, each with complete args at arrival.
+                # When the index transition fires maybe_enqueue(0), tc0 is
+                # snapshotted. If a later delta mutated tc0's working-buffer
+                # entry's args string (in-place `+=`), the executor's snapshot
+                # would be unaffected.
+                yield chunk(content="Reading two files")
+                yield chunk(tool_calls=[tool_delta(0)])
+                yield chunk(tool_calls=[tool_delta(1)])
+                await asyncio.sleep(0.01)
+
+            messages, api_messages = await self._drive_stream(response)
+        finally:
+            llm_client._execute_tool = original_execute_tool
+
+        # Both tool_calls executed exactly once each.
+        self.assertEqual(len(captured), 2)
+        by_id = {c["id"]: c for c in captured}
+        self.assertEqual(
+            by_id["call-0"]["args_at_exec"], '{"file_path":"README.md"}',
+            "call-0 executor saw its correct args",
+        )
+        self.assertEqual(
+            by_id["call-1"]["args_at_exec"], '{"file_path":"README.md"}',
+            "call-1 executor saw its correct args",
+        )
+        # The executor's `tc` reference is a distinct object from the working
+        # buffer's entry — i.e. maybe_enqueue snapshotted rather than passing
+        # the live reference. (Without the deepcopy, both would be the same
+        # object and a later mutation on `function.arguments` would race.)
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        working_buffer_ids = {id(tc) for tc in anchored["tool_calls"]}
+        executor_ids = {c["identity"] for c in captured}
+        self.assertEqual(
+            working_buffer_ids & executor_ids, set(),
+            "executor must not see the live working-buffer object reference",
+        )
+
     async def _drive_stream(self, response, *, execute_tool=None):
         """Run _stream_task + _executor_task against `response` and return
         (messages, api_messages). Mirrors the setup used by the streaming
