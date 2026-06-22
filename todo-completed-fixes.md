@@ -98,6 +98,7 @@
 | P2-3 | domain | domain/chain.py:90 | _reconcile_orphan_tool_results does not deduplicate repeated TOOL_RESULT with same tool_call_id **[FIXED — Batch 1 2026-06-21: added seen_result_ids set; duplicates dropped at replay to prevent strict-provider HTTP 400]** | correctness | 50 | advisory | Y |
 | P2-85 | llm | llm/client.py:326 | Streaming desync: missing tc_delta.index (None) causes TypeError mid-stream, aborting turn with partial tool calls already on disk **[FIXED — Batch 1 2026-06-21: coerce None to len(tool_calls) before the while-loop; Anthropic/Bedrock adapters with index-less deltas no longer crash mid-stream]** | adversarial | 50 | manual | Y |
 | P2-87 | llm | llm/client.py:284 | Shared mutable tool_calls list: executor reads tc['id'] before stream finalizes it, producing tool_call_id mismatch on replay **[FIXED — Batch 1 2026-06-21: copy.deepcopy(tc) in maybe_enqueue snapshots at transition time; executor no longer races with the stream loop's in-place += on function.arguments]** | adversarial | 50 | manual | Y |
+| P2-78 | tools | tools/search.py:90 | Naive glob-to-regex translation mishandles ? and character classes — should use fnmatch.translate **[FALSE-POSITIVE — Batch 8 verification 2026-06-21: search.py:94 already uses `fnmatch.translate(include_pattern)`; locked in by tests/test_search.py:51 (`?_test.py` matches `a_test.py`) and :56 (`[abc].py` matches `a.py`, not `d.py`). Originally fixed under P1-15 U5.]** | kieran-python | 85 | manual | Y |
 | P2-4 | domain | domain/message.py:110 | record_streamed_message silently discards TOOL_CALL MessageType messages, risking orphaned TOOL_RESULT on replay **[FALSE-POSITIVE — Batch 1 verification 2026-06-21: TOOL_CALL MessageType is a display-only "Calling tool: X" notification emitted without tool_calls; actual tool_calls persisted via MessageType.TEXT anchoring at message.py:179-184]** | correctness | 50 | advisory | Y |
 | P2-6 | domain | domain/message.py:100 | THINKING-typed stream chunk silently drops tool_calls, orphans subsequent TOOL_RESULT and triggers reconcile-prune **[FALSE-POSITIVE — Batch 1 verification 2026-06-21: producer never sets tool_calls on THINKING messages; tool_calls only emitted via commit_assistant_with_tool_calls on TEXT-typed Message at client.py:545-550]** | adversarial | 50 | advisory | Y |
 | P2-84 | llm | llm/client.py:415 | Dynamic system prompt is appended as a trailing system message after the full conversation history **[INTENDED DESIGN — Batch 1 verification 2026-06-21: trailing position is by design; not a defect]** | correctness | 50 | advisory | Y |
@@ -250,6 +251,6 @@
 |---|---|---|---|---|
 | P0 | 5 | 0 | 0 | 5 |
 | P1 | 32 | 2 | 0 | 34 |
-| P2 | 41 | 1 | 0 | 42 |
+| P2 | 41 | 2 | 0 | 43 |
 | P3 | 14 | 0 | 1 | 15 |
-| **Total** | **92** | **3** | **1** | **96** |
+| **Total** | **92** | **4** | **1** | **97** |

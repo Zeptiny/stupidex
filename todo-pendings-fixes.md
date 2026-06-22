@@ -122,7 +122,7 @@
 | P2-75 | tools | tools/web_fetch.py:235 | _choice_content duck-types litellm response as object and falls back to str(response) — leaks ModelResponse repr as the answer | kieran-python | 80 | manual | Y |
 | P2-76 | tools | tools/file_manipulation.py:44 (alt) | execute_read_tool and execute_edit_tool open files without explicit UTF-8 encoding — write uses utf-8 but read uses default locale | kieran-python | 90 | manual | Y |
 | P2-77 | tools | tools/exec.py:111 | Broad except Exception swallows all errors into ExecutorResult across the tools package — hides programming errors, removes traceback | kieran-python | 75 | manual | Y |
-| P2-78 | tools | tools/search.py:90 | Naive glob-to-regex translation mishandles ? and character classes — should use fnmatch.translate | kieran-python | 85 | manual | Y |
+
 | P2-79 | tools | tools/ast.py:564 | hash_key uses full class_text as a dict key — unbounded memory growth; should hash via _fnv1a | kieran-python | 75 | manual | Y |
 | P2-80 | tools | tools/skill.py:9 | ContextVar holds a mutable list — callers can mutate the shared allowed-skills set | kieran-python | 70 | manual | Y |
 | P2-81 | tools | tools/__init__.py:88 (alt) | get_skill_tool builds a Tool at import-time via __init__.py without allowed_skills context | kieran-python | 70 | manual | Y |
