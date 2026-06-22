@@ -1137,7 +1137,7 @@ class StreamCachedTokensTest(unittest.IsolatedAsyncioTestCase):
     def test_prompt_tokens_details_takes_precedence_over_cache_read(self):
         # When both provider shapes are present on the same usage object,
         # prompt_tokens_details.cached_tokens (OpenAI) wins over
-        # cache_read_input_tokens (Anthropic) per the `if not cached:`
+        # cache_read_input_tokens (Anthropic) per the `if cached is None:`
         # fallback chain in _stream_task.
         u = self._usage(
             prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
@@ -1151,6 +1151,23 @@ class StreamCachedTokensTest(unittest.IsolatedAsyncioTestCase):
         usage = self._final_usage(self._drive(response))
         self.assertEqual(usage.cached_tokens, 800,
                          "prompt_tokens_details must take precedence")
+
+    def test_prompt_tokens_details_zero_takes_precedence_over_cache_read(self):
+        # An explicitly set cached_tokens=0 on prompt_tokens_details (OpenAI)
+        # must NOT fall back to cache_read_input_tokens (Anthropic): the
+        # provider explicitly reported zero cached reads.
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+            cache_read_input_tokens=600,
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 0,
+                         "explicit cached_tokens=0 must not trigger fallback")
 
 
 class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):

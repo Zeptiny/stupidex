@@ -931,11 +931,11 @@ async def _stream_task(
 
             if hasattr(chunk, "usage") and chunk.usage:
                 u = chunk.usage
-                cached = 0
+                cached = None
                 ptd = getattr(u, "prompt_tokens_details", None)
                 if ptd is not None:
-                    cached = getattr(ptd, "cached_tokens", 0) or 0
-                if not cached:
+                    cached = getattr(ptd, "cached_tokens", None)
+                if cached is None:
                     cached = getattr(u, "cache_read_input_tokens", 0) or 0
                 usage = Usage(
                     prompt_tokens=u.prompt_tokens,

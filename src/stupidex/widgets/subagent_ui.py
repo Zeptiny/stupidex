@@ -147,13 +147,13 @@ class SubagentUIManager:
         for record in manager.all_records():
             pane = TabPane(self._tab_label(record), id=f"sub-{record.id}")
             await tabs.add_pane(pane)
-            footer = ChainFooterWidget(record.chain)
-            await pane.mount(footer)
-            self._widgets.setdefault(record.id, {})["footer"] = footer
             record.on_message = lambda msg, rid=record.id: self.on_message(rid, msg)
             record.on_state_change = lambda state, rid=record.id: self.on_state_change(rid, state)
             for msg in record.messages:
                 await self.on_message(record.id, msg)
+            footer = ChainFooterWidget(record.chain)
+            await pane.mount(footer)
+            self._widgets.setdefault(record.id, {})["footer"] = footer
             # Restored subagents are terminal (PENDING/RUNNING were migrated
             # to INTERRUPTED during deserialization) and their chain status is
             # reconciled by finalize_chain_on_restore() in from_storage_dict,
