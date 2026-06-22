@@ -19,97 +19,39 @@
 
 ---
 
-## P0 — Critical / Must fix (7 deduplicated)
+## P0 — Critical / Must fix (3 remaining)
 
 > P0-1, P0-2, P0-3 moved to `README.md` → "P0 - Code Review".
-> P0-4 through P0-8 have been **fixed** (see `docs/plans/2026-06-20-p0-verification-and-fix-plan.md`).
+> P0-4 through P0-8 have been **fixed** → moved to `todo-completed-fixes.md` (see `docs/plans/2026-06-20-p0-verification-and-fix-plan.md`).
 
 | # | Module | File:Line | Title | Status |
 |---|---|---|---|---|
 | P0-1 | tools | tools/web_fetch.py:94 | SSRF — no private-IP/cloud-metadata filter, follow_redirects=True | → README TODO |
 | P0-2 | tools | tools/exec.py:52 | Prompt-injection → shell RCE cascade (shell=True default, no sandbox) | → README TODO |
 | P0-3 | tools | tools/file_manipulation.py:44 | No path confinement on read/write/edit/glob/replace_symbol | → README TODO |
-| P0-4 | rag | rag/store.py:100 / rag/indexer.py:256 | Incremental RAG re-index silently destroys unchanged files' chunks+vectors | **FIXED** |
-| P0-5 | tools/llm | tools/subagent.py:106 + llm/client.py:24 | wait_for_subagent has no timeout AND is excluded from 60s tool timeout | **FIXED** (configurable stream idle-timeout + retries; root-trigger fix) |
-| P0-6 | mcp | mcp/__init__.py:67/138 | MCP startup has no overall timeout — hung server blocks App.on_mount indefinitely | **FIXED** (configurable `mcp_startup_timeout` / `mcp_per_server_timeout`) |
-| P0-7 | domain | domain/todo.py:64 | TodoStore state machine has zero direct test coverage | **FIXED** (`tests/test_todo_store.py`, 19 tests) |
-| P0-8 | agents | agents/manager.py:201 | SubagentManager.spawn / _run subagent lifecycle has zero direct test coverage | **FIXED** (`tests/test_subagent_manager.py`, 19 tests) |
 
-## P1 — High-impact / Should fix (~30 deduplicated)
+## P1 — High-impact / Should fix (19 remaining)
 
-> P1-5, P1-9, P1-10, P1-11 have been **fixed** by the P0-5 stream idle-timeout + retries work (see `docs/plans/2026-06-20-p0-verification-and-fix-plan.md`).
-> P1-1, P1-2, P1-3, P1-4, P1-6, P1-7, P1-8, P1-13, P1-14, P1-15, P1-16, P1-18, P1-19, P1-20, P1-21 have been **fixed** (see `docs/plans/2026-06-20-001-fix-p1-code-review-findings-plan.md`).
+> P1-1 through P1-11, P1-13 through P1-21, P1-24 through P1-53 → moved to `todo-completed-fixes.md` (fixed / false-positive).
 > P1-12, P1-17, P1-22 moved to `README.md` → "P1 - Code Review".
-> P1-25, P1-27 **fixed**; P1-24 **false-positive** (intentional design, deep-copied at persist time); P1-26 **false-positive** (rebind was already done at all transition sites) — context binding centralized into `SessionManager._bind_context` for maintainability.
-> P1-28 through P1-53 (20 testing gaps) **fixed** (see `docs/plans/2026-06-20-002-fix-p1-testing-gaps-plan.md`); P1-52 and P1-53 bugs **fixed** — force=True now cleans up deleted files; rename to existing alias now rejected with warning.
+> P1-23 remains pending (SSE/SSRF validation + read_resource trust).
 
 ### Correctness / Reliability
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P1-1 | agents | agents/manager.py:150 | Restored PENDING subagents never transition to terminal state (RUNNING→INTERRUPTED fix missed PENDING) — sidebar polls 1Hz forever **[FIXED — U9: PENDING→INTERRUPTED migration]** | correctness, maintainability, adversarial, kieran-python | 75/50 | gated_auto | N |
-| P1-2 | agents | agents/manager.py:173 | Cancelling a not-yet-started _run task leaves record stuck in PENDING; saved state diverges silently **[FIXED — U9: cancel decoupled from task liveness]** | correctness | 60 | gated_auto | N |
-| P1-3 | agents | agents/manager.py:281 | _run and on_spawn can concurrently mount the same streamed message (race, shared StreamWidgetState) **[FIXED — U9: per-subagent mount lock]** | correctness | 50 | manual | Y |
-| P1-4 | llm | llm/client.py:438 | Context-window exhaustion — while-True re-submission loop has no token budget; large tool outputs blow context mid-turn **[FIXED — U8: tool output offload to cache file]** | correctness, adversarial, reliability | 75 | manual | Y |
-| P1-5 | llm | llm/client.py:24 | wait_for_subagent and excluded tools can hang the stream indefinitely; msg_q backpressure deadlocks **[FIXED — P0-5 stream idle-timeout + retries]** | adversarial | 75 | manual | Y |
-| P1-6 | llm | llm/client.py:348 | Interleaved tool_call index deltas cause a tool_call to be queued for execution multiple times → strict providers 400 **[FIXED — U10: enqueued_tool_calls dedup set]** | correctness | 50 | gated_auto | Y |
-| P1-7 | llm | llm/client.py:338 | commit_assistant_with_tool_calls may emit a tool_call with empty id/name if first delta for an index lacks them → strict providers 400 **[FIXED — U10: filter empty id/name at commit]** | correctness, adversarial | 50/75 | gated_auto | Y |
-| P1-8 | llm | llm/client.py:284 | Committed assistant message's content in api_messages diverges from persisted history if content deltas arrive after tool_calls started **[FIXED — U10: mutable content holder + no stacked TEXT]** | correctness | 50 | gated_auto | Y |
-| P1-9 | llm | llm/client.py:439 | litellm.acompletion streaming call has no explicit timeout — provider stall blocks _stream_task forever **[FIXED — P0-5 stream idle-timeout]** | reliability | 90 | manual | N |
-| P1-10 | llm | llm/client.py:295 | Streaming response object never closed via async context manager / aclose — connection pool exhausts under repeated escape **[FIXED — P0-5 _safe_aclose()]** | reliability | 80 | manual | N |
-| P1-11 | llm | llm/client.py:467 | No retry, backoff, or jitter on transient LLM errors — single 429/502 aborts the entire agent turn **[FIXED — P0-5 exponential backoff + jitter]** | reliability | 85 | manual | N |
 | P1-12 | llm | llm/client.py:483 | Outer while-True agent loop has no iteration cap — runaway tool loop burns tokens forever | reliability, adversarial | 75 | manual | N | → README TODO |
-| P1-13 | tools | tools/exec.py:71 | Memory-exhaustion abuse — process.communicate() buffers unbounded stdout/stderr until timeout; yes/cat /dev/urandom OOM-kills the TUI **[FIXED — U4: incremental bounded reads, 1MB cap]** | adversarial, performance | 75/50 | manual | Y |
-| P1-14 | tools | tools/file_manipulation.py:206 | edit/write tools are non-atomic and have a read-modify-write TOCTOU; concurrent subagents cause lost updates. Contrast ast.py's existing _atomic_write **[FIXED — U3: reuse _atomic_write]** | adversarial, reliability | 75/80 | manual | N |
-| P1-15 | tools | tools/search.py:122 | Grep runs user-supplied regex synchronously in the event loop → ReDoS freezes the TUI. Naive glob→regex mishandles ?/[abc] **[FIXED — U5: executor + fnmatch.translate]** | adversarial, kieran-python | 75/85 | manual | Y |
-| P1-16 | tools | tools/skill.py:41 | resolve_skill_dependencies false-positives circular dependency on diamond/shared transitive deps — shared _visited set across siblings **[FIXED — U2: separate stack vs resolved]** | correctness, kieran-python | 75/90 | gated_auto | Y |
 | P1-17 | tools | tools/subagent.py:64 | Subagent tier override lets the LLM escalate to most expensive model — no least-privilege enforcement | adversarial | 75 | manual | Y | → README TODO |
-| P1-18 | tools | tools/ast.py:679 | find_symbol_references reports 0-indexed line numbers, inconsistent with other AST tools (off-by-one line edits) **[FIXED — U1: +1 at display time]** | correctness | 75 | safe_auto | Y |
-| P1-19 | mcp | mcp/schema.py:25 / mcp/__init__.py:144 | Registry name `mcp_{server_name}_{tool_name}` is not injective — silent executor shadowing **[FIXED — U7: mcp::server::tool separator + shadow warning]** | correctness, adversarial, kieran-python | 75/100 | manual | N |
-| P1-20 | mcp | mcp/__init__.py:176 | call_tool silently discards all non-text content blocks (images, embedded resources) — agent gets empty string with no error **[FIXED — U6: partition blocks + placeholders + warning]** | correctness | 100 | safe_auto | N |
-| P1-21 | mcp | mcp/__init__.py:193 | read_resource joins raw base64 BlobResourceContents.blob into text string — TypeError or garbled output at runtime **[FIXED (false-positive on TypeError; blob is str) — U6: readable placeholder]** | correctness, maintainability, kieran-python | 75/50 | manual | Y |
 | P1-22 | mcp | mcp/__init__.py:130 | Project-level MCP server configs spawn arbitrary commands with no trust prompt or attestation → workspace-trust RCE | security | 75 | manual | N | → README TODO |
 | P1-23 | mcp | mcp/__init__.py:128/187 | SSE MCP server URLs unvalidated; no scheme/host allowlist; read_resource trusts server-advertised URIs (file://, redirect-to-private-host) | adversarial, security | 100/75 | manual/gated_auto | N |
 
 ### Persistence replay
 
-| # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
-|---|---|---|---|---|---|---|---|
-| P1-24 | domain | domain/message.py:143 | Shared-reference mutation: `state.content.tool_calls = msg.tool_calls` aliases caller's list into persisted history **[FALSE-POSITIVE — aliasing is intentional, documented at client.py:459-464; to_storage_dict deep-copies at persist time; each subagent's tool_calls list is independent]** | adversarial | 75 | gated_auto | Y |
-| P1-25 | domain | domain/todo.py:76 | Cascade: 8-hex TodoTask ID collision (32-bit entropy) silently overwrites prior task under birthday pressure ~65k tasks **[FIXED — retry loop + RuntimeError on exhaustion]** | adversarial, correctness | 100/75 | manual | Y |
-| P1-26 | domain | domain/todo.py:162 | _current_store ContextVar not re-bound on SessionManager.switch/load/create — tool handlers operate on stale store **[FALSE-POSITIVE — rebind was already at all transition sites; centralized into SessionManager._bind_context for maintainability]** | adversarial | 50 | manual | Y |
-| P1-27 | domain | domain/message.py:78 | Deserialization fails open: Usage(**data['usage']) rejects forward-compatible extra fields, aborts entire Session load → data loss **[FIXED — explicit .get() extraction with 0 defaults]** | adversarial, reliability, testing | 75 | gated_auto | Y |
+> P1-24 (false-positive), P1-25, P1-26 (false-positive), P1-27 → moved to `todo-completed-fixes.md`.
 
 ### Testing gaps (P1-class)
 
-| # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
-|---|---|---|---|---|---|---|---|
-| P1-28 | domain | domain/skill.py:32 | Skill.validate() validation gate entirely untested — _NAME_PATTERN, _MAX_NAME_LEN, _MAX_DESC_LEN, leading/trailing-hyphen cases all enforcement branches **[FIXED — tests/test_skill_domain.py, 21 tests]** | testing | 100 | gated_auto | N |
-| P1-29 | domain | domain/chain.py:71 | _reconcile_orphan_tool_results has no direct test for the mutation it performs on persisted message list **[FIXED — tests/test_chain.py, 14 tests]** | testing | 75 | gated_auto | N |
-| P1-30 | domain | domain/message.py:40 | Message.to_dict() content=null contract for tool-call-only turns is untested (documented behavioral contract with strict providers) **[FIXED — tests/test_message.py TestMessageToDict, 10 tests]** | testing | 75 | gated_auto | N |
-| P1-31 | llm | llm/client.py:438 | stream_response multi-turn tool-call loop is untested — the central agentic behavior (loop termination condition, api_messages growth) **[FIXED — tests/test_streaming_messages.py TestStreamResponseMultiTurn, 3 tests]** | testing | 75 | gated_auto | N |
-| P1-32 | llm | llm/client.py:174 | _execute_tool error-path branches have zero direct tests (JSONDecodeError, args-not-a-dict, unknown tool, _validate_tool_args failure, TimeoutError, generic Exception) **[FIXED — tests/test_streaming_messages.py TestExecuteToolErrorPaths, 9 tests]** | testing | 75 | gated_auto | N |
-| P1-33 | llm | llm/client.py:74 | _validate_tool_args has no tests despite branching logic (pure function, ideal unit-test target) **[FIXED — tests/test_streaming_messages.py TestValidateToolArgs, 4 tests]** | testing | 75 | gated_auto | N |
-| P1-34 | llm | llm/dynamic_system_prompt.py:17 | build_dynamic_system_prompt has no tests — TTL cache, directory_tree execution, XML escaping of subagents/todos **[FIXED — tests/test_dynamic_system_prompt.py, 11 tests]** | testing | 75 | gated_auto | N |
-| P1-35 | agents | agents/manager.py:150 | SubagentRecord persistence round-trip and RUNNING→INTERRUPTED migration untested — the persistence-replay entry point **[FIXED — U9 tests]** | testing | 100 | gated_auto | Y |
-| P1-36 | agents | agents/manager.py:173 | cancel_one / cancel_all / cancel_running have no tests; behavioral differences unverifiable **[FIXED — U9 tests]** | testing | 100 | gated_auto | Y |
-| P1-37 | agents | agents/manager.py:285 | wait() semantics — already-done and unknown-id handling untested **[FIXED — tests/test_subagent_manager.py TestWaitEdgeCases, 4 tests]** | testing | 100 | gated_auto | N |
-| P1-38 | agents | agents/manager.py:246 | on_message and on_state_change callback failure-isolation behavior untested **[FIXED — tests/test_subagent_manager.py TestCallbackFailureIsolation, 4 tests]** | testing | 100 | gated_auto | Y |
-| P1-39 | mcp | mcp/__init__.py:169 | MCPManager.call_tool has zero test coverage — both branches (session None + happy path joining block.text) **[FIXED — U6/U7 tests]** | testing | 75 | gated_auto | N |
-| P1-40 | mcp | mcp/__init__.py:192 | read_resource BlobResourceContents branch untested (and behaviorally suspect) **[FIXED — U6 tests]** | testing | 75 | gated_auto | N |
-| P1-41 | mcp | mcp/__init__.py:128 | SSE transport branch in _start_server is never exercised **[FIXED — tests/test_mcp_lifecycle.py TestSSETransport, 2 tests]** | testing | 75 | gated_auto | N |
-| P1-42 | mcp | mcp/__init__.py:81 | Per-server failure recovery in _run is untested **[FIXED — tests/test_mcp_lifecycle.py TestStartAllErrorPropagation, 4 tests]** | testing | 75 | gated_auto | N |
-| P1-43 | mcp | mcp/__init__.py:68 | start_all startup-error propagation branch untested **[FIXED — tests/test_mcp_lifecycle.py TestStartAllErrorPropagation, 4 tests]** | testing | 75 | gated_auto | N |
-| P1-44 | tools | tools/exec.py:41 | execute_command has zero test coverage — timeout/SIGKILL, shell=False, nonzero exit, exception paths **[FIXED — U4 tests]** | testing | 90 | gated_auto | Y |
-| P1-45 | tools | tools/search.py:52 | execute_grep_tool has zero test coverage — invalid regex, dir-not-found, binary skip, include_pattern translation, max_results truncation **[FIXED — U5 tests]** | testing | 90 | gated_auto | Y |
-| P1-46 | tools | tools/skill.py:197 | execute_skill resource-read path traversal guard is security-critical and untested **[FIXED — tests/test_skill_tools.py TestResourceReadPathTraversal, 14 tests]** | testing | 90 | gated_auto | Y |
-| P1-47 | tools | tools/subagent.py:53 | All four subagent executors (delegate, wait, list, interrupt) have zero test coverage **[FIXED — tests/test_subagent_tools.py, 15 tests]** | testing | 90 | gated_auto | Y |
-| P1-48 | tools | tools/todo.py:112 | All four todo executors (create, update, list, delete) have zero test coverage **[FIXED — tests/test_todo_tools.py, 15 tests]** | testing | 90 | gated_auto | Y |
-| P1-49 | tools | tools/file_manipulation.py:38 | execute_read_tool, execute_write_tool, execute_glob_tool, execute_read_directory_tool all untested; only execute_edit_tool has 2 tests **[FIXED — tests/test_file_manipulation.py, 15 new tests]** | testing | 90 | gated_auto | Y |
-| P1-50 | rag | rag/indexer.py:54 | update_file (single-file re-index) is completely untested despite 5 branches **[FIXED — tests/test_rag_indexer.py TestUpdateFile, 6 tests]** | testing | 75 | gated_auto | Y |
-| P1-51 | rag | rag/store.py:325 | RAGStore.upsert_file vector-rebuild logic is untested **[FIXED — tests/test_rag_store.py TestUpsertFileVectorRebuild, 7 tests]** | testing | 75 | gated_auto | Y |
-| P1-52 | rag | rag/indexer.py:280 | force=True re-index does not remove deleted files — branch and behavior untested **[FIXED — tests/test_rag_indexer.py TestForceReindexDeletedFiles, 4 tests; bug fixed: force=True now removes stale chunks]** | testing | 75 | gated_auto | Y |
-| P1-53 | screens | screens/settings.py:852 | Provider/MCP rename flow silently keeps old key untested **[FIXED — tests/test_settings_screen.py, 10 tests; bug fixed: rename to existing alias now rejected with warning]** | testing, correctness | 80/75 | gated_auto | Y |
+> P1-28 through P1-53 (all fixed / bugs fixed) → moved to `todo-completed-fixes.md`.
 
 ## P2 — Moderate (~70 deduplicated)
 
@@ -117,24 +59,17 @@
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P2-1 | domain | domain/session.py:95 | SessionManager.delete mutates in-memory state before disk deletion; partial failure leaves ghost session **[FIXED — Batch B 2026-06-21: disk-first delete ordering]** | correctness, reliability | 75 | gated_auto | Y |
 | P2-2 | domain | domain/session.py:65 | SubagentRecord.from_storage_dict direct private-attr access to SubagentManager._subagents | correctness, maintainability, kieran-python | 75 | manual | Y |
 | P2-3 | domain | domain/chain.py:90 | _reconcile_orphan_tool_results does not deduplicate repeated TOOL_RESULT with same tool_call_id | correctness | 50 | advisory | Y |
 | P2-4 | domain | domain/message.py:110 | record_streamed_message silently discards TOOL_CALL MessageType messages, risking orphaned TOOL_RESULT on replay | correctness | 50 | advisory | Y |
 | P2-5 | domain | domain/session.py:133 | SessionManager.load doesn't verify loaded session.id matches requested session_id — keying by disk-supplied id | adversarial | 75 | advisory | Y |
 | P2-6 | domain | domain/message.py:100 | THINKING-typed stream chunk silently drops tool_calls, orphans subsequent TOOL_RESULT and triggers reconcile-prune | adversarial | 50 | advisory | Y |
 | P2-7 | domain | domain/session.py:38 | Concurrentmut — Session.messages property rebuilds list every call during streaming → potential torn snapshot | adversarial | 50 | advisory | Y |
-| P2-8 | domain | domain/session.py:56 | Chain deserialization in Session.from_storage_dict not individually guarded — one corrupt chain aborts whole session load **[FIXED — Batch B 2026-06-21: per-chain try/except]** | reliability | 75 | gated_auto | Y |
-| P2-9 | domain | domain/message.py:76 | Message.from_storage_dict raises on unknown role/type or usage schema drift — single malformed message kills session recovery **[FIXED — Batch B 2026-06-21: enum tolerance, role→SYSTEM, type→TEXT, metadata warning]** | reliability | 75 | gated_auto | Y |
 | P2-10 | domain | domain/todo.py:150 | TodoStore.from_storage_dict raises on unknown status — one bad todo aborts session recovery | reliability | 75 | manual | Y |
 | P2-11 | domain | domain/agent.py:75 | Inconsistent serialization method naming across domain models (to_dict vs to_storage_dict vs both) | maintainability | 75 | gated_auto | Y |
 | P2-12 | domain | domain/session.py:8 | Domain layer imports from agents layer — creating a domain↔agents circular dependency | maintainability | 50 | manual | Y |
 | P2-13 | domain | domain/todo.py:162 | get_todo_store silently creates an orphan, unpersisted TodoStore when no store is bound | maintainability | 50 | manual | Y |
-| P2-14 | domain | domain/chain.py:32 | Chain.finish() idempotency guard and format_elapsed boundaries untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
-| P2-15 | domain | domain/agent.py:10 | AgentTypes/ModelTier from_str error paths and Agent dict round-trip untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
-| P2-16 | domain | domain/session.py:40 | Session.to/from_storage_dict round-trip and corrupt-subagent resilience untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
 | P2-17 | domain | domain/todo.py:150 (alt) | TodoStore.from_storage_dict crashes whole session on a single corrupt status field | testing | 75 | manual | N |
-| P2-18 | domain | domain/tool.py:35 | Tool.to_dict() OpenAI function-schema serialization untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | N |
 | P2-19 | domain | domain/message.py:38 | tool_calls modeled as list[dict[str, Any]] instead of a dataclass | kieran-python | 75 | manual | Y |
 | P2-20 | domain | domain/skill.py:49 | Skill.to_dict silently collapses references/scripts/assets to integer counts (lossy/asymmetric round-trip) | kieran-python | 75 | manual | Y |
 
@@ -144,20 +79,14 @@
 |---|---|---|---|---|---|---|---|
 | P2-21 | agents | agents/manager.py:246 | Exceptions in on_message UI callback silently swallowed, masking persistent mount failures | correctness, maintainability, kieran-python, reliability, agent-native | 75/100 | manual | Y |
 | P2-22 | agents | agents/manager.py:236 | Cancelled on_state_change callbacks cannot reach UI if pane not yet mounted; RUNNING transition silently dropped | correctness | 60 | manual | Y |
-| P2-23 | agents | agents/manager.py:101 | Restored INTERRUPTED records with end_time=None produce forever-growing elapsed_seconds **[FIXED — Batch B 2026-06-21: end_time/start_time normalization on INTERRUPTED migration]** | correctness | 75 | gated_auto | Y |
-| P2-24 | agents | agents/manager.py:141 | from_storage_dict outer except replays the same failing AgentTypes.from_str call as the try block **[FIXED — Batch B 2026-06-21: _restore_agent helper with isolated AgentTypes.from_str try]** | correctness | 75 | gated_auto | Y |
 | P2-25 | agents | agents/manager.py:153 | Restored records have no async_task and no on_message/on_state_change wiring; new spawns depend on sync_tabs re-wiring | correctness | 50 | manual | Y |
-| P2-26 | agents | agents/manager.py:124 | Duplicated fallback Agent construction in SubagentRecord.from_storage_dict; try/except is dead **[FIXED — Batch B 2026-06-21: consolidated into _restore_agent helper]** | maintainability, kieran-python | 75 | gated_auto | Y |
 | P2-27 | agents | agents/manager.py:181 | cancel_all and cancel_running are near-duplicates with one observable difference (state filter + on_spawn clear) | maintainability, kieran-python | 75 | manual | Y |
 | P2-28 | agents | agents/manager.py:233 | spawn()'s _run closure is a 50-line inline lifecycle that cannot be tested in isolation | maintainability | 50 | manual | Y |
 | P2-29 | agents | agents/manager.py:201 | spawn() parameter 'agent_type' is misleading — it is actually the registry name lookup key | maintainability | 75 | manual | Y |
 | P2-30 | agents | agents/manager.py:282 | Subagent task inherit parent's SubagentManager via ContextVar → lateral privilege escalation + sibling cancellation + unbounded sub-subagent recursion | adversarial, agent-native | 75/65 | manual | Y |
-| P2-31 | agents | agents/manager.py:163 | SubagentRecord.from_storage_dict bypasses orphan reconciliation that recent fix (commit 406e032) applied only to parent chains **[FIXED — Batch B 2026-06-21: _reconcile_orphan_tool_results now applied to subagent messages]** | adversarial | 75 | gated_auto | Y |
 | P2-32 | agents | agents/manager.py:248 | No per-subagent iteration cap or wall-clock timeout — runaway LLM tool-call loop blocks parent indefinitely and grows record.messages unbounded | adversarial, reliability | 75 | manual | Y |
 | P2-33 | agents | agents/manager.py:169 | SubagentManager._subagents never pruned — unbounded memory growth and O(N) sidebar rebuild per dynamic-system-prompt call | adversarial | 100 | manual | Y |
-| P2-34 | agents | agents/manager.py:191 | cancel_running/cancel_one return before cancellation cleanup completes → fire-and-forget on_state_change(INTERRUPTED) races UI teardown **[FIXED — Batch B 2026-06-21: flush_state_callbacks() primitive + async caller updates]** | adversarial | 75 | gated_auto | Y |
 | P2-35 | agents | agents/manager.py:120 | Parallel subagent spawn + save_active race: tool_calls list reference snapshot via deepcopy may persist inconsistent message state | adversarial | 50 | advisory | Y |
-| P2-36 | agents | agents/manager.py:150 (alt) | Persistence replay silently accepts state=PENDING → restored record stays non-terminal forever → _tick_timer runs indefinitely **[FIXED — duplicate of P1-1, characterized in Batch B 2026-06-21: PENDING→INTERRUPTED migration verified by characterization test]** | adversarial | 50 | gated_auto | Y |
 | P2-37 | agents | agents/manager.py:294 | wait() has no timeout — a hung subagent stream blocks the caller indefinitely | reliability | 75 | manual | N |
 | P2-38 | agents | agents/manager.py:243 | messages_mounted counter incremented before on_message awaits, drifts on failure | reliability | 75 | manual | N |
 | P2-39 | agents | agents/manager.py:154 | from_storage_dict raises uncaught KeyError on data['id'] and ValueError on unknown state | reliability | 75 | manual | N |
@@ -170,10 +99,6 @@
 | P2-46 | agents | agents/manager.py:188 | cancel_all() mutates self.on_spawn — unrelated side effect on a cancel path | kieran-python | 75 | manual | Y |
 | P2-47 | agents | agents/manager.py:279 | record.async_task = None # set below dead assignment plus timing race during on_spawn | kieran-python, maintainability, agent-native | 75/100 | manual | Y |
 | P2-48 | agents | agents/manager.py:191 (alt) | cancel_all and cancel_running duplicate cancel logic — single non-terminal status set diverges silently | kieran-python | 50 | manual | Y |
-| P2-49 | agents | agents/manager.py:63 | format_subagent_attrs escape + elapsed branches untested; security boundary for XML injection **[FIXED — Batch C 2026-06-21: `"` now escaped via `entities={'"': '&quot;'}`]** | testing | 100 | gated_auto | Y |
-| P2-50 | agents | agents/manager.py:101 (alt) | elapsed_seconds property has three branches, none tested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
-| P2-51 | agents | agents/manager.py:263 | Empty/blank content handling in result assignment not pinned by test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-52 | agents | agents/manager.py:188 (alt) | cancel_all clearing on_spawn=None is an unobserved side effect with no test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
 
 ### tools/
 
@@ -187,18 +112,13 @@
 | P2-58 | tools | tools/todo.py:126 | Shared todo store has no ownership/authz — any agent can delete or rewrite another agent's tasks | adversarial | 50 | advisory | Y |
 | P2-59 | tools | tools/web_fetch.py:11 | Module-level os.environ mutation on import (LITELLM_LOCAL_MODEL_COST_MAP) | adversarial, kieran-python | 75 | advisory | Y |
 | P2-60 | tools | tools/exec.py:44 | execute_command uses hardcoded default working_directory='.' while sibling tools read defaults from get_config() | maintainability | 65 | manual | Y |
-| P2-61 | tools | tools/ast.py:61 | Duplicated XML helper functions across ast.py and file_manipulation.py — _xml_attr, _cdata_text, _count_diff_changes **[FIXED — safe_auto sweep 2026-06-21]** | maintainability, kieran-python | 100/80 | safe_auto | N |
 | P2-62 | tools | tools/ast.py:134 | _format_edit_result (ast.py) and _format_edit_result_content (file_manipulation.py) are duplicated formatters with divergent replace_all behavior | maintainability, kieran-python | 90/80 | manual | N |
 | P2-63 | tools | tools/file_manipulation.py:221 (alt) | Post-write callback invocation duplicated and behaviorally inconsistent between ast and file_manipulation tools | maintainability | 85 | manual | N |
 | P2-64 | tools | tools/ast.py:23 | _get_function_sent_hashes is unbounded module-global state with no reset path | maintainability, performance, kieran-python | 75/50 | manual | Y |
 | P2-65 | tools | tools/__init__.py:84 | Inconsistent tool registration pattern: most tools module-level instances, three are builder functions called once | maintainability | 75 | manual | Y |
 | P2-66 | tools | tools/ast.py:400 | Escape discipline inconsistent: ast.py mixes _xml_attr and escape in same element; file_manipulation.py escapes nothing in error text | maintainability | 60 | manual | Y |
-| P2-67 | tools | tools/file_manipulation.py:307 | glob_tool description claims results sorted by modification time but code sorts alphabetically **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 75 | safe_auto | Y |
 | P2-68 | tools | tools/search.py:129 | Grep early-break on max_results leaves remaining as_completed tasks running (resource leak / awaited) | correctness, performance | 50 | gated_auto | Y |
-| P2-69 | tools | tools/file_manipulation.py:38 (alt) | execute_read_tool treats offset=0 silently and lacks validation for non-positive offset/limit **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 50 | safe_auto | Y |
-| P2-70 | tools | tools/file_manipulation.py:162 | execute_edit_tool replace_all=true branch, multiple_matches branch, and generic Exception error path untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 80 | gated_auto | Y |
 | P2-71 | tools | tools/mcp_resource.py:28 | execute_read_mcp_resource has no error handling around manager.read_resource — test enshrines the bug | testing | 85 | manual | Y |
-| P2-72 | tools | tools/rag.py:107 | execute_rag_search ValueError branch and generic Exception embedding branch untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-73 | tools | tests/test_rag_tools.py:85 | Weak assertion in test_rag_search_with_results — `assert "result" in result.content` is vacuous | testing | 75 | advisory | Y |
 | P2-74 | tools | tests/test_file_manipulation.py:10 | Brittle implementation-coupled mock patches aiofiles.open with FakeAsyncFile that ignores mode semantics | testing | 60 | advisory | Y |
 | P2-75 | tools | tools/web_fetch.py:235 | _choice_content duck-types litellm response as object and falls back to str(response) — leaks ModelResponse repr as the answer | kieran-python | 80 | manual | Y |
@@ -220,23 +140,16 @@
 | P2-86 | llm | llm/client.py:326 (alt) | tool_call_id empty-string collision: provider deltas without id produce duplicate tool_call_ids that strict providers 400 on | adversarial | 75 | manual | Y |
 | P2-87 | llm | llm/client.py:284 | Shared mutable tool_calls list: executor reads tc['id'] before stream finalizes it, producing tool_call_id mismatch on replay | adversarial | 50 | manual | Y |
 | P2-88 | llm | llm/client.py:126 | THINKING replay as assistant content elevates tampered history into a privileged channel | adversarial | 50 | advisory | Y |
-| P2-89 | llm | llm/dynamic_system_prompt.py:22 | Dynamic system prompt cache keys on time but not cwd — stale directory tree after chdir within 5s window **[FIXED — Batch C 2026-06-21: cache now keys on (cwd, expiry, tree)]** | adversarial | 75 | gated_auto | Y |
 | P2-90 | llm | llm/client.py:36 | classify_error echoes raw provider exception text into the TUI — may include URLs, request bodies | kieran-python, adversarial | 50/25 | advisory | Y |
-| P2-91 | llm | llm/dynamic_system_prompt.py:32 | Directory tree and cwd injected raw into system prompt — file/path names can break XML framing **[FIXED — Batch C 2026-06-21: cwd and tree now XML-escaped]** | security | 75 | gated_auto | Y |
 | P2-92 | llm | llm/providers.py:224 | Provider base_url is user-controlled and unvalidated — API key leaked via Authorization header to arbitrary host | security | 50 | manual | Y |
 | P2-93 | llm | llm/static_system_prompt.py:9 | User-supplied system_prompt interpolated raw into <instructions> wrapper without escaping | security, kieran-python | 50 | advisory | Y |
 | P2-94 | llm | llm/client.py:393 | Tool result content is appended to api_messages without any content framing — indirect prompt-injection sink | security | 50 | advisory | Y |
-| P2-95 | llm | llm/client.py:467 | Redundant except branch: CancelledError is fully subsumed by BaseException (byte-identical bodies) **[FIXED — safe_auto sweep 2026-06-21]** | maintainability | 95 | safe_auto | Y |
 | P2-96 | llm | llm/client.py:402 | stream_response is a god function mixing 7+ responsibilities | maintainability | 75 | manual | Y |
 | P2-97 | llm | llm/client.py:436 | Model-qualification helper `f'{provider}/{model}' if provider else model` is duplicated (client.py:436 + providers.py:144) | maintainability | 85 | manual | Y |
 | P2-98 | llm | llm/providers.py:161 | resolve_embedding_ref returns a heterogeneous tuple union that callers must positionally destructure | maintainability | 75 | manual | Y |
 | P2-99 | llm | llm/client.py:24 | _TOOLS_WITHOUT_TIMEOUT hardcodes tool identity in the LLM client layer | maintainability | 80 | manual | Y |
 | P2-100 | llm | llm/client.py:483 | Loop-continuation decision relies on side-effect flag set in a sibling task (dual signaling via queues+Event) | maintainability | 60 | manual | Y |
 | P2-101 | llm | llm/dynamic_system_prompt.py:7 | Cross-module imports: dynamic_system_prompt reaches into agents.manager and domain.todo internals | maintainability | 60 | manual | Y |
-| P2-102 | llm | llm/static_system_prompt.py:22 | build_static_system_prompt and _get_os_info OS branches untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-103 | llm | llm/client.py:56 | classify_error missing BadGatewayError branch test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-104 | llm | llm/client.py:114 | _history_to_api_messages THINKING-between-tool_calls-and-result invariant untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-105 | llm | llm/client.py:210 | _TOOLS_WITHOUT_TIMEOUT bypass branch in _execute_tool untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-106 | llm | llm/client.py:86 | OpenAI chat-message shape passed around as bare dict[str, Any] — no TypedDict | kieran-python | 50 | manual | Y |
 | P2-107 | llm | llm/client.py:179 | _execute_tool accesses typed dict fields without a TypedDict guard (tc["function"]["name"] KeyError-prone) | kieran-python | 50 | manual | Y |
 | P2-108 | llm | llm/dynamic_system_prompt.py:13 | Module-level _TREE_CACHE global has no concurrency guard | kieran-python | 50 | manual | Y |
@@ -264,12 +177,8 @@
 | P2-125 | mcp | mcp/__init__.py:169/181 | Triple-duplicated 'manager unavailable / server not connected → error ExecutorResult' pattern | maintainability | 60 | manual | Y |
 | P2-126 | mcp | mcp/schema.py:50 | make_mcp_executor typed Callable[..., Any], abandoning signature guarantees documented in docstring | maintainability, kieran-python | 55/75 | manual | Y |
 | P2-127 | mcp | config.py:88 / mcp/example_server.py | Example MCP server is wired as a production default in user config | maintainability | 60 | manual | Y |
-| P2-128 | mcp | mcp/__init__.py:113 (alt) | _await_runner timeout/cancel branch untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-129 | mcp | mcp/example_server.py:44 | example_server.py has zero test coverage despite being the MCP integration entrypoint **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-130 | mcp | mcp/__init__.py:176 (alt) | Tool-call failure semantics undefined and untested — call_tool does not catch exceptions | testing | 75 | manual | Y |
-| P2-131 | mcp | mcp/schema.py:30 | convert_mcp_tool defaults missing type in property schema to "string", misrepresenting schema to the LLM **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 75 | safe_auto | Y |
 | P2-132 | mcp | mcp/__init__.py:128/187 (alt) | SSE MCP server URLs unvalidated — no scheme/host allowlist | security | 75 | gated_auto | Y |
-| P2-133 | mcp | mcp/__init__.py:82 | Truncated exception text stored in _server_status may leak command/path/env fragments locally **[FIXED — safe_auto sweep 2026-06-21]** | security | 50 | safe_auto | Y |
 | P2-134 | mcp | mcp/__init__.py:43 | Loose dict[str, dict] for known tool/server-status shapes; should use TypedDict/dataclass | kieran-python | 75 | manual | Y |
 | P2-135 | mcp | mcp/__init__.py:51 | servers: dict[str, dict] config shape not modeled | kieran-python | 75 | manual | Y |
 | P2-136 | mcp | mcp/__init__.py:79 | Tool-count prefix matching is fragile across underscore-bearing names | kieran-python | 75 | manual | Y |
@@ -281,16 +190,10 @@
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
 | P2-139 | rag | rag/indexer.py:184 | Test-embedding pre-check consumes an embedding API call/tokens on every index run | correctness | 75 | advisory | Y |
-| P2-140 | rag | rag/store.py:178 | np.load on vectors file does not set allow_pickle=False — malicious pickle RCE primitive **[FIXED — safe_auto sweep 2026-06-21]** | correctness, security | 60 | safe_auto | Y |
-| P2-141 | rag | rag/store.py:325 | upsert_file appends new embeddings in arbitrary order when a file's chunks interleave with others — vector/content mismatch **[FIXED — Batch C 2026-06-21: uses `_chunk_ids_for_file` to scope new embeddings]** | correctness | 60 | gated_auto | Y |
 | P2-142 | rag | rag/store.py:143 | DB commit at upsert succeeds before vectors are written, leaving chunk/vector mismatch on _save_vectors failure | correctness | 50 | manual | Y |
-| P2-143 | rag | rag/chunker.py:85 | Chunker end_line off-by-one when chunk boundary aligns exactly with a newline **[FIXED — Batch C 2026-06-21: check `content[end_char - 1]` not `content[end_char]`]** | correctness | 75 | gated_auto | Y |
-| P2-144 | rag | rag/indexer.py:87 | update_file fails to persist new hash after embedding failure, freezing the file out of future re-index **[FALSE-POSITIVE — Batch C 2026-06-21: old hash ≠ new content hash triggers re-index on next `index_project` run]** | correctness | 65 | gated_auto | Y |
-| P2-145 | rag | rag/indexer.py:156 | Indexing with empty discovered-files result wipes the existing index **[FIXED — Batch C 2026-06-21: removed `store.clear()`, now just touches `last_indexed`]** | correctness | 70 | gated_auto | Y |
 | P2-146 | rag | rag/embedder.py:110 | asyncio.sleep retry without backoff in fastembed path; litellm retry doubles wait but ignores actual exception type | correctness | 50 | manual | Y |
 | P2-147 | rag | rag/indexer.py:256 (alt) | Non-destructive upsert should use per-file upsert_file — eliminate the hash-restore band-aid AND the empty-file delete_by_file special-casing | maintainability | 75 | manual | Y |
 | P2-148 | rag | rag/embedder.py:51 | Embedder dispatches on ad-hoc tuple arity (len(ref) == 2 vs 4), discarding then re-reading ref[0] | maintainability, kieran-python | 75 | manual | Y |
-| P2-149 | rag | rag/indexer.py:161 | Dead assignment: Embedder constructed in empty-files branch of _index_project_impl is never used **[FIXED — safe_auto sweep 2026-06-21]** | maintainability | 100 | safe_auto | Y |
 | P2-150 | rag | rag/indexer.py:28 | Module-global _indexing mutable flag used as a reentrancy guard (not async-safe; not project-scoped) | maintainability, kieran-python | 75 | manual | Y |
 | P2-151 | rag | rag/store.py:100 | Duplicated chunk-insertion SQL between store.upsert and store.upsert_file | maintainability | 75 | manual | Y |
 | P2-152 | rag | rag/indexer.py:54 (alt) | update_file duplicates the read→chunk→embed→store pipeline of _index_project_impl | maintainability | 50 | manual | Y |
@@ -303,15 +206,6 @@
 | P2-159 | rag | rag/indexer.py:257 (alt) | Full index_project flush wipes and re-inserts every chunk even on incremental runs | performance | 50 | manual | Y |
 | P2-160 | rag | rag/embedder.py:81 | _embed_fastembed converts each vector to a Python list, then store re-converts to numpy | performance | 50 | manual | Y |
 | P2-161 | rag | rag/indexer.py:241 | Per-file embed() calls prevent cross-file batching for API providers | performance | 50 | manual | Y |
-| P2-162 | rag | rag/store.py:236 | search dimension-mismatch error path is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-163 | rag | rag/store.py:226 | search vector/chunk count mismatch (stale-index truncation) is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-164 | rag | rag/indexer.py:190 | Embedding pre-check unexpected format branch in index_project is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-165 | rag | rag/embedder.py:105 | Litellm ImportError branch in _embed_litellm is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-166 | rag | rag/embedder.py:104 | aembedding returning empty/malformed response.data is untested (would surface as ValueError deep in store) **[FIXED — Batch C 2026-06-21: empty response.data now raises EmbeddingError]** | testing | 75 | gated_auto | Y |
-| P2-167 | rag | rag/embedder.py:49 | Embedding batching (BATCH_SIZE=100) never tested with >100 texts **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-168 | rag | rag/indexer.py:392 | _read_and_hash max_file_size branch is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-169 | rag | rag/indexer.py:120 | _indexing re-entrancy guard returns empty IndexResult with no test **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P2-170 | rag | rag/store.py:405 | delete_by_file vector-realignment branch (len mismatch) untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P2-171 | rag | rag/embedder.py:22 | _resolve_ref returns a discriminated-union-of-tuples and call sites dispatch on len(ref) — fragile, untyped shape | kieran-python | 75 | manual | Y |
 | P2-172 | rag | rag/indexer.py:210 | Repeated silent except Exception: pass swallows hash-update and progress-callback errors with no diagnostic | kieran-python | 75 | manual | Y |
 | P2-173 | rag | rag/indexer.py:105 | progress_callback: Callable | None carries no parameter contract | kieran-python | 75 | manual | Y |
@@ -325,17 +219,13 @@
 | P2-181 | rag | rag/chunker.py:69 | Chunker uses if remaining <= chunk_size: pass elif ... — dead branch + inverted logic obscures intent | kieran-python | 75 | manual | Y |
 | P2-182 | rag | rag/indexer.py:184 (alt) | embed(["test"]) probe runs on every index — burns a paid API call before doing useful work | kieran-python | 75 | manual | Y |
 | P2-183 | rag | rag/store.py:451 | import fnmatch is inside _match_pattern — re-resolved on every search call | kieran-python | 75 | manual | Y |
-| P2-184 | rag | rag/chunker.py:100 | chunk_overlap >= chunk_size makes chunker effectively stall (advances 1 char per iteration) **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 60 | gated_auto | Y |
 | P2-185 | rag | rag/store.py:73 | init_db and _get_conn rebuild DB without clearing stale vectors.npy, leaving inconsistent store | correctness | 50 | manual | Y |
 | P2-186 | rag | rag/store.py:405 (alt) | delete_by_file leaves stale vectors when chunk table is empty after deletion | correctness | 45 | manual | Y |
-| P2-187 | rag | rag/embedder.py:128 | embed_single on empty text raises IndexError (embed returns [] unconditionally) **[FIXED — Batch C 2026-06-21: embed_single now raises EmbeddingError, not IndexError]** | correctness | 50 | manual | Y |
 
 ### screens/
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P2-188 | screens | screens/settings.py:852 | Editing a provider/MCP entry and changing its alias/name leaves the stale old entry behind **[FIXED — duplicate of P1-53, verified in Batch C 2026-06-21]** | correctness, testing | 75/80 | gated_auto | Y |
-| P2-189 | screens | screens/settings.py:902 | Renaming a provider/MCP to an alias that already exists silently overwrites the other entry **[FIXED — duplicate of P1-53, verified in Batch C 2026-06-21]** | correctness | 75 | gated_auto | Y |
 | P2-190 | screens | screens/settings.py:19 | _list_fastembed_models swallows every exception with bare except Exception | kieran-python, agent-native | 75 | manual | Y |
 | P2-191 | screens | screens/settings.py:219 | _add_model_entry wraps query_one(...).focus() in except Exception: pass (should narrow to NoMatches) | kieran-python | 75 | manual | Y |
 | P2-192 | screens | screens/settings.py:267 | _remove_model_entry uses try/except Exception: continue to locate a row | kieran-python | 75 | manual | Y |
@@ -354,13 +244,6 @@
 | P2-205 | screens | screens/settings.py:766 | _items_cache is state-shared between Providers and MCP keyword lists with no guard | maintainability | 50 | manual | Y |
 | P2-206 | screens | screens/settings.py:28 (input_modal) | InputModal conform: Pressing Cancel vs submitting empty value both return None (indistinguishable) | correctness, testing | 50 | advisory | Y |
 | P2-207 | screens | screens/settings.py:217 | Focus call after mounting model row is swallowed by bare except — newly added model rows are never focused | correctness | 75 | manual | Y |
-| P2-208 | screens | screens/input_modal.py:7 | InputModal has zero test coverage (all branches) **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
-| P2-209 | screens | screens/picker.py:15 | OptionPicker has zero test coverage **[FIXED — testing-gap sweep 2026-06-21]** | testing | 100 | gated_auto | Y |
-| P2-210 | screens | screens/settings.py:282 | NewProviderForm model-row removal branch is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 90 | gated_auto | Y |
-| P2-211 | screens | screens/settings.py:286 | NewProviderForm on_input_changed / on_select_changed state-sync untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 85 | gated_auto | Y |
-| P2-212 | screens | screens/settings.py:541 | ConfirmScreen 'Close and Save' path and _on_confirm_discard('save_close') untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 85 | gated_auto | Y |
-| P2-213 | screens | screens/settings.py:859 | SettingsScreen.on_button_pressed routing branches untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 80 | gated_auto | Y |
-| P2-214 | screens | screens/settings.py:1064 | SettingsScreen picker flows (theme/personality/default_model/embedding) untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 
 ### Cross-module
 
@@ -386,8 +269,6 @@
 | P3-1 | domain | domain/message.py:148 | TITLE branch in record_streamed_message is unreachable; THINKING content overwrites are not anchored to a turn | correctness | 50 | advisory | Y |
 | P3-2 | domain | domain/message.py:44 | Message.to_dict coerces falsy content (including empty TOOL_RESULT content) to None — strict providers may reject | correctness, kieran-python | 50 | advisory | Y |
 | P3-3 | domain | domain/chain.py:23 | Chain.start_time/end_time use time.monotonic(), producing meaningless elapsed values after session reload from disk | correctness, kieran-python, maintainability | 75 | manual | Y |
-| P3-4 | domain | domain/agent.py:94 | Agent.from_dict raises KeyError on missing 'allowed_tools' despite defaulting siblings ('allowed_skills') — inconsistent strictness **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 100 | safe_auto | Y |
-| P3-5 | domain | domain/agent.py:19 | AgentTypes.from_str error message lists t.value.lower() but other from_str variants list raw values; misleading on failure **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 100 | safe_auto | Y |
 | P3-6 | domain | domain/todo.py:76 (alt) | TodoTask IDs use only 8 hex chars (32 bits) — collision-prone under parallel subagent creation | correctness | 75 | advisory | Y |
 | P3-7 | domain | domain/todo.py:116 (alt) | TodoStore.update rejects field-only updates on terminal tasks; spec-vs-behavior mismatch with 'fields other than status' documentation | correctness | 75 | advisory | Y |
 | P3-8 | domain | domain/todo.py:33 | VALID_TRANSITIONS omits self-transition for terminal statuses, but update() already short-circuits; OPEN→OPEN etc. is rejected when explicitly requested | correctness | 50 | advisory | Y |
@@ -395,7 +276,6 @@
 | P3-10 | domain | domain/skill.py:49 (alt) | Skill.to_dict emits reference/script/asset COUNTS, not the resources themselves — fields unreadable from serialized form | correctness | 75 | advisory | Y |
 | P3-11 | domain | domain/skill.py:32 (alt) | Skill.validate allows 'content', 'requires', 'scripts', 'references', 'assets' to be any type without validation | correctness | 75 | advisory | Y |
 | P3-12 | domain | domain/tool.py:33 | Tool.to_dict always emits strict=true and additionalProperties flag; strict=false tools (e.g., MCP) may break provider schema validation | correctness | 50 | advisory | Y |
-| P3-13 | domain | domain/message.py:148 (alt) | record_streamed_message SYSTEM-role and catch-all branches untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 50 | gated_auto | N |
 | P3-14 | domain | domain/message.py:78 (alt) | Usage(**data) in Message.from_storage_dict not resilient to schema drift — untested | testing | 50 | manual | N |
 | P3-15 | domain | tests/test_streaming_messages.py:84 | test_record_streamed_message-updates_cumulative_snapshots asserts history length indirectly via list comprehension, not appended-flag returns | testing | 50 | advisory | N |
 | P3-16 | domain | domain/todo.py:64 (alt) | Concurrent-access behavior of TodoStore and SessionManager is undocumented and untested | testing | 50 | advisory | N |
@@ -429,7 +309,6 @@
 
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
-| P3-37 | tools | tools/ast.py:423 | execute_get_file_skeleton has a no-op parent_node reassignment (dead code path) **[FIXED — safe_auto sweep 2026-06-21]** | correctness, maintainability, kieran-python | 75/100 | safe_auto | Y |
 | P3-38 | tools | tools/web_fetch.py:11 (alt) | Module-level os.environ mutation on import in web_fetch | adversarial, kieran-python | 75 | advisory | Y |
 | P3-39 | tools | tools/ast.py:957 | execute_rename_symbol recomputes _ident_chars set on every call | maintainability | 75 | manual | Y |
 | P3-40 | tools | tools/subagent.py:53 (alt) | subagent.py parameter type shadows builtin and is called as positional keyword in registry | maintainability | 60 | manual | Y |
@@ -452,9 +331,6 @@
 | P3-52 | llm | llm/client.py:34 | classify_error ordering silently treats ServiceUnavailableError before generic APIError | kieran-python | 50 | manual | Y |
 | P3-53 | llm | llm/client.py:415 (alt) | Dynamic system prompt appended after history in api_messages | maintainability | 40 | manual | Y |
 | P3-54 | llm | llm/client.py:235 | _stream_task closure-based state machine is hard to unit-test (7 nonlocals) | maintainability | 55 | manual | Y |
-| P3-55 | llm | tests/test_streaming_messages.py | _history_to_api_messages orphan/tool_calls invariants untested **[FIXED — testing-gap sweep 2026-06-21]** | maintainability (testing) | 65 | gated_auto | Y |
-| P3-56 | llm | llm/client.py:34 (alt) | classify_error exception-type ladder is exercised by neither test nor type discipline **[FIXED — testing-gap sweep 2026-06-21]** | maintainability (testing) | 55 | gated_auto | Y |
-| P3-57 | llm | llm/client.py:467 (alt) | Stream-cancel propagation path (the duplicated except block) has no concurrency test **[FIXED — testing-gap sweep 2026-06-21]** | maintainability (testing) | 60 | gated_auto | Y |
 | P3-58 | llm | llm/client.py:74 (alt) | _validate_tool_args parameter lacks value-type annotation | kieran-python | 75 | manual | Y |
 | P3-59 | llm | llm/client.py:295 (alt) | Streaming response object never closed via async ctx (residual after reliability fix) | maintainability | — | manual | N |
 | P3-60 | llm | llm/providers.py:236 (alt) | Discovery cache permanently caches empty list on transient network failure | reliability | 75 | manual | Y |
@@ -469,7 +345,6 @@
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
 | P3-66 | mcp | mcp/__init__.py:79 | Tool count uses prefix match startswith("mcp_{server_name}_"), over-counting when one server name is underscore-prefixed substring of another | correctness, kieran-python | 75 | manual | Y |
-| P3-67 | mcp | mcp/__init__.py:62 | _server_status is never cleared, leaving stale entries across restarts and removed servers **[FIXED — safe_auto sweep 2026-06-21]** | correctness | 75 | safe_auto | Y |
 | P3-68 | mcp | mcp/__init__.py:152 (alt) | Resource URI mapping overwrites on collision (silent) — flYou earlier flagged this as P2-115; lower-tier variants | maintainability | 75 | manual | Y |
 | P3-69 | mcp | mcp/example_server.py:65 | example_server read_resource declares Iterable[...] but returns a list | kieran-python | 50 | manual | Y |
 | P3-70 | mcp | mcp/example_server.py:75 | Entry-point function named _run despite being the script's main | kieran-python | 25 | manual | Y |
@@ -484,9 +359,6 @@
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
 | P3-76 | rag | rag/indexer.py:279 | Incremental path with deleted files skews stats.files_deleted: deletes already-wiped rows from upsert | correctness | 55 | manual | Y |
-| P3-77 | rag | rag/store.py:313 | record_index_duration is never directly tested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 50 | gated_auto | Y |
-| P3-78 | rag | rag/embedder.py:128 (alt) | embed_single public method is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
-| P3-79 | rag | rag/store.py:273 | _cosine_similarity zero-vector guard is untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 75 | gated_auto | Y |
 | P3-80 | rag | rag/indexer.py:184 (alt 2) | Throwaway embed(["test"]) probe runs on every index_project call (advisory — comment documents the deliberate tradeoff) | performance | 25 | advisory | Y |
 
 ### screens/
@@ -498,15 +370,11 @@
 | P3-83 | screens | screens/settings.py:28 (renamed) | Form classes named New* but they also edit existing entries | maintainability | 50 | manual | Y |
 | P3-84 | screens | screens/settings.py:984 | TIERS is a magic list of opaque domain names with no docstring | maintainability | 60 | manual | Y |
 | P3-85 | screens | screens/screens/__init__.py:1 | __init__.py for screens package is empty — no public API surface | maintainability | 50 | manual | Y |
-| P3-86 | screens | screens/picker.py:29 | OptionPicker builds Option(...) objects twice from the same items (compose + filter) **[FIXED — safe_auto sweep 2026-06-21]** | maintainability | 75 | safe_auto | Y |
 | P3-87 | screens | screens/settings.py:453 (alt) | on_button_pressed in NewMCPServerForm treats any non-save button as cancel | maintainability | 50 | manual | Y |
 | P3-88 | screens | screens/settings.py:124 | NewProviderForm._initial and NewMCPServerForm._initial typed as bare dict | kieran-python | 50 | manual | Y |
 | P3-89 | screens | screens/picker.py:12 | PickerItem.id shadows the id builtin | kieran-python | 50 | manual | Y |
 | P3-90 | screens | screens/settings.py:1253 | _do_save constructs error string with a generated bullet but never strips existing bullets | kieran-python | 50 | manual | Y |
 | P3-91 | screens | screens/settings.py:931 (alt) | _render_mcp_list duplicates _render_keyed_list with a different action prefix (residual variance) | kieran-python | 50 | manual | Y |
-| P3-92 | screens | screens/settings.py:453 (Cancel branch untested) | NewMCPServerForm Cancel button and Escape paths untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 90 | gated_auto | Y |
-| P3-93 | screens | screens/settings.py:1274 | key_ctrl_s save-in-place path untested **[FIXED — testing-gap sweep 2026-06-21]** | testing | 85 | gated_auto | Y |
-| P3-94 | screens | screens/settings.py:773 | SIM117: nested with statements should be combined into a single with — pyproject.toml ruff violation **[NO-OP — safe_auto sweep 2026-06-21: already combined into `with Vertical(...), Horizontal(...):` form]** | project-standards | 100 | safe_auto | N |
 | P3-95 | screens | screens/picker.py:24 | OptionPicker.compose is missing its return type annotation | project-standards | 100 | manual | Y |
 
 ## Residual Risks (advisory-only — no severity, no autofix action)
