@@ -2111,6 +2111,93 @@ async def _run_stream(response, *, filtered_tools=None):
     return messages, api_messages
 
 
+class MidStreamFallbackErrorTest(unittest.IsolatedAsyncioTestCase):
+    """litellm raises ``MidStreamFallbackError`` when its internal chunk parser
+    hits an ``IndexError`` (notably on a trailing usage-only chunk whose
+    ``choices`` array is empty — ``is_chunk_non_empty`` accesses ``choices[0]``
+    with no length guard).  Because stupidex calls ``litellm.acompletion``
+    directly (no Router), the fallback signal can never be consumed; without
+    mitigation it surfaces to the user as a spurious "Service Unavailable"
+    after partial content has already been delivered.  These tests pin the
+    contract: benign post-delivery mid-stream errors terminate cleanly;
+    pre-first-chunk and genuine connection errors still propagate.
+    """
+
+    def _mid_stream_fallback(
+        self, *, message: str, is_pre_first_chunk: bool = False
+    ) -> "litellm.exceptions.MidStreamFallbackError":
+        from litellm.exceptions import MidStreamFallbackError
+
+        original = litellm.APIConnectionError(
+            message=message,
+            model="openai/mimo-v2.5",
+            llm_provider="openai",
+            request=httpx.Request(method="POST", url="https://api.openai.com/v1/"),
+        )
+        return MidStreamFallbackError(
+            message=message,
+            model="openai/mimo-v2.5",
+            llm_provider="openai",
+            original_exception=original,
+            generated_content="hello",
+            is_pre_first_chunk=is_pre_first_chunk,
+        )
+
+    async def test_mid_stream_index_error_terminates_cleanly(self):
+        """A ``MidStreamFallbackError`` raised by litellm *after* content has
+        been delivered (the empty-choices usage-chunk IndexError) must not
+        surface to the consumer; the stream ends cleanly and delivered content
+        survives."""
+        exc = self._mid_stream_fallback(
+            message="OpenAIException - list index out of range",
+            is_pre_first_chunk=False,
+        )
+
+        async def response():
+            yield chunk(content="hello")
+            raise exc
+
+        messages, _ = await _run_stream(response)
+
+        text_contents = [m.content for m in messages if m.type == MessageType.TEXT]
+        self.assertTrue(
+            any(c == "hello" for c in text_contents),
+            f"partial content must survive; got {text_contents!r}",
+        )
+
+    async def test_pre_first_chunk_mid_stream_error_propagates(self):
+        """A ``MidStreamFallbackError`` raised *before* any chunk is delivered
+        must propagate so the retry layer can attempt fallback."""
+        exc = self._mid_stream_fallback(
+            message="OpenAIException - list index out of range",
+            is_pre_first_chunk=True,
+        )
+
+        async def response():
+            if False:
+                yield  # force async-generator semantics (no real yields)
+            raise exc
+
+        with self.assertRaises(litellm.ServiceUnavailableError):
+            await _run_stream(response)
+
+    async def test_mid_stream_non_index_error_propagates(self):
+        """A mid-stream ``MidStreamFallbackError`` whose signature does NOT
+        match the litellm IndexError bug (e.g. a genuine connection drop) must
+        still propagate — we must not silently swallow real failures."""
+        exc = self._mid_stream_fallback(
+            message="APIConnectionError: OpenAIException - Connection reset by peer",
+            is_pre_first_chunk=False,
+        )
+
+        async def response():
+            yield chunk(content="hello")
+            raise exc
+
+        with self.assertRaises(litellm.ServiceUnavailableError):
+            await _run_stream(response)
+
+
 class InterleavedToolCallIndexTest(unittest.IsolatedAsyncioTestCase):
     """P1-6: interleaved tool_call deltas must enqueue each index exactly once."""
 

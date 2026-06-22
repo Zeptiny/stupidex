@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 import litellm
+from litellm.exceptions import MidStreamFallbackError
 
 from stupidex.config import HOME_CONFIG_DIR, get_config
 from stupidex.domain.message import Message, MessageRole, MessageType, Usage
@@ -109,6 +110,41 @@ def _is_transient_error(exc: Exception) -> bool:
     if isinstance(status, int):
         return status in (408, 429, 500, 502, 503, 504)
     return False
+
+
+_MID_STREAM_BENIGN_SIGNATURE = "list index out of range"
+
+
+def _is_benign_midstream_litellm_error(exc: MidStreamFallbackError) -> bool:
+    """Identify the litellm empty-choices parsing bug as a benign stream end.
+
+    litellm's ``is_chunk_non_empty`` accesses ``choices[0]`` with no length
+    guard, so a trailing usage-only chunk whose ``choices`` array is empty
+    (the standard shape when ``stream_options={"include_usage": True}`` is
+    set) raises ``IndexError: list index out of range`` inside litellm's
+    chunk parser. ``exception_type`` then maps it to an ``APIConnectionError``
+    whose message embeds "list index out of range", and
+    ``_handle_stream_fallback_error`` wraps that in a
+    ``MidStreamFallbackError`` intended for a Router to fail over on.
+
+    stupidex calls ``litellm.acompletion`` directly (no Router), so the
+    fallback signal can never be consumed. When this specific signature
+    appears AFTER content has already been delivered
+    (``is_pre_first_chunk=False``), the stream has otherwise completed — the
+    error came from the trailing usage chunk, not from real content loss — so
+    terminating cleanly (delivering accumulated content) is correct rather
+    than surfacing a spurious "Service Unavailable".
+
+    Pre-first-chunk occurrences and non-matching signatures (genuine
+    connection drops, etc.) return False so they propagate to the retry /
+    error-display path unchanged.
+    """
+    if exc.is_pre_first_chunk:
+        return False
+    if _MID_STREAM_BENIGN_SIGNATURE in str(exc):
+        return True
+    orig = exc.original_exception
+    return orig is not None and _MID_STREAM_BENIGN_SIGNATURE in str(orig)
 
 
 def _validate_tool_args(tool: Tool, args: dict) -> str | None:
@@ -597,7 +633,22 @@ async def _stream_task(
             # spurious "Invalid arguments" tool error.
             await ready_q.put(copy.deepcopy(tc))
 
-        async for chunk in response:
+        stream_iter = response.__aiter__()
+        while True:
+            try:
+                chunk = await stream_iter.__anext__()
+            except StopAsyncIteration:
+                break
+            except MidStreamFallbackError as _msfe:
+                if _is_benign_midstream_litellm_error(_msfe):
+                    log.warning(
+                        "Suppressing benign litellm mid-stream error after "
+                        "partial delivery (likely an empty-choices usage chunk "
+                        "tripping an IndexError in litellm's chunk parser): %s",
+                        _msfe,
+                    )
+                    break
+                raise
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
