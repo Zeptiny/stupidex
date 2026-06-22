@@ -79,16 +79,53 @@ class TestReconcileOrphanToolResults(unittest.TestCase):
         _reconcile_orphan_tool_results(messages)
         self.assertEqual(len(messages), 0)
 
-    def test_duplicate_tool_results_for_seen_id_both_kept(self):
+    def test_duplicate_tool_results_for_seen_id_second_dropped(self):
+        """P2-3: a second TOOL_RESULT with an already-served tool_call_id is
+        dropped at replay time (strict OpenAI/Anthropic providers 400 on
+        duplicate tool_call_id in the same history)."""
         messages = [
             _assistant_with_tool_calls("tc1"),
             _tool_result("tc1"),
             _tool_result("tc1"),
         ]
         _reconcile_orphan_tool_results(messages)
-        self.assertEqual(len(messages), 3)
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0].role, MessageRole.ASSISTANT)
         self.assertEqual(messages[1].tool_call_id, "tc1")
-        self.assertEqual(messages[2].tool_call_id, "tc1")
+
+    def test_duplicate_tool_result_across_turns_second_dropped_as_orphan(self):
+        """P2-3 edge case: same tool_call_id appearing across two separate
+        turns. The second tool(tc1) is dropped — as orphan, because
+        pending_tool_call_ids was reset by the intervening assistant(content)
+        message; the duplicate-result check is not what fires here. Both
+        drop paths converge on the same outcome without firing duplicate-drop
+        log noise."""
+        messages = [
+            _assistant_with_tool_calls("tc1"),
+            _tool_result("tc1"),
+            Message(MessageRole.ASSISTANT, "intermediate", MessageType.TEXT),
+            _tool_result("tc1"),
+        ]
+        _reconcile_orphan_tool_results(messages)
+        # The first tool(tc1) is kept (paired), the second is dropped as orphan
+        # (no preceding assistant tool_calls in this turn). Both drops converge
+        # on the same outcome: only one tool(tc1) survives.
+        kept_tool_results = [m for m in messages if m.role == MessageRole.TOOL]
+        self.assertEqual(len(kept_tool_results), 1)
+        self.assertEqual(kept_tool_results[0].tool_call_id, "tc1")
+
+    def test_duplicate_tool_result_back_to_back_first_kept(self):
+        """P2-3 edge case: back-to-back duplicate — first kept, second dropped,
+        preserving order."""
+        messages = [
+            _assistant_with_tool_calls("tc1"),
+            _tool_result("tc1"),
+            _tool_result("tc1"),
+            _tool_result("tc1"),
+        ]
+        _reconcile_orphan_tool_results(messages)
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[1].tool_call_id, "tc1")
 
     def test_tool_result_before_assistant_partner_dropped(self):
         messages = [

@@ -85,19 +85,25 @@ def _reconcile_orphan_tool_results(messages: list[Message]) -> None:
     if not messages:
         return
     seen_tool_call_ids: set[str] = set()
+    seen_result_ids: set[str] = set()
     keep: list[Message] = []
     for msg in messages:
-        if (
-            msg.role.value == "tool"
-            and msg.tool_call_id
-            and msg.tool_call_id not in seen_tool_call_ids
-        ):
-            log.debug(
-                "Reconciling chain: dropping orphan TOOL_RESULT "
-                "for tool_call_id=%s (no preceding assistant tool_calls)",
-                msg.tool_call_id,
-            )
-            continue
+        if msg.role.value == "tool" and msg.tool_call_id:
+            if msg.tool_call_id in seen_result_ids:
+                log.debug(
+                    "Reconciling chain: dropping duplicate TOOL_RESULT "
+                    "for tool_call_id=%s (already seen earlier in this chain)",
+                    msg.tool_call_id,
+                )
+                continue
+            if msg.tool_call_id not in seen_tool_call_ids:
+                log.debug(
+                    "Reconciling chain: dropping orphan TOOL_RESULT "
+                    "for tool_call_id=%s (no preceding assistant tool_calls)",
+                    msg.tool_call_id,
+                )
+                continue
+            seen_result_ids.add(msg.tool_call_id)
         if msg.tool_calls:
             for tc in msg.tool_calls:
                 tid = tc.get("id")
