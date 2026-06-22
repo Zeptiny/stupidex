@@ -535,6 +535,80 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tool_msgs), 3,
                          "all three tool results must be paired with the assistant tool_calls on replay")
 
+    async def test_none_index_delta_appends_at_slot_zero(self):
+        """P2-85: a tool_call delta with `index=None` (Anthropic-via-litellm,
+        Bedrock adapters) must be coerced to `len(tool_calls)` — appends at
+        slot 0 for the first delta —而不是 raising TypeError mid-stream."""
+        async def response():
+            yield chunk(content="Reading")
+            yield chunk(tool_calls=[self._none_index_delta()])
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"result {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        messages, api_messages = await self._drive_stream(
+            response, execute_tool=fake_execute_tool
+        )
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        self.assertEqual([tc["id"] for tc in anchored["tool_calls"]], ["call-0"])
+        self.assertEqual(
+            [tc["function"]["name"] for tc in anchored["tool_calls"]], ["read"]
+        )
+
+    async def test_none_index_delta_after_prior_index_appends_next_slot(self):
+        """P2-85: when `index=None` arrives after a prior `index=0` was already
+        appended, it coerces to slot 1 (len(tool_calls) == 1)."""
+        async def response():
+            yield chunk(content="Reading two files")
+            yield chunk(tool_calls=[tool_delta(0)])
+            yield chunk(tool_calls=[self._none_index_delta(call_id="call-1")])
+            await asyncio.sleep(0.01)
+
+        async def fake_execute_tool(tc, filtered_tools):
+            return Message(
+                role=MessageRole.TOOL,
+                content=f"result {tc['id']}",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id=tc["id"],
+            )
+
+        messages, api_messages = await self._drive_stream(
+            response, execute_tool=fake_execute_tool
+        )
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        self.assertEqual(
+            {tc["id"] for tc in anchored["tool_calls"]}, {"call-0", "call-1"}
+        )
+
+    async def test_none_index_delta_without_name_or_id_does_not_crash(self):
+        """P2-85 error path: delta with `index=None`, no id, no function.name
+        still processes (appends placeholder) without crashing; downstream
+        commit filter drops the malformed entry."""
+        async def response():
+            yield chunk(content="Picking a tool")
+            yield chunk(tool_calls=[
+                SimpleNamespace(
+                    index=None,
+                    id=None,
+                    function=SimpleNamespace(name=None, arguments='{"x":1}'),
+                )
+            ])
+            yield chunk(tool_calls=[tool_delta(1)])
+            await asyncio.sleep(0.01)
+
+        messages, api_messages = await self._drive_stream(response)
+
+        anchored = await self._assistant_with_tool_calls(api_messages)
+        # The malformed placeholder is filtered out; only call-1 survives.
+        self.assertEqual([tc["id"] for tc in anchored["tool_calls"]], ["call-1"])
+
     async def _drive_stream(self, response, *, execute_tool=None):
         """Run _stream_task + _executor_task against `response` and return
         (messages, api_messages). Mirrors the setup used by the streaming
@@ -582,6 +656,16 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
             index=index,
             id=None,
             function=SimpleNamespace(name=None, arguments=arguments),
+        )
+
+    @staticmethod
+    def _none_index_delta(*, call_id: str = "call-0", name: str = "read"):
+        """P2-85: a tool_call delta with `index=None` (Anthropic-via-litellm,
+        Bedrock adapters). Must be coerced to len(tool_calls), not TypeError."""
+        return SimpleNamespace(
+            index=None,
+            id=call_id,
+            function=SimpleNamespace(name=name, arguments='{"file_path":"README.md"}'),
         )
 
     async def _assistant_with_tool_calls(self, api_messages):

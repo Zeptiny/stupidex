@@ -621,10 +621,16 @@ async def _stream_task(
 
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
-                    while tc_delta.index >= len(tool_calls):
+                    # P2-85: some providers (Anthropic-via-litellm, Bedrock
+                    # adapters) emit tool_call deltas without an explicit
+                    # `index`. Coerce None to the next append slot; otherwise
+                    # `None >= len(tool_calls)` raises TypeError mid-stream,
+                    # aborting the turn with partial tool_calls already on disk.
+                    idx = tc_delta.index if tc_delta.index is not None else len(tool_calls)
+                    while idx >= len(tool_calls):
                         tool_calls.append({"id": "", "type": "function", "function": {
                                           "name": "", "arguments": ""}})
-                    tc = tool_calls[tc_delta.index]
+                    tc = tool_calls[idx]
                     if tc_delta.id:
                         tc["id"] = tc_delta.id
                     if tc_delta.function:
@@ -633,9 +639,9 @@ async def _stream_task(
                         if tc_delta.function.arguments:
                             tc["function"]["arguments"] += tc_delta.function.arguments
 
-                    if tc["function"]["name"] and tc_delta.index not in emitted_tool_calls:
+                    if tc["function"]["name"] and idx not in emitted_tool_calls:
                         await flush_thinking()
-                        emitted_tool_calls.add(tc_delta.index)
+                        emitted_tool_calls.add(idx)
                         await msg_q.put(Message(
                             role=MessageRole.ASSISTANT,
                             content=f"Calling tool: {tc['function']['name']}",
@@ -643,12 +649,12 @@ async def _stream_task(
                             metadata={"tool_name": tc["function"]["name"]},
                         ))
 
-                    if prev_index is not None and prev_index != tc_delta.index:
+                    if prev_index is not None and prev_index != idx:
                         await flush_thinking()
                         if not tool_calls_started.is_set():
                             await commit_assistant_with_tool_calls()
                         await maybe_enqueue(prev_index)
-                    prev_index = tc_delta.index
+                    prev_index = idx
 
                     # Late-arriving parallel tool_calls (index >= snapshot
                     # length at commit time) become well-formed only after the
@@ -665,10 +671,10 @@ async def _stream_task(
                         committed_tool_calls is not None
                         and tc.get("id")
                         and tc["function"].get("name")
-                        and tc_delta.index not in committed_indices
+                        and idx not in committed_indices
                     ):
                         committed_tool_calls.append(tc)
-                        committed_indices.add(tc_delta.index)
+                        committed_indices.add(idx)
 
             if hasattr(chunk, "usage") and chunk.usage:
                 usage = Usage(
