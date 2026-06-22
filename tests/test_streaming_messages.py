@@ -2080,16 +2080,24 @@ def _tool_delta_split(index, *, id=None, name=None, arguments=None):
 
 
 async def _run_stream(response, *, filtered_tools=None):
-    """Drive _stream_task + _executor_task to completion; return (messages, api_messages)."""
+    """Drive _stream_task + _executor_task to completion; return (messages, api_messages).
+
+    Wraps the response through ``_idle_timed_stream`` exactly like
+    ``stream_response`` does in production. This is critical: the
+    ``MidStreamFallbackError`` handling lives inside ``_idle_timed_stream``,
+    NOT ``_stream_task`` — tests that pass the raw response directly to
+    ``_stream_task`` bypass the suppression path.
+    """
     msg_q = asyncio.Queue(maxsize=10)
     ready_q = asyncio.Queue()
     api_messages: list[dict] = []
     assistant_appended = asyncio.Event()
     tool_calls_started = asyncio.Event()
 
+    wrapped = llm_client._idle_timed_stream(response(), idle_timeout=300.0)
     stream_t = asyncio.create_task(
         llm_client._stream_task(
-            response(), msg_q, ready_q, api_messages,
+            wrapped, msg_q, ready_q, api_messages,
             assistant_appended, tool_calls_started,
         )
     )
@@ -2196,6 +2204,212 @@ class MidStreamFallbackErrorTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(litellm.ServiceUnavailableError):
             await _run_stream(response)
+
+    async def test_mid_stream_index_error_does_not_cut_off_remaining_stream(self):
+        """Regression: ``MidStreamFallbackError`` raised *mid-stream* (after
+        content has already been delivered, but with more content still to
+        come) must NOT terminate the stream. The empty-choices IndexError bug
+        in litellm fires per offending chunk — the underlying SSE iterator
+        is still alive, and content that arrives after the bogus chunk must
+        reach the consumer.
+
+        The original fix (commit cb63f7c) used ``break`` after suppression,
+        which silently dropped the tail of the assistant message mid-word —
+        cutting "All five explorers completed." to "All five explor" with no
+        error surfaced (the app's stream loop sees a clean exhaustion and
+        persists the truncated cumulative snapshot). The fix is ``continue``
+        instead of ``break``: the next ``__anext__`` either yields the next
+        real chunk or raises StopAsyncIteration (genuine end-of-stream), in
+        which case the loop exits naturally and end-of-stream flushes still
+        run.
+
+        We model litellm's actual behavior with a custom async-iterator
+        class whose ``__anext__`` raises the MidStreamFallbackError once
+        (mirroring the per-call raise in CustomStreamWrapper.__anext__) then
+        yields the remaining chunks on subsequent calls. Plain async
+        generators cannot express "raise then resume" — raising terminates
+        the generator — so a class is required.
+        """
+        exc = self._mid_stream_fallback(
+            message="OpenAIException - list index out of range",
+            is_pre_first_chunk=False,
+        )
+
+        class _ResumableStream:
+            """Mimics litellm CustomStreamWrapper.__anext__: raises once on
+            the offending empty-choices chunk, then continues yielding the
+            remaining chunks until exhaustion.
+
+            ``_stream_task`` treats ``delta.content`` as a delta (it does
+            ``content += delta.content``), so the post-error chunk carries
+            the *remainder* of the text — not the cumulative snapshot. This
+            mirrors real SSE streaming: each delta appends; the error chunk
+            itself carries no content.
+            """
+
+            def __init__(self):
+                self._steps = iter([
+                    ("yield", chunk(content="All five explor")),
+                    ("raise", exc),
+                    ("yield", chunk(content="ers completed.")),
+                    ("yield", chunk(usage=Usage(1, 2, 3))),
+                ])
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    action, payload = next(self._steps)
+                except StopIteration as si:
+                    raise StopAsyncIteration from si
+                if action == "raise":
+                    raise payload
+                return payload
+
+        messages, _ = await _run_stream(lambda: _ResumableStream())
+
+        # Coalesce cumulative snapshots the same way record_streamed_message
+        # would: the last TEXT message carries the final accumulated content.
+        text_messages = [m for m in messages if m.type == MessageType.TEXT and m.content]
+        final_content = text_messages[-1].content if text_messages else ""
+        # Both the pre-error fragment AND the post-error tail must survive.
+        self.assertTrue(
+            final_content.startswith("All five explor"),
+            f"pre-error content must still be delivered; got {final_content!r}",
+        )
+        self.assertEqual(
+            final_content, "All five explorers completed.",
+            "post-error content must NOT be cut off by `break`",
+        )
+        # And the final usage chunk survives too (genuine end-of-stream path).
+        self.assertTrue(
+            any(m.usage is not None for m in messages),
+            "usage from the final chunk must survive the suppressed error",
+        )
+
+    async def test_many_consecutive_benign_errors_do_not_truncate(self):
+        """A stream that emits many (>3) consecutive empty-choices chunks
+        between content chunks must NOT be truncated. The old cap of 3
+        (``_BENIGN_SUPPRESSION_LIMIT``) killed the stream after 3 errors,
+        cutting off legitimate content that arrived after a burst of
+        usage/keep-alive frames — the exact cause of "The" cut-off.
+
+        With the cap removed, each ``MidStreamFallbackError`` corresponds
+        to one consumed SSE chunk; the stream advances past each bad
+        chunk and eventually reaches the next content chunk (or
+        ``StopAsyncIteration`` for a genuine end). The idle timeout guards
+        against a truly stalled stream (no chunks at all for N seconds).
+        """
+        exc = self._mid_stream_fallback(
+            message="OpenAIException - list index out of range",
+            is_pre_first_chunk=False,
+        )
+
+        class _BurstThenContent:
+            def __init__(self):
+                self._calls = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self._calls += 1
+                if self._calls == 1:
+                    return chunk(content="prefix")
+                if 2 <= self._calls <= 10:
+                    raise exc  # 9 consecutive empty-choices chunks
+                if self._calls == 11:
+                    return chunk(content=" suffix")
+                if self._calls == 12:
+                    return chunk(usage=Usage(1, 2, 3))
+                raise StopAsyncIteration
+
+        messages, _ = await _run_stream(lambda: _BurstThenContent())
+
+        text_msgs = [m for m in messages if m.type == MessageType.TEXT and m.content]
+        final = text_msgs[-1].content if text_msgs else ""
+        self.assertEqual(final, "prefix suffix",
+                         "content after 9 consecutive benign errors must survive")
+
+    async def test_pre_first_chunk_error_after_prior_delivery_still_propagates(self):
+        """Sanity: ``is_pre_first_chunk=True`` errors must propagate regardless
+        of whether content was delivered earlier in a *previous* attempt. The
+        predicate keys off ``is_pre_first_chunk`` (the litellm-supplied flag),
+        not on stupidex's local delivery state — so a true pre-first-chunk
+        error (the stream died before any content reached us) is never
+        suppressed.
+        """
+        exc = self._mid_stream_fallback(
+            message="OpenAIException - list index out of range",
+            is_pre_first_chunk=True,
+        )
+
+        async def response():
+            raise exc
+            yield  # pragma: no cover — forces async-generator semantics
+
+        with self.assertRaises(litellm.ServiceUnavailableError):
+            await _run_stream(response)
+
+    async def test_raise_on_model_repetition_handles_empty_choices(self):
+        """Regression: litellm's ``raise_on_model_repetition`` accesses
+        ``self.chunks[-1].choices[0]`` with no length guard. Usage-only chunks
+        have ``choices=[]``, so after one is appended to ``self.chunks`` the
+        next content chunk triggers ``IndexError: list index out of range`` —
+        the exact root cause of the truncation bug.
+
+        The monkey-patch in ``_patch_litellm_raise_on_model_repetition``
+        skips chunks with empty ``choices`` when searching for the last and
+        second-to-last content. This test verifies the patched function
+        does not raise on empty-choices chunks.
+        """
+        from types import SimpleNamespace
+
+        from litellm import CustomStreamWrapper
+
+        csw = CustomStreamWrapper.__new__(CustomStreamWrapper)
+        csw._repeated_messages_count = 1
+
+        def _mk_chunk(content):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content=content))]
+            )
+
+        def _mk_empty_chunk():
+            return SimpleNamespace(choices=[])
+
+        csw.chunks = [
+            _mk_chunk("hello world"),
+            _mk_empty_chunk(),
+            _mk_chunk("hello world"),
+            _mk_empty_chunk(),
+            _mk_chunk("hello world"),
+        ]
+        csw.raise_on_model_repetition()
+
+        # last and second-to-last content chunks are both "hello world",
+        # so _repeated_messages_count increments from 1 to 2.
+        self.assertEqual(csw._repeated_messages_count, 2)
+
+    async def test_raise_on_model_repetition_no_crash_all_empty(self):
+        """The patched ``raise_on_model_repetition`` must not crash when all
+        chunks in ``self.chunks`` have empty ``choices`` (extreme edge case
+        where only usage-only chunks were sent)."""
+        from types import SimpleNamespace
+
+        from litellm import CustomStreamWrapper
+
+        csw = CustomStreamWrapper.__new__(CustomStreamWrapper)
+        csw._repeated_messages_count = 1
+        csw.chunks = [
+            SimpleNamespace(choices=[]),
+            SimpleNamespace(choices=[]),
+            SimpleNamespace(choices=[]),
+        ]
+        csw.raise_on_model_repetition()
+        self.assertEqual(csw._repeated_messages_count, 1)
+
 
 
 class InterleavedToolCallIndexTest(unittest.IsolatedAsyncioTestCase):

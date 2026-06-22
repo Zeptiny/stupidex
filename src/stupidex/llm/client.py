@@ -8,6 +8,7 @@ import random
 import re
 import shutil
 import time
+import traceback
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -115,25 +116,90 @@ def _is_transient_error(exc: Exception) -> bool:
 _MID_STREAM_BENIGN_SIGNATURE = "list index out of range"
 
 
-def _is_benign_midstream_litellm_error(exc: MidStreamFallbackError) -> bool:
-    """Identify the litellm empty-choices parsing bug as a benign stream end.
+def _patch_litellm_raise_on_model_repetition() -> None:
+    """Monkey-patch ``CustomStreamWrapper.raise_on_model_repetition`` to guard
+    against empty ``choices`` lists.
 
-    litellm's ``is_chunk_non_empty`` accesses ``choices[0]`` with no length
-    guard, so a trailing usage-only chunk whose ``choices`` array is empty
-    (the standard shape when ``stream_options={"include_usage": True}`` is
-    set) raises ``IndexError: list index out of range`` inside litellm's
-    chunk parser. ``exception_type`` then maps it to an ``APIConnectionError``
-    whose message embeds "list index out of range", and
-    ``_handle_stream_fallback_error`` wraps that in a
-    ``MidStreamFallbackError`` intended for a Router to fail over on.
+    litellm appends usage-only chunks (``choices=[]``) to ``self.chunks``
+    (`streaming_handler.py:2135`). When the next content chunk triggers
+    ``raise_on_model_repetition``, it accesses
+    ``self.chunks[-1].choices[0].delta.content`` and
+    ``self.chunks[-2].choices[0].delta.content`` — both crash with
+    ``IndexError`` if the chunk has an empty ``choices`` list.
+
+    This patch skips chunks with empty ``choices`` when looking for the last
+    and second-to-last content, silently fixing the root cause of the
+    truncation bug.
+    """
+    from litellm import CustomStreamWrapper
+
+    if getattr(CustomStreamWrapper.raise_on_model_repetition, "_stupidex_patched", False):
+        return
+
+    _orig = CustomStreamWrapper.raise_on_model_repetition
+
+    def _safe_raise_on_model_repetition(self) -> None:
+        if len(self.chunks) < 2:
+            return
+        last = None
+        second = None
+        for chunk in reversed(self.chunks):
+            if chunk.choices and len(chunk.choices) > 0:
+                if last is None:
+                    last = chunk
+                elif second is None:
+                    second = chunk
+                    break
+        if last is None or second is None:
+            return
+        last_content = last.choices[0].delta.content
+        if (
+            last_content is None
+            or not isinstance(last_content, str)
+            or len(last_content) <= 2
+        ):
+            self._repeated_messages_count = 1
+            return
+        second_to_last_content = second.choices[0].delta.content
+        if last_content == second_to_last_content:
+            self._repeated_messages_count += 1
+        else:
+            self._repeated_messages_count = 1
+        if self._repeated_messages_count >= litellm.REPEATED_STREAMING_CHUNK_LIMIT:
+            raise litellm.InternalServerError(
+                message=f"The model is repeating the same chunk = {last_content}.",
+                model="",
+                llm_provider="",
+            )
+
+    _safe_raise_on_model_repetition._stupidex_patched = True  # type: ignore[attr-defined]
+    _safe_raise_on_model_repetition._orig = _orig  # type: ignore[attr-defined]
+    CustomStreamWrapper.raise_on_model_repetition = _safe_raise_on_model_repetition
+
+
+_patch_litellm_raise_on_model_repetition()
+
+
+def _is_benign_midstream_litellm_error(exc: MidStreamFallbackError) -> bool:
+    """Identify the litellm empty-choices parsing bug as a benign stream event.
+
+    litellm's ``__anext__`` accesses ``choices[0]`` with no length guard, so
+    any chunk whose ``choices`` array is empty (a usage-only chunk, a
+    keep-alive frame, a periodic usage snapshot from a chatty proxy) raises
+    ``IndexError: list index out of range`` inside litellm's chunk parser.
+    ``exception_type`` maps that to an ``APIConnectionError`` whose message
+    embeds "list index out of range", and ``_handle_stream_fallback_error``
+    wraps that in a ``MidStreamFallbackError`` intended for a Router to fail
+    over on.
 
     stupidex calls ``litellm.acompletion`` directly (no Router), so the
     fallback signal can never be consumed. When this specific signature
     appears AFTER content has already been delivered
-    (``is_pre_first_chunk=False``), the stream has otherwise completed — the
-    error came from the trailing usage chunk, not from real content loss — so
-    terminating cleanly (delivering accumulated content) is correct rather
-    than surfacing a spurious "Service Unavailable".
+    (``is_pre_first_chunk=False``), the error came from an empty-choices
+    chunk — NOT from real content loss. The stream consumer should
+    ``continue`` to the next chunk (the underlying SSE iterator is still
+    alive) rather than ``break`` (which silently drops any content that
+    arrives after the empty-choices chunk).
 
     Pre-first-chunk occurrences and non-matching signatures (genuine
     connection drops, etc.) return False so they propagate to the retry /
@@ -456,12 +522,32 @@ async def _safe_aclose(response: Any) -> None:
 
 
 async def _idle_timed_stream(response: Any, idle_timeout: float) -> AsyncGenerator[Any, None]:
-    """Re-yield chunks from ``response`` with a per-chunk idle deadline.
+    """Re-yield chunks from ``response`` with a per-chunk idle deadline +
+    benign MidStreamFallbackError suppression.
 
     The deadline is measured from the last received chunk — each chunk resets
     the timer. If no chunk arrives within ``idle_timeout`` seconds,
     ``_StreamIdleTimeoutError`` is raised after the underlying response is closed.
+
+    litellm raises ``MidStreamFallbackError`` per-offending-chunk (empty-choices
+    IndexError on usage/keep-alive chunks from chatty proxies). The underlying
+    SSE iterator is still alive — each error corresponds to a CONSUMED chunk,
+    so the stream position advances. We catch the error INSIDE the loop and
+    ``continue``: this is critical because if the exception propagated out of
+    the ``try`` block, the ``finally`` would run ``aclose()``, killing the
+    stream. After that the caller's ``continue`` would get
+    ``StopAsyncIteration`` because the generator is exhausted, silently
+    truncating the message (the exact bug that caused "All five explor"
+    cut-off).
+
+    No cap is needed: each ``MidStreamFallbackError`` maps to one consumed
+    SSE chunk, so the stream cannot loop forever — it advances past each
+    bad chunk. The ``idle_timeout`` guards against a truly stalled stream
+    (no chunks at all for N seconds). A cap was previously used (limit=3)
+    but it truncated legitimate streams where the provider sends >3
+    consecutive usage/keep-alive chunks between content chunks.
     """
+    tb_logged = False
     try:
         while True:
             try:
@@ -471,9 +557,44 @@ async def _idle_timed_stream(response: Any, idle_timeout: float) -> AsyncGenerat
             except StopAsyncIteration:
                 return
             except TimeoutError:
-                await _safe_aclose(response)
                 raise _StreamIdleTimeoutError(idle_timeout) from None
+            except MidStreamFallbackError as msfe:
+                # Catch INSIDE the loop so the exception never exits the
+                # try block. If it did, the finally would run aclose() and
+                # kill the stream; the caller's next __anext__ would then
+                # get StopAsyncIteration (generator is done) — silently
+                # eating the rest of the assistant message.
+                if _is_benign_midstream_litellm_error(msfe):
+                    if not tb_logged:
+                        tb_logged = True
+                        orig = msfe.original_exception
+                        tb_str = "".join(
+                            traceback.format_exception(
+                                type(orig) if orig is not None else Exception,
+                                orig,
+                                orig.__traceback__ if orig is not None else None,
+                            )
+                        )
+                        log.warning(
+                            "First MidStreamFallbackError traceback "
+                            "(is_pre_first_chunk=%s, "
+                            "generated_content_len=%d):\n%s",
+                            msfe.is_pre_first_chunk,
+                            len(msfe.generated_content or ""),
+                            tb_str,
+                        )
+                    else:
+                        log.debug(
+                            "Suppressing benign litellm mid-stream error; "
+                            "continuing stream: %s",
+                            msfe,
+                        )
+                    continue
+                raise
             yield chunk
+    except _StreamIdleTimeoutError:
+        await _safe_aclose(response)
+        raise
     finally:
         await _safe_aclose(response)
 
@@ -483,6 +604,80 @@ async def _backoff_sleep(attempt: int) -> None:
     delay = _BACKOFF_BASE * (2 ** attempt)
     jitter = random.uniform(0, _BACKOFF_BASE)
     await asyncio.sleep(delay + jitter)
+
+
+def _log_stream_termination(
+    cause: str,
+    finish_reason: str | None,
+    chunk_count: int,
+    content: str,
+    thinking: str,
+    tool_calls: list[dict],
+) -> None:
+    """Log a diagnostic summary at stream end to catch silent truncation.
+
+    Called from the main stream loop just before the ``finally`` block puts
+    ``None`` on ``ready_q``. Catches every silent-termination path:
+
+    * ``stop_async_iteration`` — the stream ended naturally. If
+      ``finish_reason`` is ``None``, the provider never sent a terminal
+      chunk with a finish marker (anomaly). If ``finish_reason='length'``,
+      the model hit its output token cap and was cut off — a likely
+      truncation cause that was previously invisible. If
+      ``finish_reason='content_filter'``, content was filtered.
+    * ``benign_suppression_cap`` — NOT used here anymore; the suppression
+      now happens inside ``_idle_timed_stream`` which handles the
+      ``MidStreamFallbackError`` transparently. This function only sees
+      ``stop_async_iteration``. The benign suppression cap hitting causes
+      ``_idle_timed_stream`` to ``return`` (raising StopAsyncIteration)
+      which maps to ``stop_async_iteration`` here.
+
+    The heuristic at the end flags suspiciously-short trailing content
+    after tool calls (the "Now let" signature): if tool_calls were
+    present AND the final content is non-empty but ends without sentence-
+    ending punctuation, it's a likely truncation candidate worth
+    investigating.
+    """
+    content_len = len(content)
+    tail = content[-80:] if content else ""
+    has_tool_calls = bool(tool_calls)
+    log.info(
+        "stream ended: cause=%s finish_reason=%s chunks=%d "
+        "content_len=%d thinking_len=%d tool_calls=%d",
+        cause, finish_reason, chunk_count,
+        content_len, len(thinking), len(tool_calls),
+    )
+    if tail:
+        log.debug("stream final content tail: %r", tail)
+
+    if cause == "stop_async_iteration" and finish_reason is None and chunk_count > 0:
+        log.warning(
+            "stream ended without a finish_reason on any chunk (%d chunks "
+            "received) — provider may have dropped the stream prematurely",
+            chunk_count,
+        )
+    if cause == "stop_async_iteration" and finish_reason == "length":
+        log.warning(
+            "stream ended because the model hit its output token cap "
+            "(finish_reason='length') — content was truncated by the "
+            "provider, not by stupidex"
+        )
+    if cause == "stop_async_iteration" and finish_reason == "content_filter":
+        log.warning(
+            "stream ended due to content filtering (finish_reason="
+            "'content_filter') — content was blocked by the provider"
+        )
+    if (
+        has_tool_calls
+        and content_len > 0
+        and content_len < 200
+        and not content.rstrip().endswith((".", "!", "?", "```", ":", ")"))
+    ):
+        log.warning(
+            "stream ended after tool calls with short trailing content (%d "
+            "chars, no terminal punctuation) — possible truncation; tail: %r",
+            content_len, tail,
+        )
 
 
 async def _stream_task(
@@ -505,6 +700,10 @@ async def _stream_task(
         thinking_dirty: bool = False
         prev_index: int | None = None
         assistant_api_msg: dict[str, Any] | None = None
+        # Track finish_reason and chunk count for end-of-stream diagnostics.
+        _finish_reason: str | None = None
+        _chunk_count: int = 0
+        _termination_cause: str = "unknown"
         # The anchored assistant message's tool_calls list. None until
         # commit_assistant_with_tool_calls snapshots it; afterwards, late-
         # arriving parallel tool_calls (index >= snapshot length) that become
@@ -638,20 +837,21 @@ async def _stream_task(
             try:
                 chunk = await stream_iter.__anext__()
             except StopAsyncIteration:
+                _termination_cause = "stop_async_iteration"
                 break
-            except MidStreamFallbackError as _msfe:
-                if _is_benign_midstream_litellm_error(_msfe):
-                    log.warning(
-                        "Suppressing benign litellm mid-stream error after "
-                        "partial delivery (likely an empty-choices usage chunk "
-                        "tripping an IndexError in litellm's chunk parser): %s",
-                        _msfe,
-                    )
-                    break
-                raise
             if not chunk.choices:
                 continue
+            _chunk_count += 1
             delta = chunk.choices[0].delta
+
+            # Capture finish_reason for end-of-stream diagnostics (providers
+            # set this on the terminal chunk: 'stop' = natural, 'length' =
+            # hit max_tokens, 'content_filter' = filtered, 'tool_calls' =
+            # model chose to call tools). Without this, truncation from
+            # finish_reason='length' is indistinguishable from natural stop.
+            _fr = getattr(chunk.choices[0], "finish_reason", None)
+            if _fr:
+                _finish_reason = _fr
 
             if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 thinking += delta.reasoning_content
@@ -766,6 +966,11 @@ async def _stream_task(
 
         if not tool_calls and usage:
             await msg_q.put(Message(role=MessageRole.ASSISTANT, content="", usage=usage))
+
+        _log_stream_termination(
+            _termination_cause, _finish_reason, _chunk_count,
+            content, thinking, tool_calls,
+        )
     finally:
         await ready_q.put(None)
 
