@@ -673,12 +673,23 @@ async def _stream_task(
                 content += delta.content
                 if assistant_api_msg is not None:
                     assistant_api_msg["content"] = content
-                if not tool_calls_started.is_set():
-                    await msg_q.put(Message(
-                        role=MessageRole.ASSISTANT,
-                        content=content,
-                        type=MessageType.TEXT,
-                    ))
+                # Always forward the cumulative content snapshot. Earlier
+                # versions gated this on `not tool_calls_started.is_set()` to
+                # avoid re-mounting a duplicate widget after the commit TEXT
+                # message — but mount_streamed_message no longer nulls
+                # state.content on TOOL_CALL, so late content coalesces into
+                # the existing widget via update_content. Gating it instead
+                # silently drops trailing/interleaved text that arrives after
+                # the commit fires (interleaved text+tool_calls, or a final
+                # explanatory sentence after the last tool_call delta),
+                # cutting off the displayed and persisted final assistant
+                # message while the model still remembers the full text on
+                # the next turn.
+                await msg_q.put(Message(
+                    role=MessageRole.ASSISTANT,
+                    content=content,
+                    type=MessageType.TEXT,
+                ))
 
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
