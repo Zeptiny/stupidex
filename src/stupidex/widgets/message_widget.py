@@ -470,7 +470,6 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
         state.temp.append(temp)
         if state.thinking:
             state.thinking.finish()
-        state.content = None
     elif msg.type == MessageType.TOOL_RESULT:
         w = ToolResultMessageWidget(msg, classes="after-thinking" if state.thinking else None)
         if state.temp:
