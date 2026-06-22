@@ -60,17 +60,15 @@
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
 | P2-2 | domain | domain/session.py:65 | SubagentRecord.from_storage_dict direct private-attr access to SubagentManager._subagents | correctness, maintainability, kieran-python | 75 | manual | Y |
-| P2-3 | domain | domain/chain.py:90 | _reconcile_orphan_tool_results does not deduplicate repeated TOOL_RESULT with same tool_call_id | correctness | 50 | advisory | Y |
-| P2-4 | domain | domain/message.py:110 | record_streamed_message silently discards TOOL_CALL MessageType messages, risking orphaned TOOL_RESULT on replay | correctness | 50 | advisory | Y |
+
 | P2-5 | domain | domain/session.py:133 | SessionManager.load doesn't verify loaded session.id matches requested session_id — keying by disk-supplied id | adversarial | 75 | advisory | Y |
-| P2-6 | domain | domain/message.py:100 | THINKING-typed stream chunk silently drops tool_calls, orphans subsequent TOOL_RESULT and triggers reconcile-prune | adversarial | 50 | advisory | Y |
 | P2-7 | domain | domain/session.py:38 | Concurrentmut — Session.messages property rebuilds list every call during streaming → potential torn snapshot | adversarial | 50 | advisory | Y |
 | P2-10 | domain | domain/todo.py:150 | TodoStore.from_storage_dict raises on unknown status — one bad todo aborts session recovery | reliability | 75 | manual | Y |
 | P2-11 | domain | domain/agent.py:75 | Inconsistent serialization method naming across domain models (to_dict vs to_storage_dict vs both) | maintainability | 75 | gated_auto | Y |
 | P2-12 | domain | domain/session.py:8 | Domain layer imports from agents layer — creating a domain↔agents circular dependency | maintainability | 50 | manual | Y |
 | P2-13 | domain | domain/todo.py:162 | get_todo_store silently creates an orphan, unpersisted TodoStore when no store is bound | maintainability | 50 | manual | Y |
 | P2-17 | domain | domain/todo.py:150 (alt) | TodoStore.from_storage_dict crashes whole session on a single corrupt status field | testing | 75 | manual | N |
-| P2-19 | domain | domain/message.py:38 | tool_calls modeled as list[dict[str, Any]] instead of a dataclass | kieran-python | 75 | manual | Y |
+
 | P2-20 | domain | domain/skill.py:49 | Skill.to_dict silently collapses references/scripts/assets to integer counts (lossy/asymmetric round-trip) | kieran-python | 75 | manual | Y |
 
 ### agents/
@@ -135,10 +133,8 @@
 | # | Module | File:Line | Title | Reviewers | Conf | Action | Pre |
 |---|---|---|---|---|---|---|---|
 | P2-83 | llm | llm/providers.py:236 | discover_provider_models caches empty failure result for the entire session, masking transient outages | correctness | 75 | advisory | Y |
-| P2-84 | llm | llm/client.py:415 | Dynamic system prompt is appended as a trailing system message after the full conversation history | correctness | 50 | advisory | Y |
-| P2-85 | llm | llm/client.py:326 | Streaming desync: missing tc_delta.index (None) causes TypeError mid-stream, aborting turn with partial tool calls already on disk | adversarial | 50 | manual | Y |
-| P2-86 | llm | llm/client.py:326 (alt) | tool_call_id empty-string collision: provider deltas without id produce duplicate tool_call_ids that strict providers 400 on | adversarial | 75 | manual | Y |
-| P2-87 | llm | llm/client.py:284 | Shared mutable tool_calls list: executor reads tc['id'] before stream finalizes it, producing tool_call_id mismatch on replay | adversarial | 50 | manual | Y |
+
+
 | P2-88 | llm | llm/client.py:126 | THINKING replay as assistant content elevates tampered history into a privileged channel | adversarial | 50 | advisory | Y |
 | P2-90 | llm | llm/client.py:36 | classify_error echoes raw provider exception text into the TUI — may include URLs, request bodies | kieran-python, adversarial | 50/25 | advisory | Y |
 | P2-92 | llm | llm/providers.py:224 | Provider base_url is user-controlled and unvalidated — API key leaked via Authorization header to arbitrary host | security | 50 | manual | Y |
