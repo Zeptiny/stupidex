@@ -63,6 +63,7 @@ class Stupidex(App):
         self._subagent_ui = SubagentUIManager(self)
         self._current_chain: ChainContainer | None = None
         self._footer_timer: object | None = None
+        self._interrupt_timer: object | None = None
         self.restart_requested: bool = False
         self._setup_themes()
 
@@ -103,7 +104,7 @@ class Stupidex(App):
         with TabbedContent(id="tabs", initial="main"), TabPane("Main", id="main"):
             yield ScrollableContainer(id="output")
         yield CommandPicker(SessionCommands.COMMANDS)
-        yield InputTextArea(id="input")
+        yield InputTextArea(id="input", highlight_cursor_line=False)
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
             yield Static("N/A Model", id="model")
@@ -174,18 +175,20 @@ class Stupidex(App):
             if self._is_streaming():
                 self._interrupt_state = InterruptState.CONFIRM_AGENT
                 hint.update("[bold yellow]Press Esc again to interrupt agent[/]")
+                self._start_interrupt_timeout()
             elif self._has_running_subagents():
                 self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
                 hint.update("[bold red]Press Esc again to interrupt subagents[/]")
+                self._start_interrupt_timeout()
         elif self._interrupt_state == InterruptState.CONFIRM_AGENT:
             self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
             if self._active_worker and not self._active_worker.is_finished:
                 self._active_worker.cancel()
             if self._has_running_subagents():
                 hint.update("[bold red]Press Esc again to interrupt subagents[/]")
+                self._start_interrupt_timeout()
             else:
-                self._interrupt_state = InterruptState.IDLE
-                hint.update("")
+                self._reset_interrupt_state()
         elif self._interrupt_state == InterruptState.CONFIRM_SUBAGENTS:
             if self.sessions.active:
                 cancelled = self.sessions.active.subagent_manager.cancel_running()
@@ -207,15 +210,23 @@ class Stupidex(App):
                         await self.mount_message(interrupt_msg)
                     except Exception:
                         pass
-            self._interrupt_state = InterruptState.IDLE
-            hint.update("")
+            self._reset_interrupt_state()
 
     def _reset_interrupt_state(self) -> None:
         self._interrupt_state = InterruptState.IDLE
+        if self._interrupt_timer is not None:
+            self._interrupt_timer.stop()
+            self._interrupt_timer = None
         try:
             self.query_one("#interrupt-hint", Static).update("")
         except Exception:
             pass
+
+    def _start_interrupt_timeout(self) -> None:
+        """Auto-reset interrupt state after 5 seconds of inactivity."""
+        if self._interrupt_timer is not None:
+            self._interrupt_timer.stop()
+        self._interrupt_timer = self.set_timer(5.0, self._reset_interrupt_state)
 
     async def action_submit_input(self) -> None:
         if self._is_streaming():

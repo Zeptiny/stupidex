@@ -83,7 +83,6 @@ class Sidebar(Vertical):
         min-width: 30;
         dock: right;
         background: $surface;
-        border-left: tall $primary;
         padding: 1 0 0 0;
     }
 
@@ -503,10 +502,10 @@ class Sidebar(Vertical):
             SubagentState.INTERRUPTED: "dim red",
         }.get(record.state, "dim")
 
-        text = f"{prefix}{indicator} {label}"
+        line = f"[{color}]{prefix}{indicator}[/{color}] {label}"
         if elapsed:
-            text += f" {elapsed}"
-        return f"[{color}]{text}[/{color}]"
+            line += f" {elapsed}"
+        return line
 
     def _get_indicator(self, state: SubagentState) -> str:
         return SUBAGENT_INDICATORS.get(state, "?")
@@ -563,13 +562,13 @@ class Sidebar(Vertical):
         if len(label) > 14:
             label = label[:12] + ".."
 
-        text = f" {indicator} {label}"
+        text = f"[{color}] {indicator}[/{color}] {label}"
         if status == "connected" and tool_count:
             text += f" ({tool_count})"
         elif status == "failed" and error:
             err = error if len(error) <= 12 else error[:10] + ".."
             text += f" [{err}]"
-        return f"[{color}]{text}[/{color}]"
+        return text
 
     async def update_todos(self, tasks: list[TodoTask]) -> None:
         try:
@@ -648,8 +647,8 @@ class Sidebar(Vertical):
         if len(title) > 22:
             title = title[:20] + ".."
 
-        text = f" {indicator} {title}"
-        return f"[{color}]{text}[/{color}]"
+        text = f"[{color}] {indicator}[/{color}] {title}"
+        return text
 
     async def update_index_status(
         self,
