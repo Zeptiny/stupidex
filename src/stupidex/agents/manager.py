@@ -160,8 +160,6 @@ class SubagentRecord:
 
     @classmethod
     def from_storage_dict(cls, data: dict[str, Any]) -> SubagentRecord:
-        from stupidex.domain.message import Message
-
         agent_name = data.get("agent_name", "")
         agent_type = data.get("agent_type", "Subagent")
         agent = _restore_agent(agent_name, agent_type)

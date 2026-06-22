@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from enum import Enum
 
 from textual.app import App, ComposeResult
@@ -98,6 +99,59 @@ def _format_session_model_label(
         f"{model} · ↑{Chain.format_tokens(prompt)} "
         f"(⟲{Chain.format_tokens(cached)}) ↓{Chain.format_tokens(completion)}"
     )
+
+
+def _chain_subagent_subtotals(
+    session: "Session", chain_index: int
+) -> tuple[int, int, int, int] | None:
+    """Sum usage of subagents attributed to ``chain_index`` via
+    ``parent_chain_index`` (R11).
+
+    Mirrors the summation style of :func:`_session_usage_totals`: each
+    attributed subagent contributes only its composed ``record.chain``'s final
+    message carrying ``usage`` (reversed lookup). Returns ``None`` when no
+    attributed subagent record has usage.
+    """
+    prompt = cached = completion = total = 0
+    found = False
+    for record in session.subagent_manager.all_records():
+        if record.parent_chain_index != chain_index:
+            continue
+        usage = None
+        for msg in reversed(record.chain.messages):
+            if msg.usage:
+                usage = msg.usage
+                break
+        if usage is None:
+            continue
+        found = True
+        prompt += usage.prompt_tokens
+        cached += usage.cached_tokens
+        completion += usage.completion_tokens
+        total += usage.total_tokens
+    if not found:
+        return None
+    return (prompt, cached, completion, total)
+
+
+def _make_subagent_subtotal_provider(
+    session: "Session", chain_index: int
+) -> "Callable[[], tuple[int, int, int, int] | None] | None":
+    """Return a closure computing the attributed subagent subtotal for the
+    given chain at render time.
+
+    Resolved lazily on each ``_build_text`` call so that subagents spawned
+    during a live stream are picked up by subsequent ``tick``s without
+    re-mounting.  Returns ``None`` when ``chain_index`` is ``None`` (subagents
+    spawned outside any turn, e.g. in test harnesses).
+    """
+    if chain_index is None:
+        return None
+
+    def _provider() -> tuple[int, int, int, int] | None:
+        return _chain_subagent_subtotals(session, chain_index)
+
+    return _provider
 
 
 class InterruptState(Enum):
@@ -467,8 +521,14 @@ class Stupidex(App):
         if self.sessions.active:
             self.sessions.active.chains.append(chain)
             set_current_chain_index(len(self.sessions.active.chains) - 1)
+        chain_index = len(self.sessions.active.chains) - 1 if self.sessions.active else None
+        subtotal_provider = (
+            _make_subagent_subtotal_provider(self.sessions.active, chain_index)
+            if chain_index is not None
+            else None
+        )
         container = self.query_one("#output", ScrollableContainer)
-        self._current_chain = ChainContainer(chain)
+        self._current_chain = ChainContainer(chain, subagent_subtotal=subtotal_provider)
         container.mount(self._current_chain)
 
     async def _mount_in_chain(self, msg: Message) -> None:
@@ -605,8 +665,11 @@ class Stupidex(App):
         await container.remove_children()
         if not self.sessions.active:
             return
-        for chain in self.sessions.active.chains:
-            chain_container = ChainContainer(chain)
+        for chain_index, chain in enumerate(self.sessions.active.chains):
+            subtotal_provider = _make_subagent_subtotal_provider(
+                self.sessions.active, chain_index
+            )
+            chain_container = ChainContainer(chain, subagent_subtotal=subtotal_provider)
             await container.mount(chain_container)
             chain_container.freeze()
             prev_was_thinking = False

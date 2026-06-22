@@ -1,5 +1,6 @@
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -305,10 +306,22 @@ class AssistantMessageWidget(MessageWidget):
 
 
 class ChainFooterWidget(Static):
-    """Footer showing model + elapsed time for a chain."""
+    """Footer showing model + elapsed time for a chain.
 
-    def __init__(self, chain: Chain, **kwargs):
+    Optionally renders a delegated-subagent subtotal "(sub: ...)" segment
+    when ``subagent_subtotal`` returns a non-None tuple of
+    ``(prompt, cached, completion, total)`` tokens attributed to this chain
+    via ``parent_chain_index`` (R11).
+    """
+
+    def __init__(
+        self,
+        chain: Chain,
+        subagent_subtotal: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        **kwargs,
+    ):
         self._chain = chain
+        self._subagent_subtotal = subagent_subtotal
         super().__init__(self._build_text(), **kwargs)
 
     def _build_text(self) -> str:
@@ -323,6 +336,19 @@ class ChainFooterWidget(Static):
                 f" (⟲{Chain.format_tokens(usage.cached_tokens)})"
                 f" ↓{Chain.format_tokens(usage.completion_tokens)}"
             )
+        # Delegated subagent subtotal (R11): the tokens of subagents whose
+        # ``parent_chain_index`` is this chain's index. Rendered as a separate
+        # parenthetical so it is visually attributabed, not conflated with the
+        # chain's own usage.
+        sub = self._subagent_subtotal() if self._subagent_subtotal else None
+        if sub is not None:
+            prompt, cached, completion, _total = sub
+            if prompt or cached or completion:
+                text += (
+                    f" · (sub: ↑{Chain.format_tokens(prompt)}"
+                    f" (⟲{Chain.format_tokens(cached)})"
+                    f" ↓{Chain.format_tokens(completion)})"
+                )
         return text
 
     def _chain_usage(self) -> Usage | None:
@@ -361,15 +387,25 @@ class ChainContainer(Static):
     }
     """
 
-    def __init__(self, chain: Chain, **kwargs):
+    def __init__(
+        self,
+        chain: Chain,
+        subagent_subtotal: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        **kwargs,
+    ):
         self.chain = chain
+        self._subagent_subtotal = subagent_subtotal
         self._footer: ChainFooterWidget | None = None
         self._messages: Static | None = None
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
         self._messages = Static(classes="chain-messages")
-        self._footer = ChainFooterWidget(self.chain, classes="chain-footer")
+        self._footer = ChainFooterWidget(
+            self.chain,
+            subagent_subtotal=self._subagent_subtotal,
+            classes="chain-footer",
+        )
         yield self._messages
         yield self._footer
 

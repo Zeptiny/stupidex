@@ -371,5 +371,173 @@ class TestChainFooterWidgetTokenDisplay(unittest.TestCase):
         self.assertNotIn("10", text)
 
 
+class TestChainFooterDelegatedSubtotal(unittest.TestCase):
+    """U7: ChainFooterWidget renders the delegated-subagent subtotal."""
+
+    def _footer_text(
+        self,
+        chain: Chain,
+        subagent_subtotal=None,
+    ) -> str:
+        from stupidex.widgets.message_widget import ChainFooterWidget
+
+        widget = ChainFooterWidget(chain, subagent_subtotal=subagent_subtotal)
+        return widget._build_text()
+
+    def test_attributed_subtotal_rendered_for_own_chain(self):
+        """Chain 0 has its own usage + a subagent subtotal; footer shows both.
+        Chain 1 has no subagent → no (sub:) segment."""
+        chain0 = Chain(model="m0")
+        chain0.messages = [
+            Message(MessageRole.USER, "hi", MessageType.TEXT),
+            Message(
+                MessageRole.ASSISTANT,
+                "hello",
+                MessageType.TEXT,
+                usage=Usage(1000, 200, 1200, cached_tokens=400),
+            ),
+        ]
+        # Attributed subtotal for chain 0: prompt=500, cached=100, completion=50.
+        def sub0():
+            return (500, 100, 50, 650)
+
+        text0 = self._footer_text(chain0, subagent_subtotal=sub0)
+        self.assertIn("↑1.0k", text0)  # chain's own input
+        self.assertIn("(⟲400)", text0)  # chain's own cached
+        self.assertIn("↓200", text0)  # chain's own output
+        # sub segment
+        self.assertIn("(sub:", text0)
+        self.assertIn("↑500", text0)  # sub input
+        self.assertIn("(⟲100)", text0)  # sub cached
+        self.assertIn("↓50", text0)  # sub output
+
+        # Chain 1 with no attributed subagents (provider returns None).
+        chain1 = Chain(model="m1")
+        chain1.messages = [
+            Message(
+                MessageRole.ASSISTANT,
+                "hi",
+                MessageType.TEXT,
+                usage=Usage(10, 5, 15, cached_tokens=1),
+            ),
+        ]
+        text1 = self._footer_text(chain1, subagent_subtotal=lambda: None)
+        self.assertNotIn("(sub:", text1)
+
+    def test_no_subagents_no_sub_segment(self):
+        """A chain whose provider returns None → no (sub:) segment."""
+        chain = Chain(model="m")
+        chain.messages = [
+            Message(
+                MessageRole.ASSISTANT,
+                "x",
+                MessageType.TEXT,
+                usage=Usage(100, 10, 110, cached_tokens=5),
+            ),
+        ]
+        text = self._footer_text(chain, subagent_subtotal=lambda: None)
+        self.assertNotIn("(sub:", text)
+        # own usage still present
+        self.assertIn("↑100", text)
+        self.assertIn("↓10", text)
+
+    def test_multiple_subagents_summed_together(self):
+        """Two subagents attributed to the same chain → subtotals summed
+        together by the provider (which aggregates before returning)."""
+        chain = Chain(model="m")
+        chain.messages = [
+            Message(
+                MessageRole.ASSISTANT,
+                "x",
+                MessageType.TEXT,
+                usage=Usage(1000, 200, 1200, cached_tokens=400),
+            ),
+        ]
+        # Provider returns the summed total of two attributed subagents.
+        def sub():
+            # subagent A: prompt=500; subagent B: prompt=300 → total 800.
+            return (800, 150, 75, 1025)
+
+        text = self._footer_text(chain, subagent_subtotal=sub)
+        self.assertIn("(sub:", text)
+        self.assertIn("↑800", text)
+        self.assertIn("(⟲150)", text)
+        self.assertIn("↓75", text)
+
+    def test_zero_subtotal_omits_sub_segment(self):
+        """When the provider returns a zero subtotal (no attributable usage),
+        the (sub:) segment is omitted (no noise)."""
+        chain = Chain(model="m")
+        chain.messages = [
+            Message(
+                MessageRole.ASSISTANT,
+                "x",
+                MessageType.TEXT,
+                usage=Usage(1000, 200, 1200, cached_tokens=400),
+            ),
+        ]
+        text = self._footer_text(chain, subagent_subtotal=lambda: (0, 0, 0, 0))
+        self.assertNotIn("(sub:", text)
+
+    def test_provider_on_app_helper_matches_session(self):
+        """The app-level _chain_subagent_subtotals helper sums attributed
+        subagent records' final-usage messages correctly."""
+        from stupidex.agents.manager import SubagentRecord, SubagentState
+        from stupidex.app import _chain_subagent_subtotals
+        from stupidex.domain.agent import Agent, AgentTypes, ModelTier
+        from stupidex.domain.session import Session
+
+        agent = Agent(
+            name="Subagent",
+            type=AgentTypes.SUBAGENT,
+            tier=ModelTier.PAPUDO,
+            description="d",
+            system_prompt="p",
+        )
+        # Two subagents attributed to chain 0, one to chain 1.
+        def rec(rec_id, parent_idx, prompt, cached, completion, total):
+            return SubagentRecord(
+                id=rec_id,
+                agent=agent,
+                state=SubagentState.COMPLETED,
+                label=rec_id,
+                task="t",
+                start_time=1.0,
+                end_time=2.0,
+                parent_chain_index=parent_idx,
+                chain=Chain(
+                    model="sub",
+                    messages=[
+                        Message(MessageRole.USER, "q"),
+                        Message(
+                            MessageRole.ASSISTANT,
+                            "a",
+                            MessageType.TEXT,
+                            usage=Usage(
+                                prompt_tokens=prompt,
+                                cached_tokens=cached,
+                                completion_tokens=completion,
+                                total_tokens=total,
+                            ),
+                        ),
+                    ],
+                ),
+            )
+
+        session = Session(name="S", id="s", model="m")
+        session.subagent_manager._subagents["a"] = rec("a", 0, 500, 100, 50, 650)
+        session.subagent_manager._subagents["b"] = rec("b", 0, 300, 50, 25, 375)
+        session.subagent_manager._subagents["c"] = rec("c", 1, 900, 0, 0, 900)
+
+        totals0 = _chain_subagent_subtotals(session, 0)
+        self.assertEqual(totals0, (800, 150, 75, 1025))
+
+        totals1 = _chain_subagent_subtotals(session, 1)
+        self.assertEqual(totals1, (900, 0, 0, 900))
+
+        totals2 = _chain_subagent_subtotals(session, 2)
+        self.assertIsNone(totals2)
+
+
 if __name__ == "__main__":
     unittest.main()
