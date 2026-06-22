@@ -12,6 +12,7 @@ from stupidex.agents.manager import (
     format_subagent_attrs,
 )
 from stupidex.domain.agent import Agent, AgentTypes, ModelTier
+from stupidex.domain.chain import Chain
 from stupidex.domain.message import Message, MessageRole, MessageType
 
 
@@ -568,7 +569,7 @@ class SubagentManagerTests(unittest.IsolatedAsyncioTestCase):
             error=None,
             start_time=10.0,
             end_time=11.5,
-            messages=msgs,
+            chain=Chain(messages=msgs),
             messages_mounted=2,
         )
         d = record.to_storage_dict()
@@ -1106,6 +1107,116 @@ class TestSubagentMessageReconciliation(unittest.TestCase):
         with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}):
             record = SubagentRecord.from_storage_dict(_storage_record(messages=[]))
         self.assertEqual(record.messages, [])
+
+
+class TestSubagentRecordComposition(unittest.IsolatedAsyncioTestCase):
+    """U5: SubagentRecord wraps a Chain via composition (R8/R9/R10)."""
+
+    def _agent(self) -> Agent:
+        return make_agent()
+
+    def test_messages_property_returns_chain_messages_reference(self):
+        record = SubagentRecord(
+            id="r", agent=self._agent(), state=SubagentState.PENDING,
+        )
+        m = Message(MessageRole.USER, "hi")
+        record.messages.append(m)
+        # Appending via the back-compat property mutates the chain's list.
+        self.assertIs(record.messages, record.chain.messages)
+        self.assertIn(m, record.chain.messages)
+
+    def test_default_construction_chain_empty_model_none_parent_none(self):
+        record = SubagentRecord(
+            id="r", agent=self._agent(), state=SubagentState.PENDING,
+            label="s", task="t",
+        )
+        self.assertIsInstance(record.chain, Chain)
+        self.assertEqual(record.chain.messages, [])
+        self.assertIsNone(record.model)
+        self.assertIsNone(record.parent_chain_index)
+        # messages property still resolves to the empty chain list.
+        self.assertIs(record.messages, record.chain.messages)
+
+    def test_persistence_round_trip_preserves_model_parent_and_messages(self):
+        agent = self._agent()
+        msgs = [
+            Message(MessageRole.USER, "do thing"),
+            Message(MessageRole.ASSISTANT, "Answer", MessageType.TEXT),
+        ]
+        record = SubagentRecord(
+            id="r2",
+            agent=agent,
+            state=SubagentState.COMPLETED,
+            label="sub1",
+            task="do thing",
+            result="Answer",
+            start_time=10.0,
+            end_time=11.5,
+            chain=Chain(model="gpt-4o", messages=msgs),
+            model="gpt-4o",
+            parent_chain_index=2,
+            messages_mounted=2,
+        )
+        d = record.to_storage_dict()
+        # New shape: nested chain dict + top-level model/parent_chain_index.
+        self.assertIn("chain", d)
+        self.assertEqual(d["model"], "gpt-4o")
+        self.assertEqual(d["parent_chain_index"], 2)
+        with patch("stupidex.agents.get_agent_registry", return_value={agent.name: agent}):
+            restored = SubagentRecord.from_storage_dict(d)
+        self.assertEqual(restored.model, "gpt-4o")
+        self.assertEqual(restored.parent_chain_index, 2)
+        self.assertEqual(restored.chain.model, "gpt-4o")
+        self.assertEqual(len(restored.chain.messages), 2)
+        self.assertEqual(restored.chain.messages[0].content, "do thing")
+        self.assertEqual(restored.chain.messages[1].content, "Answer")
+        self.assertEqual(restored.messages_mounted, 2)
+
+    def test_orphan_reconcile_runs_once_via_chain_from_storage_dict(self):
+        """R9: SubagentRecord.from_storage_dict must NOT call the orphan
+        reconciler directly; it is delegated to Chain.from_storage_dict."""
+        from stupidex.agents import manager as manager_mod
+
+        msgs = [
+            Message(
+                role=MessageRole.TOOL,
+                content="orphan",
+                type=MessageType.TOOL_RESULT,
+                tool_call_id="orphan",
+            ),
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="ok",
+                type=MessageType.TEXT,
+            ),
+        ]
+        with patch("stupidex.agents.get_agent_registry", return_value={"Subagent": make_agent()}), \
+                patch.object(manager_mod.Chain, "from_storage_dict", wraps=manager_mod.Chain.from_storage_dict) as chain_spy:
+            record = SubagentRecord.from_storage_dict(
+                _storage_record(messages=[m.to_storage_dict() for m in msgs])
+            )
+        # Chain.from_storage_dict called exactly once (the single reconcile path).
+        self.assertEqual(chain_spy.call_count, 1)
+        # The orphan tool result was dropped by that single pass.
+        ids = [m.tool_call_id for m in record.messages if m.tool_call_id]
+        self.assertNotIn("orphan", ids)
+
+    async def test_parent_linkage_at_spawn_records_current_chain_index(self):
+        """R10: spawn within a turn whose chain index is i sets
+        record.parent_chain_index == i via the ContextVar."""
+        from stupidex.agents import manager as manager_mod
+
+        with patch_registry(), patch_stream(stream_yielding([Message(MessageRole.ASSISTANT, "done", MessageType.TEXT)])):
+            manager = SubagentManager()
+            try:
+                manager_mod._current_chain_index.set(3)
+                record = await manager.spawn("sub1", "t", "Subagent")
+                await record.async_task
+                await drain()
+            finally:
+                manager_mod._current_chain_index.set(None)
+        self.assertEqual(record.parent_chain_index, 3)
+        self.assertIsNone(record.model)  # no model passed to spawn
 
 
 class TestFlushStateCallbacks(unittest.IsolatedAsyncioTestCase):

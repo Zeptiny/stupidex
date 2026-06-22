@@ -30,10 +30,10 @@ class TestSessionStorageRoundTrip(unittest.TestCase):
             error=None,
             start_time=10.0,
             end_time=11.5,
-            messages=[
+            chain=Chain(messages=[
                 Message(MessageRole.USER, "do thing"),
                 Message(MessageRole.ASSISTANT, "Answer", MessageType.TEXT),
-            ],
+            ]),
             messages_mounted=2,
         )
 

@@ -7,6 +7,7 @@ from textual.containers import Horizontal, ScrollableContainer
 from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
 from stupidex.agents import get_agent_registry
+from stupidex.agents.manager import set_current_chain_index
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
@@ -395,6 +396,7 @@ class Stupidex(App):
         chain = Chain(model=self.model)
         if self.sessions.active:
             self.sessions.active.chains.append(chain)
+            set_current_chain_index(len(self.sessions.active.chains) - 1)
         container = self.query_one("#output", ScrollableContainer)
         self._current_chain = ChainContainer(chain)
         container.mount(self._current_chain)
