@@ -35,6 +35,25 @@ def _setup_logging() -> Path | None:
     return log_path
 
 
+def _restore_terminal_echo() -> None:
+    """Restore canonical terminal state (ECHO/ICANON/ISIG) after the app exits.
+
+    Defense-in-depth against Textual's ``stop_application_mode`` being skipped
+    when an exception or hung shutdown prevents termios restoration — leaving
+    the terminal in raw mode where input is accepted but not echoed.
+    """
+    try:
+        import termios
+        fd = sys.stderr.fileno()
+        if not os.isatty(fd):
+            return
+        attrs = termios.tcgetattr(fd)
+        attrs[3] |= termios.ECHO | termios.ICANON | termios.ISIG | termios.IEXTEN
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    except Exception:
+        pass
+
+
 def main():
     ConfigManager.ensure_home_config()
     ConfigManager.load()
@@ -52,8 +71,12 @@ def main():
             "stupidex starting; logs at %s (level=%s)",
             log_path, os.environ.get("STUPIDEX_LOG_LEVEL", "INFO"),
         )
-    app = Stupidex()
-    app.run()
+    try:
+        app = Stupidex()
+        app.run()
+    finally:
+        _restore_terminal_echo()
+
     if app.restart_requested:
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
