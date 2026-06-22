@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 
 def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | None:
-    """Sum token usage across all chains in ``session``.
+    """Sum token usage across chains and subagent records in ``session``.
 
     Each chain contributes only its own final message carrying ``usage``
     (the last request's actual consumption); iterating chains avoids the
@@ -39,14 +39,34 @@ def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | Non
     each chain's messages list contains intermediate assistant snapshots that
     share a cumulative usage.
 
+    Subagent records (R5/R6) are reached via
+    ``session.subagent_manager.all_records()``; each contributes the final
+    usage on its composed ``record.chain``.
+
     Returns ``(prompt_tokens, cached_tokens, completion_tokens, total_tokens)``
-    when at least one chain has usage, otherwise ``None``.
+    when at least one chain or subagent record has usage, otherwise ``None``.
     """
     prompt = cached = completion = total = 0
     found = False
     for chain in session.chains:
         usage = None
         for msg in reversed(chain.messages):
+            if msg.usage:
+                usage = msg.usage
+                break
+        if usage is None:
+            continue
+        found = True
+        prompt += usage.prompt_tokens
+        cached += usage.cached_tokens
+        completion += usage.completion_tokens
+        total += usage.total_tokens
+    # Fold subagent usage into the session total (R6). Each subagent's
+    # composed chain contributes its own final-usage message, the same
+    # lookup used for main chains above.
+    for record in session.subagent_manager.all_records():
+        usage = None
+        for msg in reversed(record.chain.messages):
             if msg.usage:
                 usage = msg.usage
                 break

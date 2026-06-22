@@ -425,6 +425,123 @@ class TestSessionUsageTotals(unittest.TestCase):
         self.assertEqual(cached, 400)
         self.assertEqual(completion, 200)
 
+    def _subagent_record_with_usage(
+        self,
+        rec_id: str,
+        prompt: int,
+        cached: int,
+        completion: int,
+        total: int,
+    ) -> SubagentRecord:
+        agent = Agent(
+            name="Subagent",
+            type=AgentTypes.SUBAGENT,
+            tier=ModelTier.PAPUDO,
+            description="d",
+            system_prompt="p",
+        )
+        return SubagentRecord(
+            id=rec_id,
+            agent=agent,
+            state=SubagentState.COMPLETED,
+            label="sub",
+            task="t",
+            start_time=1.0,
+            end_time=2.0,
+            model="sub-model",
+            chain=Chain(
+                model="sub-model",
+                messages=[
+                    Message(MessageRole.USER, "do thing"),
+                    Message(
+                        MessageRole.ASSISTANT,
+                        "answer",
+                        MessageType.TEXT,
+                        usage=Usage(
+                            prompt_tokens=prompt,
+                            cached_tokens=cached,
+                            completion_tokens=completion,
+                            total_tokens=total,
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+    def test_subagent_usage_folded_into_session_total(self):
+        """A session with one chain (usage A) + one subagent (usage B) →
+        totals = A + B (R6)."""
+        session = Session(name="S", id="sub1", model="m")
+        session.chains = [self._chain_with_usage(1000, 400, 200, 1200)]
+        session.subagent_manager._subagents["sa1"] = self._subagent_record_with_usage(
+            "sa1", 500, 100, 50, 650
+        )
+        totals = _session_usage_totals(session)
+        self.assertIsNotNone(totals)
+        prompt, cached, completion, total = totals
+        self.assertEqual(prompt, 1500)
+        self.assertEqual(cached, 500)
+        self.assertEqual(completion, 250)
+        self.assertEqual(total, 1850)
+
+    def test_subagent_usage_rendered_in_model_label(self):
+        session = Session(name="S", id="sub2", model="m")
+        session.chains = [self._chain_with_usage(1000, 400, 200, 1200)]
+        session.subagent_manager._subagents["sa1"] = self._subagent_record_with_usage(
+            "sa1", 500, 100, 50, 650
+        )
+        totals = _session_usage_totals(session)
+        label = _format_session_model_label("gpt-4o", totals)
+        self.assertIn("gpt-4o", label)
+        self.assertIn("↑1.5k", label)
+        self.assertIn("(⟲500)", label)
+        self.assertIn("↓250", label)
+
+    def test_subagent_without_usage_does_not_affect_total(self):
+        session = Session(name="S", id="sub3", model="m")
+        session.chains = [self._chain_with_usage(1000, 400, 200, 1200)]
+        # Subagent with a user message but no assistant usage.
+        agent = Agent(
+            name="Subagent",
+            type=AgentTypes.SUBAGENT,
+            tier=ModelTier.PAPUDO,
+            description="d",
+            system_prompt="p",
+        )
+        session.subagent_manager._subagents["sa-no-usage"] = SubagentRecord(
+            id="sa-no-usage",
+            agent=agent,
+            state=SubagentState.COMPLETED,
+            label="no-usage",
+            task="t",
+            start_time=1.0,
+            end_time=2.0,
+            chain=Chain(messages=[Message(MessageRole.USER, "q")]),
+        )
+        totals = _session_usage_totals(session)
+        self.assertIsNotNone(totals)
+        prompt, cached, completion, total = totals
+        self.assertEqual(prompt, 1000)
+        self.assertEqual(cached, 400)
+        self.assertEqual(completion, 200)
+        self.assertEqual(total, 1200)
+
+    def test_only_subagent_usage_contributes(self):
+        """No chain usage but a subagent with usage → totals come from the
+        subagent (not None)."""
+        session = Session(name="S", id="sub4", model="m")
+        session.chains = []
+        session.subagent_manager._subagents["sa1"] = self._subagent_record_with_usage(
+            "sa1", 500, 100, 50, 650
+        )
+        totals = _session_usage_totals(session)
+        self.assertIsNotNone(totals)
+        prompt, cached, completion, total = totals
+        self.assertEqual(prompt, 500)
+        self.assertEqual(cached, 100)
+        self.assertEqual(completion, 50)
+        self.assertEqual(total, 650)
+
 
 if __name__ == "__main__":
     unittest.main()
