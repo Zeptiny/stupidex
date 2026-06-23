@@ -196,3 +196,56 @@ def test_chunker_end_line_empty_content():
 def test_chunker_end_line_binary_content():
     """Edge: binary content returns []."""
     assert chunk_file("t.py", "abc\x00def") == []
+
+
+# ---------------------------------------------------------------------------
+# Batch-3 fixes 2026-06-22: O(N²)→O(N log N), dead branch removal
+# ---------------------------------------------------------------------------
+
+
+def test_chunker_large_file_completes_quickly():
+    """P2-156: a 100k-line file chunks in well under a second.
+
+    The old O(N²) _line_at_char/_char_at_line scanned the line list inside the
+    chunking loop; the bisect-based version is O(N log N) and handles 100k
+    lines in milliseconds."""
+    import time
+
+    lines = [f"line {i}\n" for i in range(100_000)]
+    content = "".join(lines)
+    t0 = time.monotonic()
+    chunks = chunk_file("big.py", content, chunk_size=2000, chunk_overlap=200)
+    elapsed = time.monotonic() - t0
+
+    assert len(chunks) > 1
+    # Generous bound; old O(N²) would take many seconds.
+    assert elapsed < 2.0, f"chunking 100k lines took {elapsed:.2f}s"
+
+
+def test_chunker_no_dead_branch_on_final_tail():
+    """P2-181: the dead `if remaining <= chunk_size: pass` branch is gone.
+
+    The final-tail break now triggers via `if end_char >= total_chars: break`.
+    Verify the last chunk reaches the end of the content (no premature break
+    and no off-by-one leaving trailing content unchunked)."""
+    # Construct content where the final chunk is exactly the tail.
+    lines = ["aaaa\n" for _ in range(50)]
+    content = "".join(lines)
+    chunks = chunk_file("t.py", content, chunk_size=20, chunk_overlap=5)
+
+    # The union of all chunk contents (with overlap) covers the whole file.
+    # Last chunk's end must reach the final char.
+    assert chunks[-1].end_line == 50
+    # The last chunk's content ends at the end of the file content.
+    assert chunks[-1].content.endswith(lines[-1])
+
+
+def test_chunker_single_chunk_no_break_branch():
+    """P2-181 edge: a file smaller than chunk_size returns a single chunk
+    without entering the while loop (the early-return path)."""
+    content = "short file\n"
+    chunks = chunk_file("t.py", content, chunk_size=2000, chunk_overlap=200)
+    assert len(chunks) == 1
+    assert chunks[0].content == content
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 1

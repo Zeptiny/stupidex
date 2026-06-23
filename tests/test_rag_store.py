@@ -694,9 +694,13 @@ def test_store_search_truncates_on_vector_chunk_count_mismatch(tmp_path):
     assert file_paths <= {"a.py", "b.py", "c.py"}
 
 
-def test_store_delete_by_file_mismatched_vectors_skips_realignment(tmp_path):
-    """P2-170: when vectors count != chunk count, delete_by_file skips the
-    realignment branch (vectors.npy is left untouched, stale)."""
+def test_store_delete_by_file_mismatched_vectors_clears_stale(tmp_path):
+    """P2-186 (fixed): when vectors count != chunk count, delete_by_file now
+    clears stale vectors.npy entirely instead of leaving them untouched.
+
+    Previously the realignment branch was skipped on mismatch, leaving stale
+    vectors that could be served by search. The fix clears vectors.npy so the
+    store is consistent (no vectors rather than wrong vectors)."""
     store = RAGStore(str(tmp_path))
     store.init_db()
 
@@ -711,11 +715,9 @@ def test_store_delete_by_file_mismatched_vectors_skips_realignment(tmp_path):
 
     store.delete_by_file("a.py")
 
-    # Vectors untouched because len mismatch -> realignment skipped.
+    # Vectors cleared because len mismatch -> stale vectors removed entirely.
     vectors = store._load_vectors()
-    assert vectors is not None
-    assert len(vectors) == 1
-    assert vectors[0] == [1.0, 0.0]
+    assert vectors is None
     # Chunks reflect the deletion.
     assert store.status().total_chunks == 1
 
@@ -747,3 +749,203 @@ def test_store_cosine_similarity_zero_vector_returns_zero(tmp_path):
     for s in scores:
         assert not math.isnan(s)
         assert math.isfinite(s)
+
+
+# ---------------------------------------------------------------------------
+# Batch-3 fixes 2026-06-22: search cache, stale-vector cleanup, SQL dedup
+# ---------------------------------------------------------------------------
+
+
+def test_store_search_cache_reuses_loaded_vectors(tmp_path):
+    """P2-155: repeated search() calls reuse cached vectors + chunks
+    instead of reloading vectors.npy and re-querying SQLite each time."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    chunks = [
+        Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1),
+        Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1),
+    ]
+    store.upsert(chunks, [[1.0, 0.0], [0.0, 1.0]])
+
+    RAGStore._invalidate_cache()
+
+    load_calls = 0
+    real_load = store._load_vectors_ndarray
+
+    def counting_load():
+        nonlocal load_calls
+        load_calls += 1
+        return real_load()
+
+    store._load_vectors_ndarray = counting_load
+
+    store.search([1.0, 0.0], top_k=2)
+    store.search([0.0, 1.0], top_k=2)
+    store.search([0.5, 0.5], top_k=2)
+
+    # _load_vectors_ndarray called once; subsequent searches hit the cache.
+    assert load_calls == 1
+
+
+def test_store_search_cache_invalidated_on_upsert(tmp_path):
+    """P2-155: cache is invalidated when upsert writes new vectors."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    store.upsert(
+        [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)],
+        [[1.0, 0.0]],
+    )
+
+    # Prime the cache.
+    store.search([1.0, 0.0], top_k=1)
+    assert str(store.db_path) in RAGStore._search_cache
+
+    store.upsert(
+        [Chunk(file_path="b.py", content="y=2", start_line=1, end_line=1)],
+        [[0.0, 1.0]],
+    )
+
+    # Cache invalidated.
+    assert str(store.db_path) not in RAGStore._search_cache
+
+    # New search sees the new vector.
+    results = store.search([0.0, 1.0], top_k=10)
+    assert any(r.file_path == "b.py" for r in results)
+
+
+def test_store_init_db_rebuild_clears_stale_vectors(tmp_path):
+    """P2-185: when init_db rebuilds a corrupt DB, stale vectors.npy is
+    also cleared, leaving a consistent (empty) store."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    store.upsert(
+        [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)],
+        [[1.0, 0.0]],
+    )
+    assert store.vectors_file.exists()
+
+    # Corrupt the DB so init_db triggers a rebuild.
+    store.db_path.write_bytes(b"corrupted")
+
+    store.init_db()
+
+    # DB rebuilt and vectors.npy cleared (consistent empty store).
+    assert store.status().total_chunks == 0
+    assert not store.vectors_file.exists()
+
+
+def test_store_get_conn_rebuild_clears_stale_vectors(tmp_path):
+    """P2-185: _get_conn rebuild on corruption also clears stale vectors.npy."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    store.upsert(
+        [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)],
+        [[1.0, 0.0]],
+    )
+    assert store.vectors_file.exists()
+
+    # Corrupt the DB so _get_conn triggers a rebuild.
+    store.db_path.write_bytes(b"corrupted")
+
+    conn = store._get_conn()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+    # vectors.npy cleared by _rebuild_db.
+    assert not store.vectors_file.exists()
+
+
+def test_store_upsert_writes_vectors_before_db_commit(tmp_path):
+    """P2-142/P2-177: vectors are written before DB commit so a _save_vectors
+    failure leaves the OLD DB + OLD vectors intact (consistent), not new DB
+    + stale vectors (inconsistent)."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    store.upsert(
+        [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)],
+        [[1.0, 0.0]],
+    )
+
+    # Make _save_vectors fail on the next upsert.
+    def failing_save(embeddings):
+        raise OSError("disk full")
+
+    store._save_vectors = failing_save
+
+    with pytest.raises(OSError):
+        store.upsert(
+            [Chunk(file_path="a.py", content="x=2", start_line=1, end_line=1)],
+            [[0.5, 0.5]],
+        )
+
+    # DB + vectors still reflect the OLD state (consistent).
+    assert store.status().total_chunks == 1
+    vectors = store._load_vectors()
+    assert vectors is not None
+    assert len(vectors) == 1
+    assert vectors[0] == [1.0, 0.0]
+    chunks = store._get_all_chunks()
+    assert chunks[0]["content"] == "x=1"
+
+
+def test_store_delete_by_file_clears_vectors_when_chunk_table_empty(tmp_path):
+    """P2-186: deleting the last file's chunks clears vectors.npy entirely
+    (no stale empty/mismatched vectors left behind)."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    store.upsert(
+        [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)],
+        [[1.0, 0.0]],
+    )
+    assert store.vectors_file.exists()
+
+    store.delete_by_file("a.py")
+
+    assert store.status().total_chunks == 0
+    # vectors.npy removed — no stale file left behind.
+    assert not store.vectors_file.exists()
+    # Search returns empty, not stale results.
+    assert store.search([1.0, 0.0], top_k=10) == []
+
+
+def test_store_update_file_hashes_batch_single_transaction(tmp_path):
+    """P2-158: update_file_hashes_batch updates multiple hashes in one commit."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    store.update_file_hashes_batch({
+        "a.py": "hash_a",
+        "b.py": "hash_b",
+        "c.py": "hash_c",
+    })
+
+    hashes = store.get_file_hashes()
+    assert hashes == {"a.py": "hash_a", "b.py": "hash_b", "c.py": "hash_c"}
+
+
+def test_store_update_file_hashes_batch_empty_is_noop(tmp_path):
+    """P2-158: empty dict is a no-op (no DB connection opened)."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+
+    store.update_file_hashes_batch({})
+    assert store.get_file_hashes() == {}
+
+
+def test_store_search_returns_empty_when_vectors_missing(tmp_path):
+    """P2-155: search returns [] when vectors.npy is missing but DB has chunks
+    (e.g. index was partially wiped). No crash, no stale results."""
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    store.upsert(
+        [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)],
+        [[1.0, 0.0]],
+    )
+    # Remove vectors.npy but keep DB.
+    store.vectors_file.unlink()
+
+    assert store.search([1.0, 0.0], top_k=10) == []
+

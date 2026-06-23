@@ -1,3 +1,4 @@
+import bisect
 from dataclasses import dataclass
 
 
@@ -11,6 +12,22 @@ class Chunk:
 
 def _is_binary(content: str) -> bool:
     return "\0" in content
+
+
+def _line_break_offsets(lines: list[str]) -> list[int]:
+    """Cumulative char offset at the *start* of each line index (precomputed once).
+
+    ``line_offsets[i]`` is the char position of line ``i``. The list has
+    ``len(lines)`` entries (the final entry is the start of the last line, and
+    a sentinel of ``len(content)`` is NOT included — callers use bisect on the
+    raw offsets and handle the tail explicitly).
+    """
+    offsets: list[int] = []
+    cumulative = 0
+    for line in lines:
+        offsets.append(cumulative)
+        cumulative += len(line)
+    return offsets
 
 
 def _find_break_points(lines: list[str]) -> list[int]:
@@ -63,22 +80,22 @@ def chunk_file(
         )
 
     break_points = _find_break_points(lines)
+    # Precompute cumulative line start offsets once -> O(log N) per lookup instead of O(N).
+    line_offsets = _line_break_offsets(lines)
     chunks: list[Chunk] = []
     char_pos = 0
     min_chunk = chunk_size // 4
 
     while char_pos < total_chars:
         end_char = min(char_pos + chunk_size, total_chars)
-        remaining = total_chars - char_pos
 
-        if remaining <= chunk_size:
-            pass
-        elif break_points:
-            current_line = _line_at_char(lines, char_pos)
-            target_line = _line_at_char(lines, end_char)
+        # Natural-break adjustment only when the window is not the final tail.
+        if end_char < total_chars and break_points:
+            current_line = _line_at_char(line_offsets, char_pos)
+            target_line = _line_at_char(line_offsets, end_char)
             bp = _pick_break_after(break_points, current_line, target_line)
             if bp is not None:
-                bp_char = _char_at_line(lines, bp)
+                bp_char = _char_at_line(line_offsets, bp)
                 if bp_char > char_pos + min_chunk and bp_char < end_char:
                     end_char = bp_char
 
@@ -86,9 +103,9 @@ def chunk_file(
             end_char = min(char_pos + chunk_size, total_chars)
 
         chunk_text = content[char_pos:end_char]
-        start_line = _line_at_char(lines, char_pos) + 1
+        start_line = _line_at_char(line_offsets, char_pos) + 1
         end_char_for_line = end_char - 1 if content[end_char - 1] == '\n' else end_char
-        end_line = _line_at_char(lines, end_char_for_line) + 1
+        end_line = _line_at_char(line_offsets, end_char_for_line) + 1
 
         chunks.append(
             Chunk(
@@ -99,7 +116,7 @@ def chunk_file(
             )
         )
 
-        if remaining <= chunk_size:
+        if end_char >= total_chars:
             break
 
         char_pos += max(1, end_char - char_pos - chunk_overlap)
@@ -107,21 +124,16 @@ def chunk_file(
     return chunks
 
 
-def _line_at_char(lines: list[str], char_pos: int) -> int:
-    """Return the 0-indexed line number for a character position."""
-    cumulative = 0
-    for i, line in enumerate(lines):
-        cumulative += len(line)
-        if cumulative > char_pos:
-            return i
-    return len(lines) - 1
+def _line_at_char(line_offsets: list[int], char_pos: int) -> int:
+    """Return the 0-indexed line number for a character position (O(log N))."""
+    idx = bisect.bisect_right(line_offsets, char_pos) - 1
+    return max(idx, 0)
 
 
-def _char_at_line(lines: list[str], line_idx: int) -> int:
-    """Return the character position at the start of a line index."""
-    cumulative = 0
-    for i, line in enumerate(lines):
-        if i >= line_idx:
-            break
-        cumulative += len(line)
-    return cumulative
+def _char_at_line(line_offsets: list[int], line_idx: int) -> int:
+    """Return the character position at the start of a line index (O(1))."""
+    if line_idx < 0:
+        return 0
+    if line_idx >= len(line_offsets):
+        return line_offsets[-1] if line_offsets else 0
+    return line_offsets[line_idx]

@@ -21,6 +21,8 @@ import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
+
 from stupidex.config import Config
 from stupidex.llm import providers as providers_mod
 from stupidex.llm.providers import ProviderResolutionError, reset_cache
@@ -366,6 +368,82 @@ class TestEmbedSingle(EmbedderTestCase):
         with self.assertRaises(EmbeddingError) as ctx:
             asyncio.run(e.embed_single("anything"))
         self.assertIn("no vectors", str(ctx.exception))
+
+
+class TestFastembedRetry(EmbedderTestCase):
+    """P2-146: fastembed path now has retry with exponential backoff."""
+
+    def test_fastembed_retries_then_succeeds(self):
+        """A transient fastembed failure is retried, then succeeds."""
+        e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
+
+        call_count = 0
+
+        class FakeEmbed:
+            def embed(self, texts):
+                nonlocal call_count
+                call_count += 1
+                if call_count < 2:
+                    raise RuntimeError("transient ONNX failure")
+                return [np.array([0.1, 0.2, 0.3]) for _ in texts]
+
+        with (
+            patch.dict("sys.modules", {"fastembed": type("M", (), {"TextEmbedding": lambda **kw: FakeEmbed()})}),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = asyncio.run(e.embed(["hello"]))
+
+        self.assertEqual(call_count, 2)
+        self.assertEqual(result, [[0.1, 0.2, 0.3]])
+
+    def test_fastembed_non_retryable_error_not_retried(self):
+        """A TypeError (programming bug) is not retried — fastembed path."""
+        e = Embedder("fastembed/BAAI/bge-small-en-v1.5")
+
+        call_count = 0
+
+        class FakeEmbed:
+            def embed(self, texts):
+                nonlocal call_count
+                call_count += 1
+                raise TypeError("bad arg")
+
+        with (
+            patch.dict("sys.modules", {"fastembed": type("M", (), {"TextEmbedding": lambda **kw: FakeEmbed()})}),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            self.assertRaises(EmbeddingError) as ctx,
+        ):
+            asyncio.run(e.embed(["hello"]))
+
+        self.assertEqual(call_count, 1)
+        self.assertIn("non-retryable", str(ctx.exception))
+        mock_sleep.assert_not_awaited()
+
+
+class TestLitellmImportHoist(EmbedderTestCase):
+    """P2-179: litellm import is hoisted out of the retry loop.
+
+    When litellm cannot be imported, EmbeddingError is raised immediately
+    (no retry attempts, no asyncio.sleep) — the import happens once before
+    the retry loop, not inside it."""
+
+    def test_litellm_import_error_raises_immediately_no_retry(self):
+        e = Embedder("work-openai/text-embedding-3-small")
+        fake_ref = ("openai", "text-embedding-3-small", "https://example.com", "sk-x")
+
+        # Make `from litellm import aembedding` raise ImportError.
+        with (
+            patch("stupidex.rag.embedder.resolve_embedding_ref", return_value=fake_ref),
+            patch.dict(sys.modules, {"litellm": None}),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            self.assertRaises(EmbeddingError) as ctx,
+        ):
+            asyncio.run(e.embed(["hi"]))
+
+        self.assertIn("litellm is required for embeddings", str(ctx.exception))
+        # Import error is raised before the retry loop — no sleeps.
+        mock_sleep.assert_not_awaited()
+
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from stupidex.config import get_config
 
 from .chunker import chunk_file
 from .embedder import Embedder
-from .store import RAGStore
+from .store import RAGStore, StoreStatus
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ class IndexResult:
     duration_seconds: float = 0.0
 
 
+# P2-154: IndexStatus is a thin view over StoreStatus to avoid duplicating
+# the dataclass field set. It is kept as a separate type because it is part
+# of the public ``rag.indexer`` API surface (re-exported in ``rag/__init__``).
 @dataclass
 class IndexStatus:
     total_files: int = 0
@@ -50,9 +53,22 @@ class IndexStatus:
     last_indexed: str | None = None
     last_index_duration: float | None = None
 
+    @classmethod
+    def from_store(cls, s: StoreStatus) -> "IndexStatus":
+        return cls(
+            total_files=s.total_files,
+            total_chunks=s.total_chunks,
+            last_indexed=s.last_indexed,
+            last_index_duration=s.last_index_duration,
+        )
+
 
 async def update_file(file_path: str, project_path: str | None = None) -> None:
-    """Re-index a single file in the RAG store (used by post-write callbacks)."""
+    """Re-index a single file in the RAG store (used by post-write callbacks).
+
+    Uses the batch vector-state API so a single-file re-index performs one
+    sqlite write + one vectors.npy flush instead of N reads + N writes.
+    """
     if project_path is None:
         project_path = str(Path.cwd())
     loop = asyncio.get_running_loop()
@@ -92,9 +108,15 @@ async def update_file(file_path: str, project_path: str | None = None) -> None:
         logger.warning("RAG update_file embedding failed for %s: %s", rel, e)
         return
 
-    await loop.run_in_executor(None, store.upsert_file, rel, chunks, embeddings)
-    if file_hash:
-        await loop.run_in_executor(None, store.update_file_hash, rel, file_hash)
+    # Batch path: load vector state once, upsert, flush — 1 vectors.npy write.
+    def _upsert_and_flush() -> None:
+        state = store.load_vector_state()
+        store.upsert_file_batch(state, rel, chunks, embeddings)
+        store.flush_vector_state(state)
+        if file_hash:
+            store.update_file_hash(rel, file_hash)
+
+    await loop.run_in_executor(None, _upsert_and_flush)
 
 
 async def index_project(
@@ -145,9 +167,9 @@ async def _index_project_impl(
         project_path = str(Path.cwd())
 
     t0 = asyncio.get_event_loop().time()
+    loop = asyncio.get_event_loop()
 
     # --- discovery (I/O-heavy -> thread) ---
-    loop = asyncio.get_event_loop()
     files = await loop.run_in_executor(
         None, _discover_files, Path(project_path), paths, cfg.ignored_dirs
     )
@@ -175,23 +197,9 @@ async def _index_project_impl(
     indexed_files: set[str] = set()
     file_hashes: dict[str, str] = {}
 
-    # Check embedder availability before processing files to avoid N identical errors
-    try:
-        test_embeddings = await embedder.embed(["test"])
-    except Exception as e:
-        stats.errors.append(f"Embedding provider failed before indexing: {e}")
-        stats.duration_seconds = asyncio.get_event_loop().time() - t0
-        return stats
-
-    if (
-        not test_embeddings
-        or not isinstance(test_embeddings[0], list)
-        or not test_embeddings[0]
-        or not isinstance(test_embeddings[0][0], float)
-    ):
-        stats.errors.append("Embedding provider returned unexpected format")
-        stats.duration_seconds = asyncio.get_event_loop().time() - t0
-        return stats
+    # P2-139/P2-182: dropped the embed(["test"]) probe — it burned a paid API
+    # call (or ONNX inference) on every index run. Embedding failures are
+    # already handled per-file in the loop below and surface in stats.errors.
 
     # Load vector state once; batch ops mutate it in place and flush at end.
     state = await loop.run_in_executor(None, store.load_vector_state)
@@ -206,8 +214,8 @@ async def _index_project_impl(
         if progress_callback:
             try:
                 progress_callback(rel, i, len(files))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("progress_callback error: %s", e)
 
         try:
             # read + hash in executor
@@ -257,16 +265,18 @@ async def _index_project_impl(
             logger.warning("Indexing error: %s", msg)
             stats.errors.append(msg)
 
-    # update per-file hashes using captured hashes from initial read
-    # (upsert_file writes hash='' so the real hash must be set explicitly)
-    for rel, h in file_hashes.items():
-        if rel in indexed_files:
-            try:
-                await loop.run_in_executor(
-                    None, store.update_file_hash, rel, h
-                )
-            except Exception:
-                pass
+    # P2-158: batch all file-hash updates into a single sqlite transaction
+    # instead of one connection-per-file in a loop.
+    hashes_to_update = {
+        rel: h for rel, h in file_hashes.items() if rel in indexed_files
+    }
+    if hashes_to_update:
+        try:
+            await loop.run_in_executor(
+                None, store.update_file_hashes_batch, hashes_to_update
+            )
+        except Exception as e:
+            logger.warning("Batch hash update failed: %s", e)
 
     # remove files deleted since last index
     if existing_hashes:
@@ -305,13 +315,7 @@ def get_status(project_path: str | None = None) -> IndexStatus:
     if project_path is None:
         project_path = str(Path.cwd())
     store = RAGStore(project_path)
-    s = store.status()
-    return IndexStatus(
-        total_files=s.total_files,
-        total_chunks=s.total_chunks,
-        last_indexed=s.last_indexed,
-        last_index_duration=s.last_index_duration,
-    )
+    return IndexStatus.from_store(store.status())
 
 
 def clear_index(project_path: str | None = None) -> None:

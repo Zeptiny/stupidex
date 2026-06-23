@@ -32,7 +32,18 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_chunks_file_path ON chunks(file_path);
 """
+
+_INSERT_CHUNKS_SQL = (
+    "INSERT INTO chunks (file_path, start_line, end_line, content) "
+    "VALUES (?, ?, ?, ?)"
+)
+
+_REPLACE_FILE_SQL = (
+    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', ?)"
+)
 
 
 @dataclass
@@ -66,6 +77,10 @@ class VectorState:
 
 
 class RAGStore:
+    # Process-level search cache: str(db_path) -> (vectors_ndarray, chunks_list).
+    # Invalidated by any mutation method on any store instance for that path.
+    _search_cache: dict[str, tuple[np.ndarray, list[dict]]] = {}
+
     def __init__(self, project_path: str):
         self.project_path = project_path
         self.rag_dir = Path(project_path) / PROJECT_RAG_DIR
@@ -75,40 +90,65 @@ class RAGStore:
     def _ensure_dir(self) -> None:
         self.rag_dir.mkdir(parents=True, exist_ok=True)
 
+    def _open_conn(self) -> sqlite3.Connection:
+        """Open a connection and apply pragmas. Does NOT do recovery."""
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    def _rebuild_db(self) -> sqlite3.Connection:
+        """Delete a corrupt DB (and stale vectors.npy) and recreate from schema."""
+        if self.db_path.exists():
+            self.db_path.unlink()
+        self._clear_vectors_file()
+        conn = self._open_conn()
+        conn.executescript(_DB_SCHEMA)
+        conn.commit()
+        self._invalidate_cache()
+        return conn
+
     def init_db(self) -> None:
         self._ensure_dir()
         try:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = self._open_conn()
             conn.executescript(_DB_SCHEMA)
             conn.commit()
             conn.close()
         except Exception as e:
             logger.error("Corrupted index.db, rebuilding: %s", e)
-            if self.db_path.exists():
-                self.db_path.unlink()
-            conn = sqlite3.connect(str(self.db_path))
-            conn.executescript(_DB_SCHEMA)
-            conn.commit()
+            conn = self._rebuild_db()
             conn.close()
 
     def _get_conn(self) -> sqlite3.Connection:
         self._ensure_dir()
         conn = None
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            conn.execute("PRAGMA journal_mode=WAL")
+            conn = self._open_conn()
             conn.execute("SELECT 1 FROM chunks LIMIT 1")
             return conn
         except Exception as e:
             logger.error("Corrupted index.db, rebuilding: %s", e)
             if conn is not None:
                 conn.close()
-            if self.db_path.exists():
-                self.db_path.unlink()
-            conn = sqlite3.connect(str(self.db_path))
-            conn.executescript(_DB_SCHEMA)
-            conn.execute("PRAGMA journal_mode=WAL")
-            return conn
+            return self._rebuild_db()
+
+    # ------------------------------------------------------------------
+    # cache management
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _invalidate_cache(cls, db_path: Path | None = None) -> None:
+        if db_path is not None:
+            cls._search_cache.pop(str(db_path), None)
+        else:
+            cls._search_cache.clear()
+
+    def _clear_vectors_file(self) -> None:
+        if self.vectors_file.exists():
+            try:
+                self.vectors_file.unlink()
+            except OSError:
+                pass
 
     def upsert(self, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
         if len(chunks) != len(embeddings):
@@ -117,6 +157,15 @@ class RAGStore:
             )
 
         self._ensure_dir()
+        self._invalidate_cache(self.db_path)
+
+        # Write vectors BEFORE committing DB so a _save_vectors failure leaves
+        # the old DB + old vectors intact (consistent) rather than new DB +
+        # stale vectors (inconsistent). If DB commit fails after vectors are
+        # written, search truncates to min(vectors, chunks) and the next index
+        # run rebuilds.
+        self._save_vectors(embeddings)
+
         conn = self._get_conn()
         try:
             conn.execute("DELETE FROM chunks")
@@ -127,21 +176,14 @@ class RAGStore:
                     (c.file_path, c.start_line, c.end_line, c.content)
                     for c in chunks
                 ]
-                conn.executemany(
-                    "INSERT INTO chunks (file_path, start_line, end_line, content) "
-                    "VALUES (?, ?, ?, ?)",
-                    chunk_data,
-                )
+                conn.executemany(_INSERT_CHUNKS_SQL, chunk_data)
 
             file_chunks: dict[str, int] = {}
             for c in chunks:
                 file_chunks[c.file_path] = file_chunks.get(c.file_path, 0) + 1
 
             for fp, count in file_chunks.items():
-                conn.execute(
-                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', ?)",
-                    (fp, count),
-                )
+                conn.execute(_REPLACE_FILE_SQL, (fp, count))
 
             now = datetime.now(UTC).isoformat()
             conn.execute(
@@ -153,13 +195,11 @@ class RAGStore:
         finally:
             conn.close()
 
-        self._save_vectors(embeddings)
-
     def _save_vectors(self, embeddings: list[list[float]]) -> None:
         self._ensure_dir()
         if not embeddings:
-            if self.vectors_file.exists():
-                self.vectors_file.unlink()
+            self._clear_vectors_file()
+            self._invalidate_cache(self.db_path)
             return
         arr = np.array(embeddings, dtype=np.float32)
         tmp_fd, tmp_path = tempfile.mkstemp(
@@ -170,6 +210,7 @@ class RAGStore:
             np.save(tmp_path, arr, allow_pickle=False)
             actual = tmp_path + ".npy"
             os.replace(actual, str(self.vectors_file))
+            self._invalidate_cache(self.db_path)
         except BaseException:
             for p in (tmp_path, tmp_path + ".npy"):
                 try:
@@ -199,6 +240,21 @@ class RAGStore:
 
         return None
 
+    def _load_vectors_ndarray(self) -> np.ndarray | None:
+        """Load vectors as a numpy array (no list round-trip) for search."""
+        npy_path = self.vectors_file
+        if not npy_path.exists():
+            return None
+        try:
+            arr = np.load(str(npy_path), allow_pickle=False)
+            if arr.ndim != 2 or arr.dtype != np.float32:
+                raise ValueError("Invalid vectors array shape or dtype")
+            return arr
+        except Exception as e:
+            logger.error("Corrupted vectors.npy, clearing index: %s", e)
+            self.clear()
+            return None
+
     def _get_all_chunks(self) -> list[dict]:
         conn = self._get_conn()
         try:
@@ -219,6 +275,20 @@ class RAGStore:
         finally:
             conn.close()
 
+    def _load_search_data(self) -> tuple[np.ndarray | None, list[dict] | None]:
+        """Load vectors (as ndarray) and chunks, using the process cache when valid."""
+        cache_key = str(self.db_path)
+        if cache_key in RAGStore._search_cache:
+            return RAGStore._search_cache[cache_key]
+        vectors = self._load_vectors_ndarray()
+        if vectors is None:
+            return None, None
+        chunks = self._get_all_chunks()
+        if not chunks:
+            return None, None
+        RAGStore._search_cache[cache_key] = (vectors, chunks)
+        return vectors, chunks
+
     def search(
         self,
         query_embedding: list[float],
@@ -228,12 +298,8 @@ class RAGStore:
         if top_k is None:
             top_k = get_config().rag.top_k
 
-        vectors = self._load_vectors()
-        if not vectors:
-            return []
-
-        chunks = self._get_all_chunks()
-        if not chunks:
+        vectors, chunks = self._load_search_data()
+        if vectors is None or not chunks:
             return []
 
         if len(vectors) != len(chunks):
@@ -246,10 +312,10 @@ class RAGStore:
             vectors = vectors[:min_len]
             chunks = chunks[:min_len]
 
-        if vectors and len(query_embedding) != len(vectors[0]):
+        if len(vectors) > 0 and len(query_embedding) != vectors.shape[1]:
             raise ValueError(
                 f"Query embedding dimension ({len(query_embedding)}) does not match "
-                f"stored vector dimension ({len(vectors[0])}). "
+                f"stored vector dimension ({vectors.shape[1]}). "
                 "Re-index with the correct embedding model."
             )
 
@@ -278,10 +344,10 @@ class RAGStore:
 
     @staticmethod
     def _cosine_similarity(
-        query: list[float], vectors: list[list[float]]
+        query: list[float], vectors: np.ndarray | list[list[float]]
     ) -> list[float]:
-        q = np.array(query, dtype=np.float32)
-        v = np.array(vectors, dtype=np.float32)
+        q = np.asarray(query, dtype=np.float32)
+        v = np.asarray(vectors, dtype=np.float32)
         norms = np.linalg.norm(v, axis=1) * np.linalg.norm(q)
         norms = np.where(norms == 0, 1, norms)
         return (v @ q / norms).tolist()
@@ -289,8 +355,8 @@ class RAGStore:
     def clear(self) -> None:
         if self.db_path.exists():
             self.db_path.unlink()
-        if self.vectors_file.exists():
-            self.vectors_file.unlink()
+        self._clear_vectors_file()
+        self._invalidate_cache(self.db_path)
 
     def status(self) -> StoreStatus:
         if not self.db_path.exists():
@@ -325,6 +391,7 @@ class RAGStore:
 
     def record_index_duration(self, duration: float) -> None:
         """Store the duration of the last full index operation."""
+        self._invalidate_cache(self.db_path)
         conn = self._get_conn()
         try:
             conn.execute(
@@ -337,6 +404,7 @@ class RAGStore:
 
     def touch_last_indexed(self) -> None:
         """Mark last_indexed timestamp without modifying chunks/vectors."""
+        self._invalidate_cache(self.db_path)
         conn = self._get_conn()
         try:
             now = datetime.now(UTC).isoformat()
@@ -363,6 +431,8 @@ class RAGStore:
                 f"Chunks ({len(chunks)}) and embeddings ({len(embeddings)}) count mismatch"
             )
 
+        self._invalidate_cache(self.db_path)
+
         old_ids = self._get_ordered_chunk_ids()
         old_vectors = self._load_vectors()
         id_to_vec: dict[int, list[float]] = {}
@@ -379,20 +449,10 @@ class RAGStore:
                     (c.file_path, c.start_line, c.end_line, c.content)
                     for c in chunks
                 ]
-                conn.executemany(
-                    "INSERT INTO chunks (file_path, start_line, end_line, content) "
-                    "VALUES (?, ?, ?, ?)",
-                    chunk_data,
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', ?)",
-                    (file_path, len(chunks)),
-                )
+                conn.executemany(_INSERT_CHUNKS_SQL, chunk_data)
+                conn.execute(_REPLACE_FILE_SQL, (file_path, len(chunks)))
             else:
-                conn.execute(
-                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', 0)",
-                    (file_path,),
-                )
+                conn.execute(_REPLACE_FILE_SQL, (file_path, 0))
 
             now = datetime.now(UTC).isoformat()
             conn.execute(
@@ -421,6 +481,8 @@ class RAGStore:
         self._save_vectors(new_vectors)
 
     def delete_by_file(self, file_path: str) -> None:
+        self._invalidate_cache(self.db_path)
+
         old_ids = self._get_ordered_chunk_ids()
         vectors = self._load_vectors()
 
@@ -432,16 +494,24 @@ class RAGStore:
         finally:
             conn.close()
 
-        if vectors is not None and old_ids and len(vectors) == len(old_ids):
-            id_to_vec = dict(zip(old_ids, vectors, strict=False))
-            new_ids = self._get_ordered_chunk_ids()
-            aligned = [id_to_vec[cid] for cid in new_ids if cid in id_to_vec]
-            if aligned:
-                self._save_vectors(aligned)
-            else:
-                p = self.vectors_file
-                if p.exists():
-                    p.unlink()
+        # If vectors are stale/mismatched, clear them entirely rather than
+        # leaving stale data that can't be realigned.
+        if vectors is None:
+            return
+
+        if not old_ids or len(vectors) != len(old_ids):
+            # Chunk table empty after deletion, or vectors already stale —
+            # clear vectors.npy to avoid serving stale/empty results.
+            self._clear_vectors_file()
+            return
+
+        id_to_vec = dict(zip(old_ids, vectors, strict=False))
+        new_ids = self._get_ordered_chunk_ids()
+        aligned = [id_to_vec[cid] for cid in new_ids if cid in id_to_vec]
+        if aligned:
+            self._save_vectors(aligned)
+        else:
+            self._clear_vectors_file()
 
     def load_vector_state(self) -> VectorState:
         """Load chunk_ids + vectors once, building the position index.
@@ -492,6 +562,8 @@ class RAGStore:
                 f"Chunks ({len(chunks)}) and embeddings ({len(embeddings)}) count mismatch"
             )
 
+        self._invalidate_cache(self.db_path)
+
         old_ids = self._chunk_ids_for_file(file_path)
 
         conn = self._get_conn()
@@ -504,20 +576,10 @@ class RAGStore:
                     (c.file_path, c.start_line, c.end_line, c.content)
                     for c in chunks
                 ]
-                conn.executemany(
-                    "INSERT INTO chunks (file_path, start_line, end_line, content) "
-                    "VALUES (?, ?, ?, ?)",
-                    chunk_data,
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', ?)",
-                    (file_path, len(chunks)),
-                )
+                conn.executemany(_INSERT_CHUNKS_SQL, chunk_data)
+                conn.execute(_REPLACE_FILE_SQL, (file_path, len(chunks)))
             else:
-                conn.execute(
-                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) VALUES (?, '', 0)",
-                    (file_path,),
-                )
+                conn.execute(_REPLACE_FILE_SQL, (file_path, 0))
 
             now = datetime.now(UTC).isoformat()
             conn.execute(
@@ -559,6 +621,8 @@ class RAGStore:
 
     def delete_by_file_batch(self, state: VectorState, file_path: str) -> None:
         """Batch delete: mutate ``state`` in place, do NOT touch vectors.npy."""
+        self._invalidate_cache(self.db_path)
+
         old_ids = self._chunk_ids_for_file(file_path)
 
         conn = self._get_conn()
@@ -603,17 +667,25 @@ class RAGStore:
         finally:
             conn.close()
 
-    def update_file_hash(self, file_path: str, file_hash: str) -> None:
+    def update_file_hashes_batch(self, hashes: dict[str, str]) -> None:
+        """Update multiple file hashes in a single transaction (P2-158)."""
+        if not hashes:
+            return
+        self._invalidate_cache(self.db_path)
         conn = self._get_conn()
         try:
-            conn.execute(
-                "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) "
-                "VALUES (?, ?, COALESCE((SELECT chunk_count FROM files WHERE file_path = ?), 0))",
-                (file_path, file_hash, file_path),
-            )
+            for file_path, file_hash in hashes.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO files (file_path, hash, chunk_count) "
+                    "VALUES (?, ?, COALESCE((SELECT chunk_count FROM files WHERE file_path = ?), 0))",
+                    (file_path, file_hash, file_path),
+                )
             conn.commit()
         finally:
             conn.close()
+
+    def update_file_hash(self, file_path: str, file_hash: str) -> None:
+        self.update_file_hashes_batch({file_path: file_hash})
 
 
 def _match_pattern(file_path: str, pattern: str) -> bool:

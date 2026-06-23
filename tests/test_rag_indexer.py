@@ -650,20 +650,29 @@ async def test_save_vectors_called_once_incremental_changed_and_deleted(
 
 
 @pytest.mark.asyncio
-async def test_index_precheck_unexpected_format_branch(tmp_path):
-    """P2-164: when the embedding pre-check returns a non-float scalar,
-    index_project surfaces 'Embedding provider returned unexpected format'."""
+async def test_index_no_test_embedding_probe_burns_api_call(tmp_path):
+    """P2-139/P2-182: the embed(["test"]) pre-check was removed — index_project
+    must NOT call embed() before processing real files (it burned a paid API
+    call / ONNX inference on every index run).
+
+    This test asserts the embedder is called exactly once per file's real
+    content, with no throwaway "test" probe."""
     (tmp_path / "a.py").write_text("x = 1\n")
 
-    class MalformedEmbedder(Embedder):
+    call_log: list[list[str]] = []
+
+    class ProbingEmbedder(Embedder):
         async def embed(self, texts: list[str]) -> list[list[float]]:
-            # Pre-check inspects test_embeddings[0][0]; ints (not float) trip it.
-            return [[1, 2, 3] for _ in texts]
+            call_log.append(list(texts))
+            return [[0.1, 0.2, 0.3] for _ in texts]
 
-    r = await index_project(project_path=str(tmp_path), embedder=MalformedEmbedder())
+    r = await index_project(project_path=str(tmp_path), embedder=ProbingEmbedder())
 
-    assert r.files_indexed == 0
-    assert r.errors == ["Embedding provider returned unexpected format"]
+    assert r.files_indexed == 1
+    assert r.errors == []
+    # Exactly one embed() call — for the real file's chunks, not a "test" probe.
+    assert len(call_log) == 1
+    assert "test" not in call_log[0]
 
 
 def test_read_and_hash_skips_file_exceeding_max_size(tmp_path, monkeypatch):
@@ -862,3 +871,118 @@ async def test_index_project_valid_paths_still_index_normally(tmp_path):
     )
     assert r.files_indexed == 2
     assert r.errors == []
+
+
+# ---------------------------------------------------------------------------
+# Batch-3 fixes 2026-06-22: batch update_file, batch hash updates, no probe
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_file_uses_batch_api_single_vectors_flush(tmp_path, monkeypatch):
+    """P2-157/P2-152: update_file uses the batch vector-state API so a
+    single-file re-index performs exactly one _save_vectors call
+    (load_vector_state -> upsert_file_batch -> flush_vector_state)."""
+    f = tmp_path / "app.py"
+    f.write_text("x = 1\n")
+    embedder = FakeEmbedder()
+    await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    monkeypatch.setattr(
+        "stupidex.rag.indexer.Embedder", lambda model=None: FakeEmbedder()
+    )
+
+    save_calls: list[int] = []
+    real_store = RAGStore
+
+    def make_store(project_path: str):
+        s = real_store(project_path)
+        real_save = s._save_vectors
+
+        def counting_save(embeddings):
+            save_calls.append(1)
+            return real_save(embeddings)
+
+        s._save_vectors = counting_save
+        return s
+
+    import stupidex.rag.indexer as indexer_mod
+    monkeypatch.setattr(indexer_mod, "RAGStore", make_store)
+
+    f.write_text("def new():\n    return 42\n")
+    await update_file(str(f), project_path=str(tmp_path))
+
+    # Batch path: exactly one _save_vectors call (the flush).
+    assert len(save_calls) == 1
+
+    # Content was indexed.
+    store = real_store(str(tmp_path))
+    chunks = [c for c in store._get_all_chunks() if c["file_path"] == "app.py"]
+    assert chunks
+    assert "def new" in chunks[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_index_project_batch_hash_update_single_transaction(tmp_path, monkeypatch):
+    """P2-158: file hashes are updated in a single batch transaction, not
+    one connection-per-file in a loop."""
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    (tmp_path / "c.py").write_text("c = 3\n")
+    embedder = FakeEmbedder()
+    await index_project(project_path=str(tmp_path), embedder=embedder)
+
+    # Modify all three files.
+    (tmp_path / "a.py").write_text("a = 999\n")
+    (tmp_path / "b.py").write_text("b = 999\n")
+    (tmp_path / "c.py").write_text("c = 999\n")
+
+    batch_calls: list[int] = []
+    real_store = RAGStore
+
+    def make_store(project_path: str):
+        s = real_store(project_path)
+        real_batch = s.update_file_hashes_batch
+
+        def counting_batch(hashes):
+            batch_calls.append(len(hashes))
+            return real_batch(hashes)
+
+        s.update_file_hashes_batch = counting_batch
+        return s
+
+    import stupidex.rag.indexer as indexer_mod
+    monkeypatch.setattr(indexer_mod, "RAGStore", make_store)
+
+    r = await index_project(project_path=str(tmp_path), embedder=embedder)
+    assert r.files_indexed == 3
+    assert r.errors == []
+
+    # Exactly one batch call with all 3 hashes.
+    assert len(batch_calls) == 1
+    assert batch_calls[0] == 3
+
+    # Hashes reflect the new content.
+    store = real_store(str(tmp_path))
+    hashes = store.get_file_hashes()
+    assert len(hashes) == 3
+    for fp in ("a.py", "b.py", "c.py"):
+        assert hashes[fp]
+
+
+def test_index_status_from_store():
+    """P2-154: IndexStatus.from_store converts a StoreStatus to IndexStatus."""
+    from stupidex.rag.indexer import IndexStatus
+    from stupidex.rag.store import StoreStatus
+
+    s = StoreStatus(
+        total_chunks=42,
+        total_files=7,
+        last_indexed="2026-06-22T00:00:00+00:00",
+        last_index_duration=1.5,
+    )
+    idx = IndexStatus.from_store(s)
+    assert idx.total_chunks == 42
+    assert idx.total_files == 7
+    assert idx.last_indexed == "2026-06-22T00:00:00+00:00"
+    assert idx.last_index_duration == 1.5
