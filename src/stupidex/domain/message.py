@@ -24,6 +24,7 @@ class Usage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cached_tokens: int = 0
 
 
 @dataclass
@@ -69,6 +70,7 @@ class Message:
                 "prompt_tokens": self.usage.prompt_tokens,
                 "completion_tokens": self.usage.completion_tokens,
                 "total_tokens": self.usage.total_tokens,
+                "cached_tokens": self.usage.cached_tokens,
             }
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
@@ -94,6 +96,7 @@ class Message:
                     prompt_tokens=src.get("prompt_tokens", 0),
                     completion_tokens=src.get("completion_tokens", 0),
                     total_tokens=src.get("total_tokens", 0),
+                    cached_tokens=src.get("cached_tokens", 0),
                 )
         metadata = dict(data.get("metadata", {}))
         warnings: list[str] = []

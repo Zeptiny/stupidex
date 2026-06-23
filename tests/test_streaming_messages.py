@@ -1028,6 +1028,148 @@ class StreamTaskTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text_messages[2].usage, Usage(1, 2, 3))
 
 
+class StreamCachedTokensTest(unittest.IsolatedAsyncioTestCase):
+    """U2: _stream_task extracts cached_tokens from provider usage shapes."""
+
+    @staticmethod
+    def _usage(**kw):
+        return SimpleNamespace(
+            prompt_tokens=kw.get("prompt_tokens", 0),
+            completion_tokens=kw.get("completion_tokens", 0),
+            total_tokens=kw.get("total_tokens", 0),
+            prompt_tokens_details=kw.get("prompt_tokens_details"),
+            cache_read_input_tokens=kw.get("cache_read_input_tokens"),
+            cache_creation_input_tokens=kw.get("cache_creation_input_tokens"),
+        )
+
+    @staticmethod
+    def _drive(response):
+        async def _run():
+            msg_q = asyncio.Queue(maxsize=1)
+            ready_q = asyncio.Queue()
+            api_messages: list[dict] = []
+            assistant_appended = asyncio.Event()
+            tool_calls_started = asyncio.Event()
+            stream_t = asyncio.create_task(
+                llm_client._stream_task(
+                    response(), msg_q, ready_q, api_messages,
+                    assistant_appended, tool_calls_started,
+                )
+            )
+            executor_t = asyncio.create_task(
+                llm_client._executor_task(
+                    msg_q, ready_q, api_messages, {}, assistant_appended,
+                )
+            )
+            messages = []
+            while True:
+                msg = await msg_q.get()
+                if msg is None:
+                    break
+                messages.append(msg)
+            await asyncio.gather(stream_t, executor_t)
+            return messages
+
+        return asyncio.run(_run())
+
+    def _final_usage(self, messages):
+        usage_msgs = [m for m in messages if m.usage is not None]
+        self.assertTrue(usage_msgs, "no message with usage was emitted")
+        return usage_msgs[-1].usage
+
+    def test_openai_prompt_tokens_details_cached(self):
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=800),
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 800)
+        self.assertEqual(usage.prompt_tokens, 1000)
+
+    def test_anthropic_cache_read_input_tokens(self):
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+            cache_read_input_tokens=600,
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 600)
+
+    def test_anthropic_cache_creation_not_folded(self):
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+            cache_creation_input_tokens=500,
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 0,
+                         "cache_creation_input_tokens must NOT be folded into cached_tokens")
+
+    def test_absent_cache_fields_default_zero(self):
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 0)
+
+    def test_positional_usage_still_defaults_cached_zero(self):
+        async def response():
+            yield chunk(content="hi", usage=Usage(1, 2, 3))
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage, Usage(1, 2, 3, 0))
+        self.assertEqual(usage.cached_tokens, 0)
+
+    def test_prompt_tokens_details_takes_precedence_over_cache_read(self):
+        # When both provider shapes are present on the same usage object,
+        # prompt_tokens_details.cached_tokens (OpenAI) wins over
+        # cache_read_input_tokens (Anthropic) per the `if cached is None:`
+        # fallback chain in _stream_task.
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=800),
+            cache_read_input_tokens=600,
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 800,
+                         "prompt_tokens_details must take precedence")
+
+    def test_prompt_tokens_details_zero_takes_precedence_over_cache_read(self):
+        # An explicitly set cached_tokens=0 on prompt_tokens_details (OpenAI)
+        # must NOT fall back to cache_read_input_tokens (Anthropic): the
+        # provider explicitly reported zero cached reads.
+        u = self._usage(
+            prompt_tokens=1000, completion_tokens=200, total_tokens=1200,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+            cache_read_input_tokens=600,
+        )
+
+        async def response():
+            yield chunk(content="hi", usage=u)
+
+        usage = self._final_usage(self._drive(response))
+        self.assertEqual(usage.cached_tokens, 0,
+                         "explicit cached_tokens=0 must not trigger fallback")
+
+
 class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
     def test_tool_result_without_display_uses_safe_collapsed_title(self):
         raw_content = "x" * 300

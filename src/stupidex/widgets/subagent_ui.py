@@ -11,6 +11,7 @@ from textual.widgets import TabbedContent, TabPane
 from stupidex.agents.manager import TERMINAL, SubagentRecord, SubagentState
 from stupidex.domain.message import Message
 from stupidex.widgets.message_widget import (
+    ChainFooterWidget,
     StreamWidgetState,
     mount_streamed_message,
 )
@@ -53,6 +54,16 @@ class SubagentUIManager:
         tabs = self.app.query_one("#tabs", TabbedContent)
         pane = TabPane(self._tab_label(record), id=f"sub-{record.id}")
         await tabs.add_pane(pane)
+        # Ensure the scrollable container exists before mounting the footer so
+        # the footer lands below the message area (mirrors ChainContainer.compose
+        # ordering: messages first, footer last).
+        try:
+            pane.query_one(ScrollableContainer)
+        except Exception:
+            await pane.mount(ScrollableContainer())
+        footer = ChainFooterWidget(record.chain)
+        await pane.mount(footer)
+        self._widgets.setdefault(record.id, {})["footer"] = footer
         for msg in record.messages[record.messages_mounted :]:
             await self.on_message(record.id, msg)
         await self.update_sidebar()
@@ -110,6 +121,9 @@ class SubagentUIManager:
         tab.update(self._tab_label(record))
         if state in TERMINAL:
             self.prune_lock(subagent_id)
+            footer = self._widgets.get(subagent_id, {}).get("footer")
+            if footer is not None:
+                footer.freeze()
         await self.update_sidebar()
 
     def prune_lock(self, subagent_id: str) -> None:
@@ -137,6 +151,42 @@ class SubagentUIManager:
             record.on_state_change = lambda state, rid=record.id: self.on_state_change(rid, state)
             for msg in record.messages:
                 await self.on_message(record.id, msg)
+            footer = ChainFooterWidget(record.chain)
+            await pane.mount(footer)
+            self._widgets.setdefault(record.id, {})["footer"] = footer
+            # Restored subagents are terminal (PENDING/RUNNING were migrated
+            # to INTERRUPTED during deserialization) and their chain status is
+            # reconciled by finalize_chain_on_restore() in from_storage_dict,
+            # so render the footer in its final state immediately — the UI
+            # timer only runs while live subagents are active.
+            if record.state in TERMINAL:
+                footer.freeze()
+
+    def _tick_subagent_footers(self) -> None:
+        """Tick (or freeze) mounted subagent footers.
+
+        Driven off the subagent UI timer, NOT the app footer timer: the app
+        footer timer stops at ``streaming_finished`` while subagents often
+        keep running past that point; only this timer stays alive then.
+
+        For each mounted footer, ``tick()`` re-renders while the chain is
+        ``RUNNING``; once the subagent is terminal, the chain is finalized
+        and ``freeze()`` renders the final ``model · elapsed · tokens``.
+        """
+        if not self.app.sessions.active:
+            return
+        manager = self.app.sessions.active.subagent_manager
+        for sid, entry in self._widgets.items():
+            footer = entry.get("footer")
+            if footer is None:
+                continue
+            record = manager.get_record(sid)
+            if record is None:
+                continue
+            if record.state in TERMINAL:
+                footer.freeze()
+            else:
+                footer.tick()
 
     async def update_sidebar(self) -> None:
         if self._sidebar_lock.locked():
@@ -181,6 +231,7 @@ class SubagentUIManager:
             self._timer = None
 
     async def _tick_timer(self) -> None:
+        self._tick_subagent_footers()
         await self.update_sidebar()
 
     @staticmethod

@@ -65,6 +65,9 @@
 - Mensagens de erro vazam strings de comando e caminhos de arquivo em erros de execução de ferramentas (exec.py)
 - Correspondência difusa (fuzzy matching) na ferramenta edit
   - Por exemplo, opencode tem 9 maneira de fuzzy matching
+- Não mostrar [interrupted by user]
+- Multiline todo items
+- MCP Servers não tem o mesmo espaçamento da esquerda como Subagentes e todo
 
 
 ### Comandos

@@ -930,10 +930,18 @@ async def _stream_task(
                         committed_indices.add(idx)
 
             if hasattr(chunk, "usage") and chunk.usage:
+                u = chunk.usage
+                cached = None
+                ptd = getattr(u, "prompt_tokens_details", None)
+                if ptd is not None:
+                    cached = getattr(ptd, "cached_tokens", None)
+                if cached is None:
+                    cached = getattr(u, "cache_read_input_tokens", 0) or 0
                 usage = Usage(
-                    prompt_tokens=chunk.usage.prompt_tokens,
-                    completion_tokens=chunk.usage.completion_tokens,
-                    total_tokens=chunk.usage.total_tokens,
+                    prompt_tokens=u.prompt_tokens,
+                    completion_tokens=u.completion_tokens,
+                    total_tokens=u.total_tokens,
+                    cached_tokens=cached,
                 )
 
         await flush_thinking()

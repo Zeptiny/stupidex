@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from xml.sax.saxutils import escape
 
 from stupidex.domain.agent import Agent
-from stupidex.domain.chain import _reconcile_orphan_tool_results
+from stupidex.domain.chain import Chain, ChainStatus
 
 if TYPE_CHECKING:
     from stupidex.domain.message import Message
@@ -20,6 +20,18 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _current_manager: ContextVar[SubagentManager] = ContextVar('current_manager')
+
+_current_chain_index: ContextVar[int | None] = ContextVar(
+    'current_chain_index', default=None
+)
+
+
+def get_current_chain_index() -> int | None:
+    return _current_chain_index.get()
+
+
+def set_current_chain_index(index: int | None) -> None:
+    _current_chain_index.set(index)
 
 
 def _log_task_exception(task: asyncio.Task) -> None:
@@ -61,6 +73,13 @@ SUBAGENT_INDICATORS: dict[SubagentState, str] = {
 }
 
 
+_TERMINAL_STATE_TO_CHAIN_STATUS: dict[SubagentState, ChainStatus] = {
+    SubagentState.COMPLETED: ChainStatus.COMPLETED,
+    SubagentState.FAILED: ChainStatus.FAILED,
+    SubagentState.INTERRUPTED: ChainStatus.INTERRUPTED,
+}
+
+
 TERMINAL: set[SubagentState] = {
     SubagentState.COMPLETED,
     SubagentState.FAILED,
@@ -95,11 +114,47 @@ class SubagentRecord:
     error: str | None = None
     start_time: float = 0.0
     end_time: float | None = None
-    messages: list[Message] = field(default_factory=list)
+    chain: Chain = field(default_factory=Chain)
+    model: str | None = None
+    parent_chain_index: int | None = None
     messages_mounted: int = 0
     on_message: Callable[[Message], Coroutine[Any, Any, None]] | None = None
     on_state_change: Callable[[SubagentState],
                               Coroutine[Any, Any, None]] | None = None
+
+    @property
+    def messages(self) -> list[Message]:
+        """Back-compat accessor delegating to ``chain.messages``.
+
+        Callers that read or append via ``record.messages`` continue to work
+        because this returns the underlying list reference.
+        """
+        return self.chain.messages
+
+    def finalize_chain_on_restore(self) -> None:
+        """Reconcile the composed chain's status with this record's terminal
+        state after loading from storage.
+
+        Live chains are finished inside ``SubagentManager._run``'s ``finally``,
+        but restored records never re-run, so a chain persisted while still
+        ``RUNNING`` (legacy flat-``messages`` fallback, or a crash mid-run)
+        reaches restore still running while the record's state is terminal.
+
+        A restored chain's ``start_time`` belongs to the prior process, so
+        ``finish()`` — which sets ``end_time`` to the *current* process's
+        ``time.monotonic()`` — would make ``elapsed`` nonsensical. When the
+        chain already carries a persisted ``end_time``, set ``status`` directly
+        instead, preserving the recorded duration.
+        """
+        if self.chain.status != ChainStatus.RUNNING:
+            return
+        target = _TERMINAL_STATE_TO_CHAIN_STATUS.get(self.state)
+        if target is None:
+            return
+        if self.chain.end_time is not None:
+            self.chain.status = target
+        else:
+            self.chain.finish(target)
 
     @property
     def name(self) -> str:
@@ -129,13 +184,14 @@ class SubagentRecord:
             "error": self.error,
             "start_time": self.start_time,
             "end_time": self.end_time,
-            "messages": [m.to_storage_dict() for m in self.messages],
+            "chain": self.chain.to_storage_dict(),
+            "model": self.model,
+            "parent_chain_index": self.parent_chain_index,
+            "messages_mounted": self.messages_mounted,
         }
 
     @classmethod
     def from_storage_dict(cls, data: dict[str, Any]) -> SubagentRecord:
-        from stupidex.domain.message import Message
-
         agent_name = data.get("agent_name", "")
         agent_type = data.get("agent_type", "Subagent")
         agent = _restore_agent(agent_name, agent_type)
@@ -153,10 +209,25 @@ class SubagentRecord:
             if not start_time:
                 start_time = end_time
 
-        messages = [Message.from_storage_dict(m) for m in data.get("messages", [])]
-        _reconcile_orphan_tool_results(messages)
+        # Build the chain via Chain.from_storage_dict, which performs the
+        # orphan-tool-result reconciliation once (R9). Old records persisted
+        # a flat `messages` list rather than a nested `chain` dict; fall back
+        # to that shape so legacy sessions keep loading.
+        chain_data = data.get("chain")
+        if isinstance(chain_data, dict):
+            chain = Chain.from_storage_dict(chain_data)
+        else:
+            chain = Chain.from_storage_dict(
+                {"messages": data.get("messages", [])}
+            )
 
-        return cls(
+        # The persisted model may live on the record or inside the chain
+        # dict; prefer the top-level field, then sync onto the chain.
+        model = data.get("model") or chain.model
+        if chain.model is None:
+            chain.model = model
+
+        record = cls(
             id=data["id"],
             agent=agent,
             state=state,
@@ -166,8 +237,13 @@ class SubagentRecord:
             error=data.get("error"),
             start_time=start_time,
             end_time=end_time,
-            messages=messages,
+            chain=chain,
+            model=model,
+            parent_chain_index=data.get("parent_chain_index"),
+            messages_mounted=data.get("messages_mounted", 0),
         )
+        record.finalize_chain_on_restore()
+        return record
 
 
 def _restore_agent(name: str, type_str: str) -> Agent:
@@ -266,7 +342,7 @@ class SubagentManager:
                 cancelled.append(record.id)
         return cancelled
 
-    async def spawn(self, name: str, task: str, agent_type: str, model: str | None = None) -> SubagentRecord:
+    async def spawn(self, name: str, task: str, agent_type: str, model: str | None = None, parent_chain_index: int | None = None) -> SubagentRecord:
         """Spawn a subagent as an asyncio task. Returns the record immediately."""
         # Lazy imports to avoid circular dependency
         from stupidex.agents import get_agent_registry
@@ -295,6 +371,13 @@ class SubagentManager:
             label=name,
             task=task,
             start_time=time.time(),
+        )
+        record.chain.model = model
+        record.model = model
+        record.parent_chain_index = (
+            parent_chain_index
+            if parent_chain_index is not None
+            else _current_chain_index.get()
         )
         self._subagents[subagent_id] = record
 
@@ -341,6 +424,9 @@ class SubagentManager:
                 record.state = SubagentState.FAILED
             finally:
                 record.end_time = time.time()
+                chain_status = _TERMINAL_STATE_TO_CHAIN_STATUS.get(record.state)
+                if chain_status is not None:
+                    record.chain.finish(chain_status)
                 if record.on_state_change:
                     self._fire_and_forget(record.on_state_change(record.state))
 

@@ -76,19 +76,70 @@ class TestUsageDeserializationForwardCompat(unittest.TestCase):
         self.assertIsNone(msg.usage)
 
     def test_round_trip_preserves_known_fields(self):
-        """to_storage_dict -> from_storage_dict preserves the three known fields."""
+        """to_storage_dict -> from_storage_dict preserves the four known fields,
+        including cached_tokens (cache-read tokens only — R1/R7)."""
         orig = Message(
             MessageRole.ASSISTANT,
             "hi",
             MessageType.TEXT,
-            usage=Usage(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+            usage=Usage(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                cached_tokens=4,
+            ),
         )
         restored = Message.from_storage_dict(orig.to_storage_dict())
         assert restored.usage is not None
         self.assertEqual(
             restored.usage,
-            Usage(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+            Usage(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                cached_tokens=4,
+            ),
         )
+
+    def test_round_trip_cached_tokens_zero_when_omitted(self):
+        """Usage(1, 2, 3) (positional, no cached) round-trips with cached_tokens=0."""
+        orig = Message(
+            MessageRole.ASSISTANT,
+            "hi",
+            MessageType.TEXT,
+            usage=Usage(1, 2, 3),
+        )
+        restored = Message.from_storage_dict(orig.to_storage_dict())
+        assert restored.usage is not None
+        self.assertEqual(restored.usage.cached_tokens, 0)
+
+    def test_forward_compat_nested_prompt_tokens_details_ignored(self):
+        """A persisted dict with prompt_tokens_details: {cached_tokens: 4} plus
+        a top-level cached_tokens: 7 → loader reads the top-level (7), ignoring
+        the nested block (existing extra-key handling drops unknown structures)."""
+        msg = self._msg_with_usage(
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "cached_tokens": 7,
+                "prompt_tokens_details": {"cached_tokens": 4},
+            }
+        )
+        assert msg.usage is not None
+        self.assertEqual(msg.usage.cached_tokens, 7)
+
+    def test_backward_compat_missing_cached_tokens_defaults_to_zero(self):
+        """Old persisted sessions without cached_tokens load as 0."""
+        msg = self._msg_with_usage(
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            }
+        )
+        assert msg.usage is not None
+        self.assertEqual(msg.usage.cached_tokens, 0)
 
     def test_extra_keys_in_usage_do_not_break_session_load(self):
         """Simulates the full-session restore path: a drifted usage dict on one

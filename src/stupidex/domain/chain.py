@@ -45,6 +45,20 @@ class Chain:
         secs = seconds % 60
         return f"{minutes}m {secs:.0f}s"
 
+    @staticmethod
+    def format_tokens(n: int) -> str:
+        """Compact token count: ``1.2k`` / ``12.3k`` / ``1.5M``.
+
+        Below 1000 the raw integer is returned unchanged (e.g. ``999``).
+        Cached tokens that sum to zero still surface as ``0`` rather than
+        being filtered, so the caller decides whether to render a segment.
+        """
+        if n < 1000:
+            return str(n)
+        if n < 1_000_000:
+            return f"{n / 1000:.1f}k"
+        return f"{n / 1_000_000:.1f}M"
+
     def to_storage_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
