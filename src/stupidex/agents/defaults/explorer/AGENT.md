@@ -9,7 +9,7 @@ allowed_tools:
   - glob
   - grep
   - rag_search
-  - mcp_context7_*
+  - mcp::context7::*
   - get_file_skeleton
   - get_function
   - find_symbol_references
