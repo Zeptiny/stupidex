@@ -58,6 +58,8 @@
 - Não mostrar [interrupted by user]
 - Multiline todo items
 - MCP Servers não tem o mesmo espaçamento da esquerda como Subagentes e todo
+- Uso de tokens não aparenta estar sendo pego corretamente
+  - Por exemplo: Agent pensou por minutos, gerando grande texto, mas gerou poucos tokens
 
 
 ### Comandos

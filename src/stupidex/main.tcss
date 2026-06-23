@@ -68,6 +68,10 @@ UserMessageWidget {
     border-left: thick $primary;
 }
 
+UserMessageWidget > MarkdownParagraph {
+    margin: 0;
+}
+
 AssistantMessageWidget {
     margin: 0 1;
     padding: 1;

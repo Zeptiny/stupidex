@@ -479,8 +479,6 @@ class Stupidex(App):
 
                 if ws.content and msg.usage:
                     ws.content.msg.usage = msg.usage
-                if msg.usage:
-                    await self.rerender_footer()
         except asyncio.CancelledError:
             interrupted_msg = Message(
                 role=MessageRole.ASSISTANT,
@@ -553,11 +551,11 @@ class Stupidex(App):
             return
         if self._current_chain and self._current_chain.messages_area:
             await self._current_chain.messages_area.mount(widget)
-            widget.scroll_visible()
+            widget.scroll_visible(animate=False)
         else:
             container = self.query_one("#output", ScrollableContainer)
             await container.mount(widget)
-            widget.scroll_visible()
+            widget.scroll_visible(animate=False)
 
     def streaming_started(self) -> None:
         self.query_one("#spinner").display = True

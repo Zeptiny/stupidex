@@ -4,11 +4,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from rich.markdown import Markdown
 from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widgets import Collapsible, Static
+from textual.widgets import Markdown as TextualMarkdown
 
 from stupidex.domain.chain import Chain, ChainStatus
 from stupidex.domain.message import Message, MessageRole, MessageType
@@ -182,38 +182,10 @@ def _highlight_diff_content(content: str, style: str, lexer: str) -> Text:
     return code
 
 
-class MessageWidget(Static):
-    """Base widget for displaying a chat message."""
-
+class UserMessageWidget(TextualMarkdown):
     def __init__(self, msg: Message, **kwargs):
         self.msg = msg
-        self._last_render_time: float = 0
-        self._flush_scheduled: bool = False
-        super().__init__(self._build_renderable(), **kwargs)
-
-    def _build_renderable(self):
-        raise NotImplementedError
-
-    def update_content(self, content: str) -> None:
-        self.msg.content = content
-        now = time.monotonic()
-        if now - self._last_render_time >= _THROTTLE_INTERVAL:
-            self._last_render_time = now
-            self.update(self._build_renderable())
-        elif not self._flush_scheduled:
-            self._flush_scheduled = True
-            remaining = _THROTTLE_INTERVAL - (now - self._last_render_time)
-            self.set_timer(remaining, self._flush_update)
-
-    def _flush_update(self) -> None:
-        self._flush_scheduled = False
-        self._last_render_time = time.monotonic()
-        self.update(self._build_renderable())
-
-
-class UserMessageWidget(MessageWidget):
-    def _build_renderable(self):
-        return Markdown(self.msg.content)
+        super().__init__(msg.content, **kwargs)
 
 
 class ThinkingMessageWidget(Static):
@@ -292,17 +264,41 @@ class ThinkingMessageWidget(Static):
             self._do_update()
 
 
-class AssistantMessageWidget(MessageWidget):
-    def __init__(self, msg: Message, **kwargs):
-        self._cached_content: str | None = None
-        self._cached_renderable: Markdown | None = None
-        super().__init__(msg, **kwargs)
+_STREAM_APPEND_THRESHOLD = 200
 
-    def _build_renderable(self):
-        if self.msg.content != self._cached_content:
-            self._cached_content = self.msg.content
-            self._cached_renderable = Markdown(self.msg.content)
-        return self._cached_renderable
+
+class AssistantMessageWidget(TextualMarkdown):
+    """Assistant message using Textual's Markdown for incremental streaming.
+
+    Uses ``Markdown.append()`` which only re-parses from the last parsed line,
+    avoiding full-document re-parse on every update during streaming.
+    """
+
+    def __init__(self, msg: Message, *, loaded: bool = False, **kwargs):
+        self.msg = msg
+        self._last_render_time: float = 0
+        self._flush_scheduled: bool = False
+        super().__init__(msg.content, **kwargs)
+        self._last_appended_len: int = len(msg.content)
+
+    def update_content(self, content: str) -> None:
+        self.msg.content = content
+        delta = content[self._last_appended_len:]
+        if not delta:
+            return
+        if len(delta) >= _STREAM_APPEND_THRESHOLD:
+            self._last_appended_len = len(content)
+            self.append(delta)
+        elif not self._flush_scheduled:
+            self._flush_scheduled = True
+            self.set_timer(_THROTTLE_INTERVAL, self._flush_update)
+
+    def _flush_update(self) -> None:
+        self._flush_scheduled = False
+        delta = self.msg.content[self._last_appended_len:]
+        if delta:
+            self._last_appended_len = len(self.msg.content)
+            self.append(delta)
 
 
 class ChainFooterWidget(Static):
@@ -493,7 +489,7 @@ class ToolResultMessageWidget(Static):
 
 def create_message_widget(
     msg: Message, *, loaded: bool = False, classes: str | None = None
-) -> Static | None:
+) -> Static | TextualMarkdown | None:
     """Factory function to create the appropriate widget for a message."""
     match msg.type:
         case MessageType.THINKING:
@@ -507,7 +503,7 @@ def create_message_widget(
         case _:
             if msg.role == MessageRole.USER:
                 return UserMessageWidget(msg, classes=classes)
-            return AssistantMessageWidget(msg, classes=classes)
+            return AssistantMessageWidget(msg, loaded=loaded, classes=classes)
 
 
 @dataclass
@@ -524,21 +520,21 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
     if msg.type == MessageType.ERROR:
         w = ErrorMessageWidget(msg)
         await container.mount(w)
-        w.scroll_visible()
+        w.scroll_visible(animate=False)
         return
     if msg.type == MessageType.THINKING:
         if state.thinking is None:
             w = ThinkingMessageWidget(msg)
             await container.mount(w)
             state.thinking = w
-            w.scroll_visible()
+            w.scroll_visible(animate=False)
         else:
             state.thinking.update_content(msg.content)
     elif msg.type == MessageType.TOOL_CALL:
         tool_name = msg.metadata.get("tool_name", "")
         temp = Static(get_tool_action_label(tool_name), classes="temp-tool-message")
         await container.mount(temp)
-        temp.scroll_visible()
+        temp.scroll_visible(animate=False)
         state.temp.append(temp)
         if state.thinking:
             state.thinking.finish()
@@ -551,7 +547,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
                 await temp.remove()
         else:
             await container.mount(w)
-        w.scroll_visible()
+        w.scroll_visible(animate=False)
         if state.thinking:
             state.thinking.finish()
         state.thinking = None
@@ -559,7 +555,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
     elif msg.role == MessageRole.USER:
         w = UserMessageWidget(msg)
         await container.mount(w)
-        w.scroll_visible()
+        w.scroll_visible(animate=False)
         state.thinking = None
         state.content = None
     else:
@@ -571,7 +567,7 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
                 await container.mount(w)
                 state.content = w
                 state.thinking = None
-                w.scroll_visible()
+                w.scroll_visible(animate=False)
         else:
             if msg.content:
                 state.content.update_content(msg.content)
