@@ -298,7 +298,7 @@ class TestChainFormatTokens(unittest.TestCase):
     def test_just_under_million_stays_k(self):
         self.assertEqual(Chain.format_tokens(999_999), "1000.0k")
 
-    def test_million_rolls_to_M(self):
+    def test_million_rolls_to_m(self):
         self.assertEqual(Chain.format_tokens(1_000_000), "1.0M")
 
     def test_one_and_a_half_million(self):
