@@ -9,8 +9,8 @@ import aiofiles
 
 from stupidex.config import get_config
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
-from stupidex.tools._xml_utils import _cdata_text, _count_diff_changes, _xml_attr
-from stupidex.tools.ast import atomic_write, post_write_callbacks
+from stupidex.tools._xml_utils import _count_diff_changes
+from stupidex.tools.ast import _format_edit_result, _trigger_post_write_callbacks, atomic_write
 from stupidex.utils import directory_tree
 
 logger = logging.getLogger(__name__)
@@ -109,40 +109,6 @@ def _normalize_diff_lines(diff: list[str]) -> list[str]:
     return [line.rstrip("\r\n") for line in diff]
 
 
-def _format_edit_result_content(
-    file_path: str,
-    *,
-    success: bool,
-    replacements: int,
-    replace_all: bool,
-    added: int,
-    removed: int,
-    diff_text: str = "",
-    error: str | None = None,
-    message: str | None = None,
-) -> str:
-    attrs = [
-        f'path="{_xml_attr(file_path)}"',
-        f'success="{str(success).lower()}"',
-        f'replacements="{replacements}"',
-        f'replace_all="{str(replace_all).lower()}"',
-        f'added="{added}"',
-        f'removed="{removed}"',
-    ]
-    if error:
-        attrs.append(f'error="{_xml_attr(error)}"')
-
-    lines = [f"<edit_result {' '.join(attrs)}>"]
-    if message:
-        lines.extend(["<message><![CDATA[", _cdata_text(message), "]]></message>"])
-    if diff_text:
-        lines.extend(["<diff format=\"unified\"><![CDATA[", _cdata_text(diff_text), "]]></diff>"])
-    else:
-        lines.append("<diff format=\"unified\" />")
-    lines.append("</edit_result>")
-    return "\n".join(lines)
-
-
 async def execute_edit_tool(
     file_path: str, old_string: str, new_string: str, replace_all: bool = False
 ) -> ExecutorResult:
@@ -153,7 +119,7 @@ async def execute_edit_tool(
         if old_string not in content:
             return ExecutorResult(
                 display=f"String not found in {file_path}",
-                content=_format_edit_result_content(
+                content=_format_edit_result(
                     file_path,
                     success=False,
                     replacements=0,
@@ -169,7 +135,7 @@ async def execute_edit_tool(
         if not replace_all and match_count > 1:
             return ExecutorResult(
                 display=f"Multiple matches in {file_path}",
-                content=_format_edit_result_content(
+                content=_format_edit_result(
                     file_path,
                     success=False,
                     replacements=0,
@@ -202,11 +168,7 @@ async def execute_edit_tool(
         )
         diff_text = "\n".join(_normalize_diff_lines(diff))
 
-        for cb in post_write_callbacks:
-            try:
-                await cb(file_path)
-            except Exception as e:
-                logger.warning("Post-write callback failed for %s: %s", file_path, e)
+        cb_failures = await _trigger_post_write_callbacks(file_path)
 
         display = f"Edited {file_path}"
         added = 0
@@ -214,7 +176,9 @@ async def execute_edit_tool(
         if diff_text:
             added, removed = _count_diff_changes(diff_text)
             display = f"{display} (+{added} -{removed})"
-        result = _format_edit_result_content(
+        if cb_failures:
+            display += f" [warnings: {len(cb_failures)} callback(s) failed]"
+        result = _format_edit_result(
             file_path,
             success=True,
             replacements=replacements,
@@ -227,7 +191,7 @@ async def execute_edit_tool(
     except Exception as e:
         return ExecutorResult(
             display=f"Edit error {file_path}",
-            content=_format_edit_result_content(
+            content=_format_edit_result(
                 file_path,
                 success=False,
                 replacements=0,
@@ -368,15 +332,14 @@ async def execute_write_tool(file_path: str, content: str) -> ExecutorResult:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, atomic_write, str(path), content)
 
-        for cb in post_write_callbacks:
-            try:
-                await cb(str(path))
-            except Exception as e:
-                logger.warning("Post-write callback failed for %s: %s", file_path, e)
+        cb_failures = await _trigger_post_write_callbacks(str(path))
 
         lines = content.splitlines()
+        display = f"Wrote {len(lines)} lines to {path}"
+        if cb_failures:
+            display += f" [warnings: {len(cb_failures)} callback(s) failed]"
         return ExecutorResult(
-            display=f"Wrote {len(lines)} lines to {path}",
+            display=display,
             content=f"File written successfully, path: {path}, Showing lines 1-{len(lines)} of written file:\n"
             + "\n".join(f"{i + 1} | {line.rstrip()}" for i, line in enumerate(lines)),
         )

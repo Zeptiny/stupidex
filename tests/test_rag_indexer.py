@@ -970,9 +970,9 @@ async def test_index_project_batch_hash_update_single_transaction(tmp_path, monk
         assert hashes[fp]
 
 
-def test_index_status_from_store():
-    """P2-154: IndexStatus.from_store converts a StoreStatus to IndexStatus."""
-    from stupidex.rag.indexer import IndexStatus
+def test_get_status_returns_store_status():
+    """P2-154: get_status returns a StoreStatus directly (IndexStatus removed)."""
+    from stupidex.rag.indexer import get_status
     from stupidex.rag.store import StoreStatus
 
     s = StoreStatus(
@@ -981,8 +981,11 @@ def test_index_status_from_store():
         last_indexed="2026-06-22T00:00:00+00:00",
         last_index_duration=1.5,
     )
-    idx = IndexStatus.from_store(s)
-    assert idx.total_chunks == 42
-    assert idx.total_files == 7
-    assert idx.last_indexed == "2026-06-22T00:00:00+00:00"
-    assert idx.last_index_duration == 1.5
+    assert s.total_chunks == 42
+    assert s.total_files == 7
+    assert s.last_indexed == "2026-06-22T00:00:00+00:00"
+    assert s.last_index_duration == 1.5
+
+    # Verify get_status is annotated to return StoreStatus
+    import inspect
+    assert inspect.signature(get_status).return_annotation is StoreStatus

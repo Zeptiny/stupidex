@@ -27,7 +27,7 @@ class TestConvertMCPTool(unittest.TestCase):
                 "required": ["name"],
             },
         )
-        registry_name, tool, raw_schema = convert_mcp_tool("myserver", mcp_tool)
+        registry_name, tool = convert_mcp_tool("myserver", mcp_tool)
 
         self.assertEqual(registry_name, "mcp::myserver::greet")
         self.assertEqual(tool.name, "mcp::myserver::greet")
@@ -36,7 +36,6 @@ class TestConvertMCPTool(unittest.TestCase):
         self.assertEqual(tool.parameters.properties["name"].type, "string")
         self.assertEqual(tool.parameters.properties["name"].description, "Person's name")
         self.assertEqual(tool.parameters.required, ["name"])
-        self.assertIs(raw_schema, mcp_tool.inputSchema)
 
     def test_nested_object_params(self):
         mcp_tool = _FakeMCPTool(
@@ -53,13 +52,13 @@ class TestConvertMCPTool(unittest.TestCase):
                 "required": ["user"],
             },
         )
-        _, tool, raw_schema = convert_mcp_tool("srv", mcp_tool)
+        _, tool = convert_mcp_tool("srv", mcp_tool)
 
         self.assertIn("user", tool.parameters.properties)
         self.assertEqual(tool.parameters.properties["user"].type, "object")
         self.assertEqual(tool.parameters.properties["user"].description, "User object")
 
-    def test_enum_params_preserved_in_raw_schema(self):
+    def test_enum_params_type_preserved(self):
         mcp_tool = _FakeMCPTool(
             name="set_mode",
             description="Set mode",
@@ -75,20 +74,19 @@ class TestConvertMCPTool(unittest.TestCase):
                 "required": ["mode"],
             },
         )
-        _, tool, raw_schema = convert_mcp_tool("srv", mcp_tool)
+        _, tool = convert_mcp_tool("srv", mcp_tool)
 
         self.assertEqual(tool.parameters.properties["mode"].type, "string")
-        self.assertIn("enum", raw_schema["properties"]["mode"])
-        self.assertEqual(raw_schema["properties"]["mode"]["enum"], ["fast", "slow"])
+        self.assertEqual(tool.parameters.properties["mode"].description, "Mode to set")
 
     def test_registry_name_format(self):
         mcp_tool = _FakeMCPTool(name="tool1", description="", input_schema={})
-        registry_name, _, _ = convert_mcp_tool("server_a", mcp_tool)
+        registry_name, _ = convert_mcp_tool("server_a", mcp_tool)
         self.assertEqual(registry_name, "mcp::server_a::tool1")
 
     def test_empty_input_schema(self):
         mcp_tool = _FakeMCPTool(name="noop", description="Does nothing", input_schema={})
-        _, tool, raw_schema = convert_mcp_tool("srv", mcp_tool)
+        _, tool = convert_mcp_tool("srv", mcp_tool)
 
         self.assertEqual(tool.parameters.properties, {})
         self.assertEqual(tool.parameters.required, [])
@@ -110,7 +108,7 @@ class TestConvertMCPTool(unittest.TestCase):
                 "required": [],
             },
         )
-        _, tool, _ = convert_mcp_tool("srv", mcp_tool)
+        _, tool = convert_mcp_tool("srv", mcp_tool)
 
         self.assertEqual(tool.parameters.properties["ids"].type, "array")
         self.assertEqual(tool.parameters.properties["ids"].items, {"type": "string"})

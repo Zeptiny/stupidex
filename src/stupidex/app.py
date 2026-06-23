@@ -609,7 +609,7 @@ class Stupidex(App):
                 import litellm
 
                 from stupidex.config import get_config, get_model_for_tier
-                from stupidex.llm.providers import resolve_model_ref
+                from stupidex.llm.providers import qualify_model, resolve_model_ref
 
                 model = get_model_for_tier("tolo")
                 user_content = ""
@@ -636,9 +636,7 @@ class Stupidex(App):
                 litellm_provider, model_id, base_url, api_key = resolve_model_ref(
                     model or get_config().default_model
                 )
-                litellm_model = (
-                    f"{litellm_provider}/{model_id}" if litellm_provider else model_id
-                )
+                litellm_model = qualify_model(litellm_provider, model_id)
                 response = await litellm.acompletion(
                     model=litellm_model,
                     messages=[{"role": "user", "content": prompt}],

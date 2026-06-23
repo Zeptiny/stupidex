@@ -22,7 +22,7 @@ from stupidex.domain.message import Message, MessageRole, MessageType, Usage
 from stupidex.domain.session import get_current_session_id
 from stupidex.domain.tool import ExecutorResult, Tool
 from stupidex.llm.dynamic_system_prompt import build_dynamic_system_prompt
-from stupidex.llm.providers import ProviderResolutionError, resolve_model_ref
+from stupidex.llm.providers import ProviderResolutionError, qualify_model, resolve_model_ref
 from stupidex.llm.static_system_prompt import build_static_system_prompt
 from stupidex.tools import get_tool_registry
 
@@ -1039,7 +1039,7 @@ async def stream_response(
     tools_list = [entry["tool"].to_dict() for entry in filtered_tools.values()]
 
     litellm_provider, model_id, base_url, api_key = resolve_model_ref(model or cfg.default_model)
-    litellm_model = f"{litellm_provider}/{model_id}" if litellm_provider else model_id
+    litellm_model = qualify_model(litellm_provider, model_id)
 
     idle_timeout = cfg.llm_stream_idle_timeout
     retries = max(0, cfg.llm_stream_retries)

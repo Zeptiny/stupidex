@@ -16,7 +16,7 @@ from stupidex.agents import get_agent_registry  # noqa: E402
 from stupidex.config import HOME_CONFIG_DIR, get_model_for_tier  # noqa: E402
 from stupidex.domain.session import get_current_session_id  # noqa: E402
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties  # noqa: E402
-from stupidex.llm.providers import ProviderResolutionError, resolve_model_ref  # noqa: E402
+from stupidex.llm.providers import ProviderResolutionError, qualify_model, resolve_model_ref  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -243,12 +243,6 @@ def _choice_content(response: object) -> str:
         return str(response).strip()
 
 
-def _model_name(litellm_provider: str, model_id: str) -> str:
-    if litellm_provider:
-        return f"{litellm_provider}/{model_id}"
-    return model_id
-
-
 async def _summarize_result(url: str, title: str, content_type: str, content: str, query: str) -> ExecutorResult:
     agent = get_agent_registry().get("web-fetch")
     if agent is None:
@@ -280,7 +274,7 @@ async def _summarize_result(url: str, title: str, content_type: str, content: st
 
     try:
         response = await litellm.acompletion(
-            model=_model_name(litellm_provider, model_id),
+            model=qualify_model(litellm_provider, model_id),
             messages=[
                 {"role": "system", "content": agent.system_prompt},
                 {"role": "user", "content": user_message},

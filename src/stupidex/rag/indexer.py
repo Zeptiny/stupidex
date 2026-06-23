@@ -43,26 +43,6 @@ class IndexResult:
     duration_seconds: float = 0.0
 
 
-# P2-154: IndexStatus is a thin view over StoreStatus to avoid duplicating
-# the dataclass field set. It is kept as a separate type because it is part
-# of the public ``rag.indexer`` API surface (re-exported in ``rag/__init__``).
-@dataclass
-class IndexStatus:
-    total_files: int = 0
-    total_chunks: int = 0
-    last_indexed: str | None = None
-    last_index_duration: float | None = None
-
-    @classmethod
-    def from_store(cls, s: StoreStatus) -> "IndexStatus":
-        return cls(
-            total_files=s.total_files,
-            total_chunks=s.total_chunks,
-            last_indexed=s.last_indexed,
-            last_index_duration=s.last_index_duration,
-        )
-
-
 async def update_file(file_path: str, project_path: str | None = None) -> None:
     """Re-index a single file in the RAG store (used by post-write callbacks).
 
@@ -310,12 +290,12 @@ async def _index_project_impl(
     return stats
 
 
-def get_status(project_path: str | None = None) -> IndexStatus:
+def get_status(project_path: str | None = None) -> StoreStatus:
     """Return current index status without running a new index."""
     if project_path is None:
         project_path = str(Path.cwd())
     store = RAGStore(project_path)
-    return IndexStatus.from_store(store.status())
+    return store.status()
 
 
 def clear_index(project_path: str | None = None) -> None:

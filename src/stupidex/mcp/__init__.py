@@ -251,7 +251,7 @@ class MCPManager:
 
         tools_result = await session.list_tools()
         for tool in tools_result.tools:
-            registry_name, tool_obj, raw_schema = convert_mcp_tool(server_name, tool)
+            registry_name, tool_obj = convert_mcp_tool(server_name, tool)
             if registry_name in self._tools:
                 logger.warning(
                     "MCP tool '%s' from server '%s' shadows existing registration",
@@ -261,7 +261,6 @@ class MCPManager:
             self._tools[registry_name] = {
                 "tool": tool_obj,
                 "executor": make_mcp_executor(self.call_tool, server_name, tool.name),
-                "input_schema": raw_schema,
             }
 
         resources_result = await session.list_resources()

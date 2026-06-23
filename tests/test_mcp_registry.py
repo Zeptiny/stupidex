@@ -46,27 +46,26 @@ def _mcp_tool(name: str, description: str = "", schema: dict | None = None):
 
 class TestRegistryNaming(unittest.TestCase):
     def test_registry_name_uses_colon_delimiter(self):
-        registry_name, _, _ = convert_mcp_tool("my-server", _mcp_tool("search"))
+        registry_name, _ = convert_mcp_tool("my-server", _mcp_tool("search"))
         self.assertEqual(registry_name, "mcp::my-server::search")
 
     def test_collision_avoided_between_ambiguous_names(self):
         """`server="a", tool="b_c"` vs `server="a_b", tool="c"` must differ."""
-        name_a, _, _ = convert_mcp_tool("a", _mcp_tool("b_c"))
-        name_ab, _, _ = convert_mcp_tool("a_b", _mcp_tool("c"))
+        name_a, _ = convert_mcp_tool("a", _mcp_tool("b_c"))
+        name_ab, _ = convert_mcp_tool("a_b", _mcp_tool("c"))
         self.assertNotEqual(name_a, name_ab)
         self.assertEqual(name_a, "mcp::a::b_c")
         self.assertEqual(name_ab, "mcp::a_b::c")
 
-    def test_convert_mcp_tool_passes_through_schema(self):
+    def test_convert_mcp_tool_builds_tool_from_schema(self):
         schema = {
             "type": "object",
             "properties": {"q": {"type": "string", "description": "query"}},
             "required": ["q"],
         }
-        registry_name, tool, raw_schema = convert_mcp_tool("srv", _mcp_tool("t", schema=schema))
+        registry_name, tool = convert_mcp_tool("srv", _mcp_tool("t", schema=schema))
         self.assertEqual(registry_name, "mcp::srv::t")
         self.assertEqual(tool.name, "mcp::srv::t")
-        self.assertEqual(raw_schema, schema)
         self.assertEqual(tool.parameters.required, ["q"])
 
 

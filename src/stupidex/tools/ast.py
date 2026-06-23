@@ -115,12 +115,13 @@ def _format_edit_result(
     diff_text: str = "",
     error: str | None = None,
     message: str | None = None,
+    replace_all: bool = False,
 ) -> str:
     attrs = [
         f'path="{_xml_attr(file_path)}"',
         f'success="{str(success).lower()}"',
         f'replacements="{replacements}"',
-        'replace_all="false"',
+        f'replace_all="{str(replace_all).lower()}"',
         f'added="{added}"',
         f'removed="{removed}"',
     ]

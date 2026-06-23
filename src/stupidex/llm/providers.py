@@ -27,6 +27,12 @@ from stupidex.config import get_config  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+
+def qualify_model(provider: str | None, model_id: str) -> str:
+    """Build a litellm-qualified model string: ``provider/model`` or bare ``model``."""
+    return f"{provider}/{model_id}" if provider else model_id
+
+
 _SUPPORTED_FIELDS = ("max_input_tokens", "max_output_tokens", "supports_vision", "mode")
 _DEFAULT_METADATA: dict = {
     "max_input_tokens": None,
@@ -141,7 +147,7 @@ def resolve_model_metadata(alias: str, model_id: str) -> dict:
     # A model-scoped litellm_provider override takes precedence over the
     # provider entry's litellm_provider when forming the litellm query.
     effective_provider = override.get("litellm_provider") or provider.get("litellm_provider")
-    qualified = f"{effective_provider}/{model_id}" if effective_provider else model_id
+    qualified = qualify_model(effective_provider, model_id)
 
     registry: dict = {}
     try:

@@ -59,9 +59,7 @@ def resolve_skill_dependencies(
         if not any(fnmatch(dep_name, p) for p in allowed):
             raise ValueError(f"Skill '{name}' requires '{dep_name}' which is not available for this agent")
         dep_skills = resolve_skill_dependencies(dep_name, registry, allowed, _stack, _resolved)
-        for ds in dep_skills:
-            if ds.name not in [s.name for s in result]:
-                result.append(ds)
+        result.extend(dep_skills)
 
     _stack.discard(name)
     _resolved.add(name)

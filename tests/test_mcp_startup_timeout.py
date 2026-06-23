@@ -254,7 +254,7 @@ class TestMCPStartupTimeout(unittest.IsolatedAsyncioTestCase):
         manager = MCPManager()
         # Simulate tools/sessions registered by a since-superseded state so we
         # can assert the timeout branch actually clears them.
-        manager._tools["mcp::srv-0::dead_tool"] = {"tool": object(), "executor": None, "input_schema": {}}
+        manager._tools["mcp::srv-0::dead_tool"] = {"tool": object(), "executor": None}
         manager._sessions["srv-0"] = None  # type: ignore[assignment]
         handler = _RecordingHandler()
         logger = logging.getLogger("stupidex.mcp")

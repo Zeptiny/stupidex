@@ -762,8 +762,8 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     def __init__(self, config: Config) -> None:
         super().__init__()
-        self._config = Config(**asdict(config))
-        self._original = Config(**asdict(config))
+        self._config = self._clone_config(config)
+        self._original = self._clone_config(config)
         self._items_cache: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
@@ -1228,6 +1228,10 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     # ── Helpers ───────────────────────────────────────────────────────
 
+    @staticmethod
+    def _clone_config(config: Config) -> Config:
+        return Config(**asdict(config))
+
     def _render_keyed_list(
         self,
         container: ScrollableContainer,
@@ -1281,8 +1285,8 @@ class SettingsScreen(ModalScreen[Config | None]):
         if config.theme != self._original.theme:
             self.app.switch_theme(config.theme)
 
-        self._config = Config(**asdict(config))
-        self._original = Config(**asdict(config))
+        self._config = self._clone_config(config)
+        self._original = self._clone_config(config)
         self.query_one("#settings-error", Static).update("")
         self._update_tab_labels()
 
