@@ -93,12 +93,6 @@ class StreamResponseSkillToolFilterTest(unittest.IsolatedAsyncioTestCase):
         cfg = Config()
         reg = _registry("work", "plan", "debug", "commit")
 
-        skill_tool_entry = {"tool": build_skill_tool(), "executor": AsyncMock()}
-        tool_registry_stub = {
-            "skill": skill_tool_entry,
-            "list_skills": {"tool": build_list_skills_tool(), "executor": AsyncMock()},
-        }
-
         captured: dict = {}
 
         async def fake_acompletion(**kwargs):
@@ -115,18 +109,25 @@ class StreamResponseSkillToolFilterTest(unittest.IsolatedAsyncioTestCase):
         with patch("stupidex.llm.client.get_config", return_value=cfg), \
                 patch("stupidex.llm.client.build_dynamic_system_prompt",
                       new=AsyncMock(return_value=dummy_dynamic)), \
-                patch("stupidex.llm.client.get_tool_registry", return_value=tool_registry_stub), \
                 patch("stupidex.tools.skill.get_skill_registry", return_value=reg), \
                 patch("stupidex.llm.client.litellm.acompletion", new=acompletion_mock):
-            gen = llm_client.stream_response(
-                messages=[],
-                model=None,
-                allowed_tools=allowed_tools if allowed_tools is not None else ["skill", "list_skills"],
-                system_prompt="",
-                allowed_skills=allowed_skills,
-            )
-            async for _ in gen:
-                pass
+
+            skill_tool_entry = {"tool": build_skill_tool(), "executor": AsyncMock()}
+            tool_registry_stub = {
+                "skill": skill_tool_entry,
+                "list_skills": {"tool": build_list_skills_tool(), "executor": AsyncMock()},
+            }
+
+            with patch("stupidex.llm.client.get_tool_registry", return_value=tool_registry_stub):
+                gen = llm_client.stream_response(
+                    messages=[],
+                    model=None,
+                    allowed_tools=allowed_tools if allowed_tools is not None else ["skill", "list_skills"],
+                    system_prompt="",
+                    allowed_skills=allowed_skills,
+                )
+                async for _ in gen:
+                    pass
 
         return captured
 
