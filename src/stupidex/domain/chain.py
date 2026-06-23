@@ -45,6 +45,20 @@ class Chain:
         secs = seconds % 60
         return f"{minutes}m {secs:.0f}s"
 
+    @staticmethod
+    def format_tokens(n: int) -> str:
+        """Compact token count: ``1.2k`` / ``12.3k`` / ``1.5M``.
+
+        Below 1000 the raw integer is returned unchanged (e.g. ``999``).
+        Cached tokens that sum to zero still surface as ``0`` rather than
+        being filtered, so the caller decides whether to render a segment.
+        """
+        if n < 1000:
+            return str(n)
+        if n < 1_000_000:
+            return f"{n / 1000:.1f}k"
+        return f"{n / 1_000_000:.1f}M"
+
     def to_storage_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
@@ -85,19 +99,25 @@ def _reconcile_orphan_tool_results(messages: list[Message]) -> None:
     if not messages:
         return
     seen_tool_call_ids: set[str] = set()
+    seen_result_ids: set[str] = set()
     keep: list[Message] = []
     for msg in messages:
-        if (
-            msg.role.value == "tool"
-            and msg.tool_call_id
-            and msg.tool_call_id not in seen_tool_call_ids
-        ):
-            log.debug(
-                "Reconciling chain: dropping orphan TOOL_RESULT "
-                "for tool_call_id=%s (no preceding assistant tool_calls)",
-                msg.tool_call_id,
-            )
-            continue
+        if msg.role.value == "tool" and msg.tool_call_id:
+            if msg.tool_call_id in seen_result_ids:
+                log.debug(
+                    "Reconciling chain: dropping duplicate TOOL_RESULT "
+                    "for tool_call_id=%s (already seen earlier in this chain)",
+                    msg.tool_call_id,
+                )
+                continue
+            if msg.tool_call_id not in seen_tool_call_ids:
+                log.debug(
+                    "Reconciling chain: dropping orphan TOOL_RESULT "
+                    "for tool_call_id=%s (no preceding assistant tool_calls)",
+                    msg.tool_call_id,
+                )
+                continue
+            seen_result_ids.add(msg.tool_call_id)
         if msg.tool_calls:
             for tc in msg.tool_calls:
                 tid = tc.get("id")

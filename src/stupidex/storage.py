@@ -81,6 +81,11 @@ def delete_session(session_id: str) -> bool:
     except OSError as e:
         log.warning("Failed to delete session file %s: %s", session_id, e)
         return False
+    from stupidex.llm.client import cleanup_tool_output_cache
+    try:
+        cleanup_tool_output_cache(session_id)
+    except Exception:
+        log.debug("Failed to clean tool-output cache for %s", session_id, exc_info=True)
     cache_dir = HOME_CONFIG_DIR / "cache" / "web-fetch" / session_id
     if cache_dir.exists():
         try:

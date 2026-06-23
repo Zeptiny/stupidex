@@ -8,6 +8,12 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 100
 MAX_RETRIES = 3
 
+# Exception types that are almost certainly programming bugs, not transient
+# provider failures — retrying them just wastes time and (for API providers)
+# tokens. KeyError/ValueError are deliberately excluded: a provider returning
+# a malformed payload once can recover on retry.
+_NON_RETRYABLE = (TypeError, AttributeError)
+
 
 class EmbeddingError(Exception):
     pass
@@ -77,10 +83,32 @@ class Embedder:
             )
         embedder = self._fastembed_cache[model]
 
-        def _run() -> list[list[float]]:
-            return [v.tolist() for v in embedder.embed(texts)]
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                def _run() -> list[list[float]]:
+                    return [v.tolist() for v in embedder.embed(texts)]
 
-        return await asyncio.to_thread(_run)
+                return await asyncio.to_thread(_run)
+            except _NON_RETRYABLE as e:
+                raise EmbeddingError(
+                    f"fastembed inference failed (non-retryable {type(e).__name__}): {e}"
+                ) from e
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    wait = 2**attempt
+                    logger.warning(
+                        "fastembed attempt %d failed (%s), retrying in %ds...",
+                        attempt + 1,
+                        e,
+                        wait,
+                    )
+                    await asyncio.sleep(wait)
+
+        raise EmbeddingError(
+            f"fastembed inference failed after {MAX_RETRIES} attempts: {last_error}"
+        )
 
     async def _embed_litellm(
         self,
@@ -89,24 +117,38 @@ class Embedder:
         base_url: str,
         api_key: str | None,
     ) -> list[list[float]]:
+        try:
+            from litellm import aembedding
+        except ImportError as err:
+            raise EmbeddingError(
+                "litellm is required for embeddings. "
+                "Install it with: pip install litellm"
+            ) from err
+
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES):
             try:
-                from litellm import aembedding
-
                 response = await aembedding(
                     model=model,
                     input=texts,
                     base_url=base_url or None,
                     api_key=api_key,
                 )
+                if not response.data:
+                    raise EmbeddingError(
+                        f"Embedding provider returned empty response.data for model: {model}"
+                    )
                 return [item["embedding"] for item in response.data]
-            except ImportError as err:
+            except EmbeddingError:
+                raise
+            except _NON_RETRYABLE as e:
+                # Programming/config errors won't fix themselves on retry.
                 raise EmbeddingError(
-                    "litellm is required for embeddings. "
-                    "Install it with: pip install litellm"
-                ) from err
+                    f"Embedding failed (non-retryable {type(e).__name__}): {e}\n"
+                    "Check your embedding model configuration in config.json or set "
+                    "STUPIDEX_RAG_EMBEDDING_MODEL env var."
+                ) from e
             except Exception as e:
                 last_error = e
                 if attempt < MAX_RETRIES - 1:
@@ -127,4 +169,6 @@ class Embedder:
 
     async def embed_single(self, text: str) -> list[float]:
         results = await self.embed([text])
+        if not results:
+            raise EmbeddingError("Embedding returned no vectors for input text")
         return results[0]

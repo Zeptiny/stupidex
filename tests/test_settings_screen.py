@@ -1,10 +1,12 @@
 """Tests for the SettingsScreen modal, NewProviderForm, and NewMCPServerForm."""
 
 import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+from textual.widgets import Button, Input, Select
 
 from stupidex.config import (
     Config,
@@ -13,6 +15,7 @@ from stupidex.config import (
     _convert_from_dict,
     validate_config,
 )
+from stupidex.screens.picker import OptionPicker, PickerItem
 from stupidex.screens.settings import NewMCPServerForm, NewProviderForm, SettingsScreen
 
 # ── _convert_from_dict ───────────────────────────────────────────────────────
@@ -835,9 +838,498 @@ class TestMainStartupGate:
             patch.object(main, "Stupidex") as mock_app_cls,
         ):
             mock_app = MagicMock()
+            # MagicMock attributes are truthy by default; ``restart_requested``
+            # must be falsy or main() calls os.execv, re-exec'ing the process.
+            mock_app.restart_requested = False
             mock_app_cls.return_value = mock_app
 
             main.main()
 
         mock_app_cls.assert_called_once()
         mock_app.run.assert_called_once()
+
+
+# ── _on_edit_provider_result (rename / overwrite behavior) ──────────────────
+
+
+class TestOnEditProviderResult(unittest.TestCase):
+    def _make_screen(self, providers=None):
+        cfg = Config()
+        cfg.providers = dict(providers) if providers else {}
+        screen = SettingsScreen(cfg)
+        screen._refresh_tab = MagicMock()
+        screen._mark_dirty = MagicMock()
+        screen.notify = MagicMock()
+        return screen
+
+    def test_rename_removes_old_alias_adds_new(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "new", "models": {}}, original_alias="old"
+        )
+        self.assertIn("new", screen._config.providers)
+        self.assertNotIn("old", screen._config.providers)
+
+    def test_same_alias_overwrites_in_place_no_pop(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "old", "models": {"m": {}}}, original_alias="old"
+        )
+        self.assertEqual(set(screen._config.providers.keys()), {"old"})
+        self.assertEqual(screen._config.providers["old"]["models"], {"m": {}})
+
+    def test_rename_to_existing_alias_rejected(self):
+        screen = self._make_screen(
+            {"old": {"base_url": "old-url"}, "existing": {"base_url": "exist-url"}}
+        )
+        screen._on_edit_provider_result(
+            result={"_alias": "existing", "models": {}}, original_alias="old"
+        )
+        # rename cancelled: original entry UNCHANGED, existing untouched
+        self.assertIn("old", screen._config.providers)
+        self.assertIn("existing", screen._config.providers)
+        self.assertEqual(screen._config.providers["existing"]["base_url"], "exist-url")
+        self.assertEqual(screen._config.providers["old"]["base_url"], "old-url")
+        screen.notify.assert_called_once()
+        args, kwargs = screen.notify.call_args
+        self.assertEqual(kwargs.get("severity"), "warning")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("providers")
+
+    def test_original_alias_none_just_inserts(self):
+        screen = self._make_screen({"keep": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "new", "models": {}}, original_alias=None
+        )
+        self.assertIn("new", screen._config.providers)
+        self.assertIn("keep", screen._config.providers)
+
+    def test_result_missing_alias_key_raises_keyerror(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        with self.assertRaises(KeyError):
+            screen._on_edit_provider_result(
+                result={"models": {}}, original_alias="old"
+            )
+
+    def test_edit_marks_providers_dirty(self):
+        screen = self._make_screen({"old": {"base_url": "u"}})
+        screen._on_edit_provider_result(
+            result={"_alias": "old", "models": {}}, original_alias="old"
+        )
+        screen._mark_dirty.assert_called_once_with("providers")
+
+
+# ── _on_edit_mcp_result (rename / overwrite behavior) ───────────────────────
+
+
+class TestOnEditMcpResult(unittest.TestCase):
+    def _make_screen(self, mcp_servers=None):
+        cfg = Config()
+        cfg.mcp_servers = dict(mcp_servers) if mcp_servers else {}
+        screen = SettingsScreen(cfg)
+        screen._refresh_tab = MagicMock()
+        screen._mark_dirty = MagicMock()
+        screen.notify = MagicMock()
+        return screen
+
+    def test_rename_removes_old_name_adds_new(self):
+        screen = self._make_screen({"old": {"command": "x"}})
+        screen._on_edit_mcp_result(
+            result={"_name": "new", "command": "x"}, original_name="old"
+        )
+        self.assertIn("new", screen._config.mcp_servers)
+        self.assertNotIn("old", screen._config.mcp_servers)
+
+    def test_same_name_overwrites_in_place(self):
+        screen = self._make_screen({"old": {"command": "x"}})
+        screen._on_edit_mcp_result(
+            result={"_name": "old", "command": "y", "args": ["a"]}, original_name="old"
+        )
+        self.assertEqual(set(screen._config.mcp_servers.keys()), {"old"})
+        self.assertEqual(screen._config.mcp_servers["old"]["command"], "y")
+
+    def test_rename_to_existing_name_rejected(self):
+        screen = self._make_screen(
+            {
+                "old": {"command": "old-cmd"},
+                "existing": {"command": "exist-cmd"},
+            }
+        )
+        screen._on_edit_mcp_result(
+            result={"_name": "existing", "command": "new-cmd"}, original_name="old"
+        )
+        # rename cancelled: original entry UNCHANGED, existing untouched
+        self.assertIn("old", screen._config.mcp_servers)
+        self.assertIn("existing", screen._config.mcp_servers)
+        self.assertEqual(screen._config.mcp_servers["existing"]["command"], "exist-cmd")
+        self.assertEqual(screen._config.mcp_servers["old"]["command"], "old-cmd")
+        screen.notify.assert_called_once()
+        args, kwargs = screen.notify.call_args
+        self.assertEqual(kwargs.get("severity"), "warning")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("mcp_servers")
+
+    def test_edit_marks_mcp_servers_dirty(self):
+        screen = self._make_screen({"old": {"command": "x"}})
+        screen._on_edit_mcp_result(
+            result={"_name": "old", "command": "x"}, original_name="old"
+        )
+        screen._mark_dirty.assert_called_once_with("mcp_servers")
+
+
+# ── NewProviderForm model-row removal (P2-210) ───────────────────────────────
+
+
+class TestNewProviderFormRemoveModelRow(unittest.TestCase):
+    def _make_form(self) -> NewProviderForm:
+        form = NewProviderForm("Test")
+        form.query_one = MagicMock()
+        form.query = MagicMock(return_value=[])
+        return form
+
+    def _entry(self, idx: int, model_id: str = "") -> dict:
+        return {
+            "idx": idx,
+            "model_id": model_id,
+            "max_input_tokens": "",
+            "max_output_tokens": "",
+            "supports_vision": False,
+            "mode": "",
+        }
+
+    def test_remove_model_entry_removes_from_internal_state(self):
+        form = self._make_form()
+        form._model_entries = [self._entry(0, "a"), self._entry(1, "b")]
+        form._remove_model_entry(0)
+        self.assertEqual(len(form._model_entries), 1)
+        self.assertEqual(form._model_entries[0]["idx"], 1)
+        self.assertEqual(form._model_entries[0]["model_id"], "b")
+
+    def test_remove_model_entry_removes_matching_dom_row(self):
+        form = self._make_form()
+        matching_row = MagicMock()
+        matching_row.query_one.return_value = MagicMock()
+        other_row = MagicMock()
+        other_row.query_one.side_effect = Exception("no button")
+        form.query = MagicMock(return_value=[other_row, matching_row])
+        form._model_entries = [self._entry(0, "x")]
+        form._remove_model_entry(0)
+        matching_row.remove.assert_called_once()
+        other_row.remove.assert_not_called()
+
+    def test_on_button_pressed_pf_model_rm_removes_entry(self):
+        form = self._make_form()
+        form._model_entries = [self._entry(5, "to-remove")]
+        event = Button.Pressed(button=MagicMock(id="pf-model-rm-5"))
+        form.on_button_pressed(event)
+        self.assertEqual(form._model_entries, [])
+
+
+# ── NewProviderForm on_input_changed / on_select_changed (P2-211) ────────────
+
+
+class TestNewProviderFormStateSync(unittest.TestCase):
+    """on_input_changed / on_select_changed sync model-row widget state into
+    `self._model_entries`. (Provider alias is read at save time, not synced.)"""
+
+    def _make_form_with_entry(self) -> NewProviderForm:
+        form = NewProviderForm("Test")
+        form.query_one = MagicMock()
+        form.query = MagicMock(return_value=[])
+        form._model_entries = [self._entry(0)]
+        return form
+
+    def _entry(self, idx: int) -> dict:
+        return {
+            "idx": idx,
+            "model_id": "",
+            "max_input_tokens": "",
+            "max_output_tokens": "",
+            "supports_vision": False,
+            "mode": "",
+        }
+
+    def test_on_input_changed_updates_model_id(self):
+        form = self._make_form_with_entry()
+        event = MagicMock(spec=Input.Changed)
+        event.input = MagicMock(id="pf-model-id-0")
+        event.value = "gpt-4o"
+        form.on_input_changed(event)
+        self.assertEqual(form._model_entries[0]["model_id"], "gpt-4o")
+
+    def test_on_input_changed_updates_max_input_tokens(self):
+        form = self._make_form_with_entry()
+        event = MagicMock(spec=Input.Changed)
+        event.input = MagicMock(id="pf-model-mit-0")
+        event.value = "128000"
+        form.on_input_changed(event)
+        self.assertEqual(form._model_entries[0]["max_input_tokens"], "128000")
+
+    def test_on_input_changed_updates_max_output_tokens(self):
+        form = self._make_form_with_entry()
+        event = MagicMock(spec=Input.Changed)
+        event.input = MagicMock(id="pf-model-mot-0")
+        event.value = "16384"
+        form.on_input_changed(event)
+        self.assertEqual(form._model_entries[0]["max_output_tokens"], "16384")
+
+    def test_on_input_changed_ignores_unrelated_input(self):
+        form = self._make_form_with_entry()
+        before = dict(form._model_entries[0])
+        event = MagicMock(spec=Input.Changed)
+        event.input = MagicMock(id="pf-alias")
+        event.value = "ignored"
+        form.on_input_changed(event)
+        self.assertEqual(form._model_entries[0], before)
+
+    def test_on_select_changed_updates_supports_vision(self):
+        form = self._make_form_with_entry()
+        event = MagicMock(spec=Select.Changed)
+        event.select = MagicMock(id="pf-model-vision-0")
+        event.value = True
+        form.on_select_changed(event)
+        self.assertIs(form._model_entries[0]["supports_vision"], True)
+
+    def test_on_select_changed_updates_mode(self):
+        form = self._make_form_with_entry()
+        event = MagicMock(spec=Select.Changed)
+        event.select = MagicMock(id="pf-model-mode-0")
+        event.value = "embeddings"
+        form.on_select_changed(event)
+        self.assertEqual(form._model_entries[0]["mode"], "embeddings")
+
+    def test_on_select_changed_ignores_unrelated_select(self):
+        form = self._make_form_with_entry()
+        before = dict(form._model_entries[0])
+        event = MagicMock(spec=Select.Changed)
+        event.select = MagicMock(id="something-else-0")
+        event.value = "chat"
+        form.on_select_changed(event)
+        self.assertEqual(form._model_entries[0], before)
+
+
+# ── ConfirmScreen 'Close and Save' path (P2-212) ────────────────────────────
+
+
+class TestConfirmScreenSaveClose(unittest.TestCase):
+    def test_save_button_dismisses_save_close(self):
+        from stupidex.screens.settings import ConfirmScreen
+
+        screen = ConfirmScreen("title", "msg")
+        screen.dismiss = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="settings-confirm-save")))
+        screen.dismiss.assert_called_once_with("save_close")
+
+    def test_on_confirm_discard_save_close_calls_do_save_close_true(self):
+        screen = SettingsScreen(Config())
+        screen._do_save = MagicMock()
+        screen._on_confirm_discard("save_close")
+        screen._do_save.assert_called_once_with(close=True)
+
+    def test_on_confirm_discard_discard_dismisses_none(self):
+        screen = SettingsScreen(Config())
+        screen.dismiss = MagicMock()
+        screen._on_confirm_discard("discard")
+        screen.dismiss.assert_called_once_with(None)
+
+    def test_on_confirm_discard_none_does_nothing(self):
+        screen = SettingsScreen(Config())
+        screen.dismiss = MagicMock()
+        screen._do_save = MagicMock()
+        screen._on_confirm_discard(None)
+        screen.dismiss.assert_not_called()
+        screen._do_save.assert_not_called()
+
+
+# ── NewMCPServerForm Cancel and Escape (P3-92) ───────────────────────────────
+
+
+class TestNewMCPServerFormCancel(unittest.TestCase):
+    def test_cancel_button_dismisses_none(self):
+        form = NewMCPServerForm("Test")
+        form.dismiss = MagicMock()
+        form.on_button_pressed(Button.Pressed(button=MagicMock(id="mf-cancel")))
+        form.dismiss.assert_called_once_with(None)
+
+    def test_escape_dismisses_none(self):
+        form = NewMCPServerForm("Test")
+        form.dismiss = MagicMock()
+        form.key_escape()
+        form.dismiss.assert_called_once_with(None)
+
+
+# ── SettingsScreen.key_ctrl_s save-in-place (P3-93) ──────────────────────────
+
+
+class TestSettingsScreenCtrlS(unittest.TestCase):
+    def test_key_ctrl_s_invokes_do_save_close_false(self):
+        screen = SettingsScreen(Config())
+        screen._do_save = MagicMock()
+        screen.key_ctrl_s()
+        screen._do_save.assert_called_once_with(close=False)
+
+
+# ── SettingsScreen.on_button_pressed routing (P2-213) ───────────────────────
+
+
+class TestSettingsScreenButtonRouting(unittest.TestCase):
+    def _make_screen(self) -> SettingsScreen:
+        screen = SettingsScreen(Config())
+        screen._refresh_tab = MagicMock()
+        screen._mark_dirty = MagicMock()
+        screen._update_tab_labels = MagicMock()
+        app_mock = MagicMock()
+        patcher = patch.object(type(screen), "app", new_callable=PropertyMock, return_value=app_mock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return screen
+
+    def test_prov_edit_routes_to_on_provider_action_edit(self):
+        screen = self._make_screen()
+        screen._items_cache = [("alias-a", "detail-a")]
+        screen._on_provider_action = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="prov-edit-0")))
+        screen._on_provider_action.assert_called_once_with("alias-a", "edit")
+
+    def test_prov_del_routes_to_on_provider_action_delete(self):
+        screen = self._make_screen()
+        screen._items_cache = [("alias-a", "detail-a")]
+        screen._on_provider_action = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="prov-del-0")))
+        screen._on_provider_action.assert_called_once_with("alias-a", "delete")
+
+    def test_mcp_edit_routes_to_on_mcp_action_edit(self):
+        screen = self._make_screen()
+        screen._items_cache = [("srv-a", "detail-a")]
+        screen._on_mcp_action = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="mcp-edit-0")))
+        screen._on_mcp_action.assert_called_once_with("srv-a", "edit")
+
+    def test_mcp_del_routes_to_on_mcp_action_delete(self):
+        screen = self._make_screen()
+        screen._items_cache = [("srv-a", "detail-a")]
+        screen._on_mcp_action = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="mcp-del-0")))
+        screen._on_mcp_action.assert_called_once_with("srv-a", "delete")
+
+    def test_tier_change_routes_to_open_tier_model_picker(self):
+        screen = self._make_screen()
+        screen._open_tier_model_picker = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="tier-change-tolo")))
+        screen._open_tier_model_picker.assert_called_once_with("tolo")
+
+    def test_gen_pick_routes_to_open_general_picker(self):
+        screen = self._make_screen()
+        screen._open_general_picker = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="gen-pick-theme")))
+        screen._open_general_picker.assert_called_once_with("theme")
+
+    def test_rag_pick_routes_to_open_rag_picker(self):
+        screen = self._make_screen()
+        screen._open_rag_picker = MagicMock()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="rag-pick-embedding_model")))
+        screen._open_rag_picker.assert_called_once_with("embedding_model")
+
+    def test_providers_add_pushes_new_provider_form(self):
+        screen = self._make_screen()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="providers-add")))
+        screen.app.push_screen.assert_called_once()
+        args = screen.app.push_screen.call_args[0]
+        self.assertIsInstance(args[0], NewProviderForm)
+
+    def test_mcp_add_pushes_new_mcp_server_form(self):
+        screen = self._make_screen()
+        screen.on_button_pressed(Button.Pressed(button=MagicMock(id="mcp-add")))
+        screen.app.push_screen.assert_called_once()
+        args = screen.app.push_screen.call_args[0]
+        self.assertIsInstance(args[0], NewMCPServerForm)
+
+
+# ── SettingsScreen picker flows (P2-214) ──────────────────────────────────────
+
+
+class TestSettingsScreenPickerFlows(unittest.TestCase):
+    def _make_screen(self) -> SettingsScreen:
+        screen = SettingsScreen(Config())
+        screen._refresh_tab = MagicMock()
+        screen._mark_dirty = MagicMock()
+        screen._update_tab_labels = MagicMock()
+        app_mock = MagicMock()
+        patcher = patch.object(type(screen), "app", new_callable=PropertyMock, return_value=app_mock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return screen
+
+    def _capture_callback(self, screen):
+        captured: dict = {}
+
+        def fake_push(picker, callback):
+            captured["picker"] = picker
+            captured["callback"] = callback
+
+        screen.app.push_screen.side_effect = fake_push
+        return captured
+
+    def test_theme_picker_callback_updates_config(self):
+        screen = self._make_screen()
+        captured = self._capture_callback(screen)
+        with patch("stupidex.themes.get_theme_registry") as reg:
+            reg.return_value.list_themes.return_value = ["default", "monokai", "dracula"]
+            screen._open_theme_picker()
+        self.assertIsInstance(captured["picker"], OptionPicker)
+        captured["callback"]("monokai")
+        self.assertEqual(screen._config.theme, "monokai")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("general")
+
+    def test_personality_picker_callback_updates_config(self):
+        screen = self._make_screen()
+        captured = self._capture_callback(screen)
+        with patch("stupidex.personality.load_personalities", return_value={"concise": "x", "verbose": "y"}):
+            screen._open_personality_picker()
+        self.assertIsInstance(captured["picker"], OptionPicker)
+        captured["callback"]("verbose")
+        self.assertEqual(screen._config.personality, "verbose")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("general")
+
+    def test_default_model_picker_callback_updates_config(self):
+        screen = self._make_screen()
+        captured = self._capture_callback(screen)
+        items = [PickerItem(label="prov-a / gpt-4o", id="prov-a/gpt-4o")]
+        with patch("stupidex.screens.settings._build_model_picker_items", return_value=items):
+            screen._open_default_model_picker()
+        self.assertIsInstance(captured["picker"], OptionPicker)
+        captured["callback"]("prov-a/gpt-4o")
+        self.assertEqual(screen._config.default_model, "prov-a/gpt-4o")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("general")
+
+    def test_default_model_picker_no_items_does_not_push(self):
+        screen = self._make_screen()
+        with patch("stupidex.screens.settings._build_model_picker_items", return_value=[]):
+            screen._open_default_model_picker()
+        screen.app.push_screen.assert_not_called()
+
+    def test_embedding_model_picker_callback_updates_config(self):
+        screen = self._make_screen()
+        captured = self._capture_callback(screen)
+        with (
+            patch("stupidex.screens.settings._list_fastembed_models", return_value=["X"]),
+            patch("stupidex.screens.settings._build_model_picker_items", return_value=[]),
+        ):
+            screen._open_embedding_model_picker()
+        self.assertIsInstance(captured["picker"], OptionPicker)
+        captured["callback"]("fastembed/X")
+        self.assertEqual(screen._config.rag.embedding_model, "fastembed/X")
+        screen._refresh_tab.assert_called_once()
+        screen._mark_dirty.assert_called_once_with("rag")
+
+    def test_embedding_model_picker_no_items_does_not_push(self):
+        screen = self._make_screen()
+        with (
+            patch("stupidex.screens.settings._list_fastembed_models", return_value=[]),
+            patch("stupidex.screens.settings._build_model_picker_items", return_value=[]),
+        ):
+            screen._open_embedding_model_picker()
+        screen.app.push_screen.assert_not_called()

@@ -1,7 +1,7 @@
 from xml.sax.saxutils import escape
 
 from stupidex.agents import get_agent_registry
-from stupidex.agents.manager import format_subagent_attrs, get_subagent_manager
+from stupidex.agents.manager import format_subagent_attrs, get_current_chain_index, get_subagent_manager
 from stupidex.config import get_model_for_tier
 from stupidex.domain.agent import TIER_DESCRIPTIONS, AgentTypes, ModelTier
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
@@ -74,7 +74,10 @@ async def execute_delegate_to_subagent(name: str, task: str, type: str, tier: st
         resolved_tier = agent.tier
 
     model = get_model_for_tier(resolved_tier.value)
-    record = await get_subagent_manager().spawn(name, task, type, model)
+    record = await get_subagent_manager().spawn(
+        name, task, type, model,
+        parent_chain_index=get_current_chain_index(),
+    )
 
     return ExecutorResult(
         display=f"Subagent '{name}' spawned (id: {record.id}, tier: {resolved_tier.value})",
@@ -189,6 +192,7 @@ async def execute_interrupt_subagents(subagent_ids: list[str]) -> ExecutorResult
 
     if not subagent_ids:
         cancelled = manager.cancel_running()
+        await manager.flush_state_callbacks()
         if not cancelled:
             return ExecutorResult(
                 display="No running subagents to interrupt",
@@ -223,5 +227,7 @@ async def execute_interrupt_subagents(subagent_ids: list[str]) -> ExecutorResult
 
     content = ". ".join(parts) + "." if parts else "No subagents matched."
     display = f"Interrupted {len(cancelled)} subagent(s)" if cancelled else "No subagents interrupted"
+
+    await manager.flush_state_callbacks()
 
     return ExecutorResult(display=display, content=content)

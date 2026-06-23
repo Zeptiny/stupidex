@@ -16,7 +16,7 @@ class AgentTypes(Enum):
         }
         result = _map.get(value.lower())
         if result is None:
-            valid = ", ".join(t.value.lower() for t in cls)
+            valid = ", ".join(t.value for t in cls)
             raise ValueError(f"Invalid agent type: '{value}'. Valid types: {valid}")
         return result
 
@@ -91,6 +91,6 @@ class Agent:
             tier=ModelTier.from_str(data.get("tier", "papudo")),
             description=data["description"],
             system_prompt=data["system_prompt"],
-            allowed_tools=data["allowed_tools"],
+            allowed_tools=data.get("allowed_tools", []),
             allowed_skills=data.get("allowed_skills", []),
         )

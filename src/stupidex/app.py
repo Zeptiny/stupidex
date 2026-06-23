@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from enum import Enum
 
 from textual.app import App, ComposeResult
@@ -7,12 +8,19 @@ from textual.containers import Horizontal, ScrollableContainer
 from textual.widgets import LoadingIndicator, Static, TabbedContent, TabPane, TextArea
 
 from stupidex.agents import get_agent_registry
+from stupidex.agents.manager import set_current_chain_index
 from stupidex.commands.session_commands import SessionCommands, execute_command
 from stupidex.config import get_current_theme
 from stupidex.domain.chain import Chain, ChainStatus
-from stupidex.domain.message import Message, MessageRole, MessageType, StreamHistoryState, record_streamed_message
+from stupidex.domain.message import (
+    Message,
+    MessageRole,
+    MessageType,
+    StreamHistoryState,
+    record_streamed_message,
+)
 from stupidex.domain.session import Session, SessionManager, set_current_session_id
-from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback, set_todo_store
+from stupidex.domain.todo import get_todo_store, set_todo_refresh_callback
 from stupidex.llm.client import classify_error, stream_response
 from stupidex.personality import append_personality
 from stupidex.themes import get_theme_registry
@@ -27,6 +35,138 @@ from stupidex.widgets.sidebar import NavEntry, Sidebar, SidebarMainSelected, Sid
 from stupidex.widgets.subagent_ui import SubagentUIManager
 
 log = logging.getLogger(__name__)
+
+
+def _sum_usage(messages: list) -> tuple[int, int, int, int] | None:
+    """Sum token usage across all messages carrying ``usage``.
+
+    Within a single agentic chain the model may make several LLM calls (think
+    -> tool -> assistant); each emits its own cumulative ``Usage`` snapshot.
+    Summing all of them yields the chain's true cumulative consumption, rather
+    than the last snapshot alone (which fluctuates as calls alternate).
+
+    Returns ``(prompt_tokens, cached_tokens, completion_tokens, total_tokens)``
+    when at least one message has usage, otherwise ``None``.
+    """
+    prompt = cached = completion = total = 0
+    found = False
+    for msg in messages:
+        if msg.usage is None:
+            continue
+        found = True
+        prompt += msg.usage.prompt_tokens
+        cached += msg.usage.cached_tokens
+        completion += msg.usage.completion_tokens
+        total += msg.usage.total_tokens
+    if not found:
+        return None
+    return (prompt, cached, completion, total)
+
+
+def _session_usage_totals(session: "Session") -> tuple[int, int, int, int] | None:
+    """Sum token usage across chains and subagent records in ``session``.
+
+    Each chain contributes the sum of every usage-bearing message it holds
+    (cumulative across the chain's agentic-loop calls), not just the last
+    snapshot. Subagent records (R5/R6) are reached via
+    ``session.subagent_manager.all_records()``; each contributes the same sum
+    over its composed ``record.chain``.
+
+    Returns ``(prompt_tokens, cached_tokens, completion_tokens, total_tokens)``
+    when at least one message-list has usage, otherwise ``None``.
+    """
+    prompt = cached = completion = total = 0
+    found = False
+    for chain in session.chains:
+        usage = _sum_usage(chain.messages)
+        if usage is None:
+            continue
+        found = True
+        prompt += usage[0]
+        cached += usage[1]
+        completion += usage[2]
+        total += usage[3]
+    # Fold subagent usage into the session total (R6). Each subagent's
+    # composed chain contributes its own usage sum.
+    for record in session.subagent_manager.all_records():
+        usage = _sum_usage(record.chain.messages)
+        if usage is None:
+            continue
+        found = True
+        prompt += usage[0]
+        cached += usage[1]
+        completion += usage[2]
+        total += usage[3]
+    if not found:
+        return None
+    return (prompt, cached, completion, total)
+
+
+def _format_session_model_label(
+    model: str, totals: tuple[int, int, int, int] | None
+) -> str:
+    """Render the ``#model`` footer label.
+
+    ``{model}`` alone when there is no usage, otherwise
+    ``{model} · ↑{input} (⟲{cached}) ↓{output}`` with cached shown as a
+    subset parenthetical (never summed with input).
+    """
+    if totals is None:
+        return model
+    prompt, cached, completion, _total = totals
+    return (
+        f"{model} · ↑{Chain.format_tokens(prompt)} "
+        f"(⟲{Chain.format_tokens(cached)}) ↓{Chain.format_tokens(completion)}"
+    )
+
+
+def _chain_subagent_subtotals(
+    session: "Session", chain_index: int
+) -> tuple[int, int, int, int] | None:
+    """Sum usage of subagents attributed to ``chain_index`` via
+    ``parent_chain_index`` (R11).
+
+    Mirrors the summation style of :func:`_session_usage_totals`: each
+    attributed subagent contributes the sum of every usage-bearing message
+    on its composed ``record.chain``. Returns ``None`` when no attributed
+    subagent record has usage.
+    """
+    prompt = cached = completion = total = 0
+    found = False
+    for record in session.subagent_manager.all_records():
+        if record.parent_chain_index != chain_index:
+            continue
+        usage = _sum_usage(record.chain.messages)
+        if usage is None:
+            continue
+        found = True
+        prompt += usage[0]
+        cached += usage[1]
+        completion += usage[2]
+        total += usage[3]
+    if not found:
+        return None
+    return (prompt, cached, completion, total)
+
+
+def _make_subagent_subtotal_provider(
+    session: "Session", chain_index: int
+) -> "Callable[[], tuple[int, int, int, int] | None] | None":
+    """Return a closure computing the attributed subagent subtotal for the
+    given chain at render time.
+
+    Resolved lazily on each ``_build_text`` call so that subagents spawned
+    during a live stream are picked up by subsequent ``tick``s without
+    re-mounting.  Returns ``None`` when ``chain_index`` is ``None`` (subagents
+    spawned outside any turn, e.g. in test harnesses).
+    """
+    if chain_index is None:
+        return None
+
+    def _provider() -> tuple[int, int, int, int] | None:
+        return _chain_subagent_subtotals(session, chain_index)
+
+    return _provider
 
 
 class InterruptState(Enum):
@@ -63,6 +203,7 @@ class Stupidex(App):
         self._subagent_ui = SubagentUIManager(self)
         self._current_chain: ChainContainer | None = None
         self._footer_timer: object | None = None
+        self._interrupt_timer: object | None = None
         self.restart_requested: bool = False
         self._setup_themes()
 
@@ -103,7 +244,7 @@ class Stupidex(App):
         with TabbedContent(id="tabs", initial="main"), TabPane("Main", id="main"):
             yield ScrollableContainer(id="output")
         yield CommandPicker(SessionCommands.COMMANDS)
-        yield InputTextArea(id="input")
+        yield InputTextArea(id="input", highlight_cursor_line=False)
         with Horizontal(id="footer"):
             yield LoadingIndicator(id="spinner")
             yield Static("N/A Model", id="model")
@@ -112,8 +253,6 @@ class Stupidex(App):
 
     async def on_mount(self) -> None:
         self.sessions.create()
-        set_todo_store(self.sessions.active.todo_store)
-        set_current_session_id(self.sessions.active.id)
         set_todo_refresh_callback(self.refresh_todos)
         self.query_one("#title", Static).update(self.sessions.active.name)
         await self.mount_all_messages()
@@ -176,21 +315,24 @@ class Stupidex(App):
             if self._is_streaming():
                 self._interrupt_state = InterruptState.CONFIRM_AGENT
                 hint.update("[bold yellow]Press Esc again to interrupt agent[/]")
+                self._start_interrupt_timeout()
             elif self._has_running_subagents():
                 self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
                 hint.update("[bold red]Press Esc again to interrupt subagents[/]")
+                self._start_interrupt_timeout()
         elif self._interrupt_state == InterruptState.CONFIRM_AGENT:
             self._interrupt_state = InterruptState.CONFIRM_SUBAGENTS
             if self._active_worker and not self._active_worker.is_finished:
                 self._active_worker.cancel()
             if self._has_running_subagents():
                 hint.update("[bold red]Press Esc again to interrupt subagents[/]")
+                self._start_interrupt_timeout()
             else:
-                self._interrupt_state = InterruptState.IDLE
-                hint.update("")
+                self._reset_interrupt_state()
         elif self._interrupt_state == InterruptState.CONFIRM_SUBAGENTS:
             if self.sessions.active:
                 cancelled = self.sessions.active.subagent_manager.cancel_running()
+                await self.sessions.active.subagent_manager.flush_state_callbacks()
                 if cancelled:
                     names = []
                     for sid in cancelled:
@@ -208,15 +350,23 @@ class Stupidex(App):
                         await self.mount_message(interrupt_msg)
                     except Exception:
                         pass
-            self._interrupt_state = InterruptState.IDLE
-            hint.update("")
+            self._reset_interrupt_state()
 
     def _reset_interrupt_state(self) -> None:
         self._interrupt_state = InterruptState.IDLE
+        if self._interrupt_timer is not None:
+            self._interrupt_timer.stop()
+            self._interrupt_timer = None
         try:
             self.query_one("#interrupt-hint", Static).update("")
         except Exception:
             pass
+
+    def _start_interrupt_timeout(self) -> None:
+        """Auto-reset interrupt state after 5 seconds of inactivity."""
+        if self._interrupt_timer is not None:
+            self._interrupt_timer.stop()
+        self._interrupt_timer = self.set_timer(5.0, self._reset_interrupt_state)
 
     async def action_submit_input(self) -> None:
         if self._is_streaming():
@@ -383,10 +533,18 @@ class Stupidex(App):
 
     def _start_chain(self) -> None:
         chain = Chain(model=self.model)
+        chain_index = None
         if self.sessions.active:
             self.sessions.active.chains.append(chain)
+            chain_index = len(self.sessions.active.chains) - 1
+            set_current_chain_index(chain_index)
+        subtotal_provider = (
+            _make_subagent_subtotal_provider(self.sessions.active, chain_index)
+            if chain_index is not None
+            else None
+        )
         container = self.query_one("#output", ScrollableContainer)
-        self._current_chain = ChainContainer(chain)
+        self._current_chain = ChainContainer(chain, subagent_subtotal=subtotal_provider)
         container.mount(self._current_chain)
 
     async def _mount_in_chain(self, msg: Message) -> None:
@@ -422,6 +580,10 @@ class Stupidex(App):
             self._current_chain.chain.finish(status)
             self._current_chain.freeze()
             self._current_chain = None
+        # Clear the chain index so a subagent spawned outside a streaming turn
+        # (test harness, future dispatch paths) is attributed to no chain
+        # rather than the stale last-turn index.
+        set_current_chain_index(None)
 
     async def _auto_save_session(self, session: Session | None = None) -> None:
         """Fire-and-forget save of the given session (or active) to disk."""
@@ -444,10 +606,12 @@ class Stupidex(App):
             return None
         if session.name.startswith("Session "):
             try:
-                from stupidex.config import get_model_for_tier
+                import litellm
+
+                from stupidex.config import get_config, get_model_for_tier
+                from stupidex.llm.providers import qualify_model, resolve_model_ref
+
                 model = get_model_for_tier("tolo")
-                from stupidex.config import get_config
-                cfg = get_config()
                 user_content = ""
                 assistant_content = ""
                 for chain in session.chains:
@@ -469,11 +633,15 @@ class Stupidex(App):
                 )
                 if assistant_content:
                     prompt += f"Assistant: {assistant_content}\n"
-                import litellm
+                litellm_provider, model_id, base_url, api_key = resolve_model_ref(
+                    model or get_config().default_model
+                )
+                litellm_model = qualify_model(litellm_provider, model_id)
                 response = await litellm.acompletion(
-                    model=cfg.provider_api_type + "/" + model,
+                    model=litellm_model,
                     messages=[{"role": "user", "content": prompt}],
-                    base_url=cfg.base_url,
+                    base_url=base_url,
+                    api_key=api_key,
                     timeout=60,
                 )
                 title = response.choices[0].message.content.strip().strip('"').strip("'")
@@ -515,14 +683,27 @@ class Stupidex(App):
         await container.remove_children()
         if not self.sessions.active:
             return
-        for chain in self.sessions.active.chains:
-            chain_container = ChainContainer(chain)
+        for chain_index, chain in enumerate(self.sessions.active.chains):
+            subtotal_provider = _make_subagent_subtotal_provider(
+                self.sessions.active, chain_index
+            )
+            chain_container = ChainContainer(chain, subagent_subtotal=subtotal_provider)
             await container.mount(chain_container)
             chain_container.freeze()
+            prev_was_thinking = False
             for msg in chain.messages:
-                widget = create_message_widget(msg, loaded=True)
+                classes = (
+                    "after-thinking"
+                    if msg.type == MessageType.TOOL_RESULT and prev_was_thinking
+                    else None
+                )
+                widget = create_message_widget(msg, loaded=True, classes=classes)
                 if widget is not None:
                     await chain_container.messages_area.mount(widget)
+                if msg.type == MessageType.THINKING:
+                    prev_was_thinking = True
+                elif msg.type != MessageType.TOOL_CALL:
+                    prev_was_thinking = False
 
     async def rerender_all(self) -> None:
         if not self.sessions.active:
@@ -561,7 +742,8 @@ class Stupidex(App):
             pass
 
         model_label = self.model or "No Model"
-        self.query_one("#model", Static).update(model_label)
+        totals = _session_usage_totals(self.sessions.active)
+        self.query_one("#model", Static).update(_format_session_model_label(model_label, totals))
 
         await self._subagent_ui.update_sidebar()
 

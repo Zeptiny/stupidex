@@ -10,11 +10,9 @@ class ExecutorResult:
 
 @dataclass
 class ToolParameterProperties:
-    type: str
-    description: str
+    type: str = ""
+    description: str = ""
     items: dict[str, Any] | None = None
-
-
 @dataclass
 class ToolParameter:
     properties: dict[str, ToolParameterProperties]  # name -> schema
@@ -35,8 +33,9 @@ class Tool:
     def to_dict(self) -> dict:
         properties = {}
         for k, v in self.parameters.properties.items():
-            prop: dict[str, Any] = {
-                "type": v.type, "description": v.description}
+            prop: dict[str, Any] = {"description": v.description}
+            if v.type:
+                prop["type"] = v.type
             if v.items is not None:
                 prop["items"] = v.items
             properties[k] = prop

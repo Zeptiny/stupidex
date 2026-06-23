@@ -9,7 +9,7 @@ from stupidex.agents.manager import SubagentManager, SubagentRecord
 from stupidex.config import get_config
 from stupidex.domain.chain import Chain
 from stupidex.domain.message import Message
-from stupidex.domain.todo import TodoStore
+from stupidex.domain.todo import TodoStore, set_todo_store
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,12 @@ class Session:
 
     @classmethod
     def from_storage_dict(cls, data: dict[str, Any]) -> "Session":
-        chains = [Chain.from_storage_dict(c) for c in data.get("chains", [])]
+        chains: list[Chain] = []
+        for i, c in enumerate(data.get("chains", [])):
+            try:
+                chains.append(Chain.from_storage_dict(c))
+            except Exception:
+                log.warning("Failed to restore chain at index %d", i, exc_info=True)
         todo_store = TodoStore.from_storage_dict(data.get("todo_store", {}))
         session = cls(
             id=data["id"],
@@ -76,6 +81,18 @@ class SessionManager:
         self.sessions: dict[str, Session] = {}
         self.active: Session | None = None
 
+    @staticmethod
+    def _bind_context(session: Session) -> None:
+        """Rebind the session-scoped ContextVars to `session`.
+
+        Centralizes the invariant (previously duplicated across app.on_mount,
+        /new, /sessions, /delete) so future transition sites cannot forget to
+        rebind. Both vars are paired in every existing caller — binding them
+        together here keeps them coherent.
+        """
+        set_todo_store(session.todo_store)
+        set_current_session_id(session.id)
+
     def create(self) -> Session:
         cfg = get_config()
         session = Session(
@@ -84,25 +101,31 @@ class SessionManager:
         )
         self.sessions[session.id] = session
         self.active = session
+        self._bind_context(session)
         return session
 
     def switch(self, id: str) -> Session | None:
         if id in self.sessions:
             self.active = self.sessions[id]
+            self._bind_context(self.active)
             return self.active
         return None
 
     def delete(self, id: str) -> bool:
-        if id in self.sessions:
-            session = self.sessions[id]
-            session.subagent_manager.cancel_all()
-            del self.sessions[id]
-            if self.active and self.active.id == id:
-                self.active = None
-            from stupidex.storage import delete_session
+        if id not in self.sessions:
+            return False
+        session = self.sessions[id]
+        session.subagent_manager.cancel_all()
+        from stupidex.storage import delete_session
+        try:
             delete_session(id)
-            return True
-        return False
+        except Exception:
+            log.warning("Failed to delete session %s from disk", id, exc_info=True)
+            return False
+        del self.sessions[id]
+        if self.active is not None and self.active.id == id:
+            self.active = None
+        return True
 
     def change_model(self, model_id: str) -> None:
         if self.active:
@@ -132,6 +155,7 @@ class SessionManager:
             return None
         self.sessions[session.id] = session
         self.active = session
+        self._bind_context(session)
         return session
 
     def list_saved(self) -> list[dict]:

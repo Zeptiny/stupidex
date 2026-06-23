@@ -129,6 +129,48 @@ async def test_rag_search_embedding_error(monkeypatch, tmp_path):
     assert "<rag_error" in result.content
 
 
+@pytest.mark.asyncio
+async def test_rag_search_generic_embedding_exception_embeds_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
+    store.upsert(chunks, [[0.5, 0.5]])
+
+    with patch("stupidex.tools.rag.Embedder") as mock_embedder:
+        fake = FakeEmbedder()
+        mock_embedder.return_value = fake
+        fake.embed_single = AsyncMock(side_effect=RuntimeError("embedder blew up"))
+
+        result = await execute_rag_search(query="test query")
+
+    assert isinstance(result, ExecutorResult)
+    assert result.display == "Embedding error"
+    assert "<rag_error" in result.content
+    assert "embedder blew up" in result.content
+
+
+@pytest.mark.asyncio
+async def test_rag_search_value_error_from_store_returns_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    store = RAGStore(str(tmp_path))
+    store.init_db()
+    chunks = [Chunk(file_path="a.py", content="x=1", start_line=1, end_line=1)]
+    store.upsert(chunks, [[0.5, 0.5, 0.5]])
+
+    with patch("stupidex.tools.rag.Embedder") as mock_embedder:
+        fake = FakeEmbedder()
+        mock_embedder.return_value = fake
+        fake.embed_single = AsyncMock(return_value=[1.0, 0.0])
+
+        result = await execute_rag_search(query="dimension mismatch")
+
+    assert isinstance(result, ExecutorResult)
+    assert result.display == "Search error"
+    assert "<rag_error" in result.content
+    assert "does not match" in result.content
+
+
 # ---------------------------------------------------------------------------
 # rag_index
 # ---------------------------------------------------------------------------

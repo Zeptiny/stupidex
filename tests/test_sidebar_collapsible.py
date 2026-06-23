@@ -25,6 +25,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Collapsible, TabbedContent
 
 from stupidex.agents.manager import SubagentRecord, SubagentState
+from stupidex.domain.chain import Chain
 from stupidex.widgets.sidebar import NavEntry, Sidebar
 from stupidex.widgets.subagent_ui import SubagentUIManager
 
@@ -42,7 +43,9 @@ def _record(rid: str, state: SubagentState = SubagentState.COMPLETED, label: str
     r.error = None
     r.start_time = 0.0
     r.end_time = None
-    r.messages = []
+    r.chain = Chain()
+    r.model = None
+    r.parent_chain_index = None
     r.messages_mounted = 0
     r.on_message = None
     r.on_state_change = None

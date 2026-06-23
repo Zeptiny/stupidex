@@ -10,7 +10,7 @@ from stupidex.domain.message import Message, MessageRole, MessageType
 from stupidex.domain.todo import get_todo_store
 from stupidex.utils import directory_tree
 
-_TREE_CACHE: tuple[float, str] | None = None
+_TREE_CACHE: tuple[str, float, str] | None = None
 _TREE_TTL = 5.0
 
 
@@ -20,18 +20,20 @@ async def build_dynamic_system_prompt() -> Message:
     cwd = os.getcwd()
 
     now = time.monotonic()
-    if _TREE_CACHE and _TREE_CACHE[0] > now:
-        tree = _TREE_CACHE[1]
+    if _TREE_CACHE and _TREE_CACHE[0] == cwd and _TREE_CACHE[1] > now:
+        tree = _TREE_CACHE[2]
     else:
         loop = asyncio.get_running_loop()
         tree = await loop.run_in_executor(None, directory_tree, cwd, cfg.directory_tree_depth)
-        _TREE_CACHE = (now + _TREE_TTL, tree)
+        _TREE_CACHE = (cwd, now + _TREE_TTL, tree)
 
+    esc_cwd = escape(cwd)
+    esc_tree = escape(tree)
     content = f"""
 <current_time>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</current_time>
-<working_directory>{cwd}</working_directory>
+<working_directory>{esc_cwd}</working_directory>
 <directory_structure>
-{tree}
+{esc_tree}
 </directory_structure>
 """
 

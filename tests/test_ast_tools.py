@@ -380,6 +380,48 @@ async def test_find_symbol_references_empty_name(tmp_path, monkeypatch):
     assert "<ast_error" in result.content
 
 
+@pytest.mark.asyncio
+async def test_find_symbol_references_line_numbers_are_1_indexed(py_project):
+    """P1-18: find_symbol_references must report 1-indexed line numbers."""
+    _populate_store(str(py_project), {
+        "sample.py": [
+            # 0-indexed: foo def is on line 3 (1-indexed line 4)
+            Symbol("foo", "definition", "function", 3, 0, 4, 4, 9, 31),
+        ],
+    })
+    import stupidex.ast.indexer as indexer_mod
+    indexer_mod._session_initialized = True
+
+    result = await execute_find_symbol_references("foo")
+    assert 'start_line="4"' in result.content
+    assert 'end_line="5"' in result.content
+
+
+@pytest.mark.asyncio
+async def test_find_symbol_references_line_numbers_match_skeleton(py_project):
+    """P1-18: find_symbol_references lines must match get_file_skeleton for same symbol."""
+    _populate_store(str(py_project), {
+        "sample.py": [
+            # 0-indexed: bar def is on line 6 (1-indexed line 7)
+            Symbol("bar", "definition", "function", 6, 0, 7, 4, 38, 59),
+        ],
+    })
+    import stupidex.ast.indexer as indexer_mod
+    indexer_mod._session_initialized = True
+
+    refs_result = await execute_find_symbol_references("bar")
+    skel_result = await execute_get_file_skeleton("sample.py")
+
+    assert 'start_line="7"' in refs_result.content
+    skel_bar_line = None
+    for line in skel_result.content.splitlines():
+        if "│ bar" in line:
+            skel_bar_line = line
+            break
+    assert skel_bar_line is not None
+    assert "7 │ bar" in skel_bar_line
+
+
 # ---------------------------------------------------------------------------
 # replace_symbol
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ from typing import Any
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 
 
-def convert_mcp_tool(server_name: str, mcp_tool: Any) -> tuple[str, Tool, dict]:
+def convert_mcp_tool(server_name: str, mcp_tool: Any) -> tuple[str, Tool]:
     """Convert an MCP tool definition into the internal Tool domain model.
 
     Args:
@@ -14,20 +14,19 @@ def convert_mcp_tool(server_name: str, mcp_tool: Any) -> tuple[str, Tool, dict]:
         mcp_tool: MCP tool object with `.name`, `.description`, and `.inputSchema`.
 
     Returns:
-        Tuple of (registry_name, Tool, raw_schema) where registry_name is
-        ``mcp_{server_name}_{tool_name}`` and raw_schema is the original
-        inputSchema dict kept for LLM pass-through.
+        Tuple of (registry_name, Tool) where registry_name is
+        ``mcp::{server_name}::{tool_name}``.
     """
     tool_name: str = mcp_tool.name
     description: str = mcp_tool.description or ""
     input_schema: dict[str, Any] = mcp_tool.inputSchema or {}
 
-    registry_name = f"mcp_{server_name}_{tool_name}"
+    registry_name = f"mcp::{server_name}::{tool_name}"
 
     properties: dict[str, ToolParameterProperties] = {}
     for param_name, param_schema in input_schema.get("properties", {}).items():
         properties[param_name] = ToolParameterProperties(
-            type=param_schema.get("type", "string"),
+            type=param_schema.get("type", ""),
             description=param_schema.get("description", ""),
             items=param_schema.get("items"),
         )
@@ -44,7 +43,7 @@ def convert_mcp_tool(server_name: str, mcp_tool: Any) -> tuple[str, Tool, dict]:
         ),
     )
 
-    return registry_name, tool, input_schema
+    return registry_name, tool
 
 
 def make_mcp_executor(

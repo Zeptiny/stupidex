@@ -1,5 +1,6 @@
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -305,15 +306,74 @@ class AssistantMessageWidget(MessageWidget):
 
 
 class ChainFooterWidget(Static):
-    """Footer showing model + elapsed time for a chain."""
+    """Footer showing model + elapsed time for a chain.
 
-    def __init__(self, chain: Chain, **kwargs):
+    Optionally renders a delegated-subagent subtotal "(sub: ...)" segment
+    when ``subagent_subtotal`` returns a non-None tuple of
+    ``(prompt, cached, completion, total)`` tokens attributed to this chain
+    via ``parent_chain_index`` (R11).
+    """
+
+    def __init__(
+        self,
+        chain: Chain,
+        subagent_subtotal: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        **kwargs,
+    ):
         self._chain = chain
+        self._subagent_subtotal = subagent_subtotal
         super().__init__(self._build_text(), **kwargs)
 
     def _build_text(self) -> str:
         model = self._chain.model or "Unknown"
-        return f"{model} · {Chain.format_elapsed(self._chain.elapsed)}"
+        text = f"{model} · {Chain.format_elapsed(self._chain.elapsed)}"
+        usage = self._chain_usage()
+        if usage is not None:
+            # Cached tokens are a subset of prompt tokens (R7) — render as
+            # "of which" parenthetically, never summed into input. The usage
+            # here is the chain's cumulative sum across all agentic-loop LLM
+            # calls, so it grows monotonically rather than fluctuating with
+            # each intermediate snapshot.
+            prompt, cached, completion, _total = usage
+            text += (
+                f" · ↑{Chain.format_tokens(prompt)}"
+                f" (⟲{Chain.format_tokens(cached)})"
+                f" ↓{Chain.format_tokens(completion)}"
+            )
+        # Delegated subagent subtotal (R11): the tokens of subagents whose
+        # ``parent_chain_index`` is this chain's index. Rendered as a separate
+        # parenthetical so it is visually attributed, not conflated with the
+        # chain's own usage.
+        sub = self._subagent_subtotal() if self._subagent_subtotal else None
+        if sub is not None:
+            prompt, cached, completion, _total = sub
+            if prompt or cached or completion:
+                text += (
+                    f" · (sub: ↑{Chain.format_tokens(prompt)}"
+                    f" (⟲{Chain.format_tokens(cached)})"
+                    f" ↓{Chain.format_tokens(completion)})"
+                )
+        return text
+
+    def _chain_usage(self) -> tuple[int, int, int, int] | None:
+        """Sum usage across all messages carrying ``usage`` in the chain.
+
+        Returns ``(prompt, cached, completion, total)`` or ``None`` when the
+        chain has no usage.
+        """
+        prompt = cached = completion = total = 0
+        found = False
+        for msg in self._chain.messages:
+            if msg.usage is None:
+                continue
+            found = True
+            prompt += msg.usage.prompt_tokens
+            cached += msg.usage.cached_tokens
+            completion += msg.usage.completion_tokens
+            total += msg.usage.total_tokens
+        if not found:
+            return None
+        return (prompt, cached, completion, total)
 
     def tick(self) -> None:
         if self._chain.status == ChainStatus.RUNNING:
@@ -344,15 +404,25 @@ class ChainContainer(Static):
     }
     """
 
-    def __init__(self, chain: Chain, **kwargs):
+    def __init__(
+        self,
+        chain: Chain,
+        subagent_subtotal: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        **kwargs,
+    ):
         self.chain = chain
+        self._subagent_subtotal = subagent_subtotal
         self._footer: ChainFooterWidget | None = None
         self._messages: Static | None = None
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
         self._messages = Static(classes="chain-messages")
-        self._footer = ChainFooterWidget(self.chain, classes="chain-footer")
+        self._footer = ChainFooterWidget(
+            self.chain,
+            subagent_subtotal=self._subagent_subtotal,
+            classes="chain-footer",
+        )
         yield self._messages
         yield self._footer
 
@@ -421,21 +491,23 @@ class ToolResultMessageWidget(Static):
         )
 
 
-def create_message_widget(msg: Message, *, loaded: bool = False) -> Static | None:
+def create_message_widget(
+    msg: Message, *, loaded: bool = False, classes: str | None = None
+) -> Static | None:
     """Factory function to create the appropriate widget for a message."""
     match msg.type:
         case MessageType.THINKING:
-            return ThinkingMessageWidget(msg, loaded=loaded)
+            return ThinkingMessageWidget(msg, loaded=loaded, classes=classes)
         case MessageType.TOOL_CALL:
             return None
         case MessageType.TOOL_RESULT:
-            return ToolResultMessageWidget(msg)
+            return ToolResultMessageWidget(msg, classes=classes)
         case MessageType.ERROR:
-            return ErrorMessageWidget(msg)
+            return ErrorMessageWidget(msg, classes=classes)
         case _:
             if msg.role == MessageRole.USER:
-                return UserMessageWidget(msg)
-            return AssistantMessageWidget(msg)
+                return UserMessageWidget(msg, classes=classes)
+            return AssistantMessageWidget(msg, classes=classes)
 
 
 @dataclass
@@ -470,7 +542,6 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
         state.temp.append(temp)
         if state.thinking:
             state.thinking.finish()
-        state.content = None
     elif msg.type == MessageType.TOOL_RESULT:
         w = ToolResultMessageWidget(msg, classes="after-thinking" if state.thinking else None)
         if state.temp:

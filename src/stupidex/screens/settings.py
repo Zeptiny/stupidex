@@ -762,8 +762,8 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     def __init__(self, config: Config) -> None:
         super().__init__()
-        self._config = Config(**asdict(config))
-        self._original = Config(**asdict(config))
+        self._config = self._clone_config(config)
+        self._original = self._clone_config(config)
         self._items_cache: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
@@ -853,6 +853,14 @@ class SettingsScreen(ModalScreen[Config | None]):
         if result is not None:
             alias = result.pop("_alias")
             if original_alias and original_alias != alias:
+                if alias in self._config.providers:
+                    self.notify(
+                        f"Provider '{alias}' already exists; rename cancelled.",
+                        severity="warning",
+                    )
+                    self._refresh_tab()
+                    self._mark_dirty("providers")
+                    return
                 self._config.providers.pop(original_alias, None)
             self._config.providers[alias] = result
             self._refresh_tab()
@@ -971,6 +979,14 @@ class SettingsScreen(ModalScreen[Config | None]):
         if result is not None:
             name = result.pop("_name")
             if original_name and original_name != name:
+                if name in self._config.mcp_servers:
+                    self.notify(
+                        f"MCP server '{name}' already exists; rename cancelled.",
+                        severity="warning",
+                    )
+                    self._refresh_tab()
+                    self._mark_dirty("mcp_servers")
+                    return
                 self._config.mcp_servers.pop(original_name, None)
             self._config.mcp_servers[name] = result
             self._refresh_tab()
@@ -1212,6 +1228,10 @@ class SettingsScreen(ModalScreen[Config | None]):
 
     # ── Helpers ───────────────────────────────────────────────────────
 
+    @staticmethod
+    def _clone_config(config: Config) -> Config:
+        return Config(**asdict(config))
+
     def _render_keyed_list(
         self,
         container: ScrollableContainer,
@@ -1265,8 +1285,8 @@ class SettingsScreen(ModalScreen[Config | None]):
         if config.theme != self._original.theme:
             self.app.switch_theme(config.theme)
 
-        self._config = Config(**asdict(config))
-        self._original = Config(**asdict(config))
+        self._config = self._clone_config(config)
+        self._original = self._clone_config(config)
         self.query_one("#settings-error", Static).update("")
         self._update_tab_labels()
 

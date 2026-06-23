@@ -1,4 +1,5 @@
 import asyncio
+import fnmatch
 import os
 import re
 
@@ -37,6 +38,9 @@ grep_tool = Tool(
     ),
     action_label="Grepping...",
 )
+
+
+_PER_FILE_TIMEOUT = 10.0
 
 
 async def _is_binary(file_path: str) -> bool:
@@ -87,8 +91,8 @@ async def execute_grep_tool(
         # If include_pattern is given, compile it as a regex for matching filenames
         file_regex = None
         if include_pattern:
-            glob_regex = include_pattern.replace(".", r"\.").replace("*", ".*")
-            file_regex = re.compile(f"^{glob_regex}$", re.IGNORECASE)
+            glob_regex = fnmatch.translate(include_pattern)
+            file_regex = re.compile(glob_regex, re.IGNORECASE)
 
         # Collect all file paths using os.walk (blocking) in executor
         def _collect_files():
@@ -108,33 +112,48 @@ async def execute_grep_tool(
         semaphore = asyncio.Semaphore(32)
         results: list[str] = []
 
+        def _search_file_sync(file_path: str, regex, max_results: int) -> list[str] | None:
+            try:
+                relative_path = os.path.relpath(file_path, base_path)
+                matches: list[str] = []
+                with open(file_path, encoding="utf-8", errors="ignore") as f:
+                    for line_num, line in enumerate(f, start=1):
+                        if regex.search(line):
+                            matches.append(f"{relative_path}:{line_num}: {line.rstrip()}")
+                            if len(matches) >= max_results:
+                                break
+                return matches
+            except (PermissionError, OSError):
+                return None
+
         async def _search_file(file_path: str) -> list[str] | None:
             async with semaphore:
                 if await _is_binary(file_path):
                     return None
+                loop = asyncio.get_running_loop()
                 try:
-                    relative_path = os.path.relpath(file_path, base_path)
-                    matches = []
-                    async with aiofiles.open(file_path, encoding="utf-8", errors="ignore") as f:
-                        line_num = 0
-                        async for line in f:
-                            line_num += 1
-                            if regex.search(line):
-                                matches.append(f"{relative_path}:{line_num}: {line.rstrip()}")
-                    return matches
-                except (PermissionError, OSError):
+                    return await asyncio.wait_for(
+                        loop.run_in_executor(None, _search_file_sync, file_path, regex, max_results),
+                        timeout=_PER_FILE_TIMEOUT,
+                    )
+                except TimeoutError:
                     return None
 
-        tasks = [_search_file(fp) for fp in file_paths]
-        for coro in asyncio.as_completed(tasks):
-            matches = await coro
-            if matches:
-                for match in matches:
-                    results.append(match)
-                    if len(results) >= max_results:
-                        break
-            if len(results) >= max_results:
-                break
+        tasks = [asyncio.ensure_future(_search_file(fp)) for fp in file_paths]
+        try:
+            for coro in asyncio.as_completed(tasks):
+                matches = await coro
+                if matches:
+                    for match in matches:
+                        results.append(match)
+                        if len(results) >= max_results:
+                            break
+                if len(results) >= max_results:
+                    break
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
 
         if not results:
             return ExecutorResult(

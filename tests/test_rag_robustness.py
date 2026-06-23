@@ -132,7 +132,7 @@ async def test_embedder_success_with_retries():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise EmbeddingError("Temporary failure")
+            raise RuntimeError("Temporary provider failure")
         return good_response
 
     fake_ref = ("openai", "text-embedding-3-small", "https://example.com", "sk-test")
