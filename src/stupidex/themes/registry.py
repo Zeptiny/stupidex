@@ -48,6 +48,21 @@ THEMES: dict[str, Theme] = {
         boost="#0A120A",
         dark=True,
     ),
+    "dracula": Theme(
+        name="dracula",
+        primary="#bd93f9",
+        secondary="#ff79c6",
+        warning="#ffb86c",
+        error="#ff5555",
+        success="#50fa7b",
+        accent="#8be9fd",
+        foreground="#f8f8f2",
+        background="#282a36",
+        surface="#21222c",
+        panel="#2f3142",
+        boost="#1e1f29",
+        dark=True,
+    ),
 }
 
 
