@@ -31,6 +31,7 @@ allowed_tools:
   - find_symbol_references
   - replace_symbol
   - rename_symbol
+  - ask_question
 allowed_skills:
   - '*'
 ---

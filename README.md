@@ -847,6 +847,59 @@ Isso abre a interface TUI com:
 
 O agente ajuda no brainstorm, planeja, implementa e pode revisar o código.
 
+### Ferramenta `ask_question` (CLI)
+
+A ferramenta `ask_question` permite ao agente fazer perguntas ao usuário com múltipla escolha e texto livre. Pode ser invocada diretamente pelo terminal:
+
+**Com argumento JSON:**
+```bash
+python -m examples.ask_question_cli '{"questions": [{"title": "Linguagem favorita?", "choices": ["Python", "TypeScript", "Rust", "Go"]}]}'
+```
+
+**Via stdin (pipe):**
+```bash
+echo '{"questions": [{"title": "Escolha um", "choices": ["A", "B"]}]}' | python -m examples.ask_question_cli
+```
+
+**Modo interativo (sem argumentos — abre perguntas de demo):**
+```bash
+python -m examples.ask_question_cli
+```
+
+**Demo simples:**
+```bash
+python -m examples.demo_ask_question
+```
+
+#### Estrutura do JSON
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `context` | `string` | Não | Texto do cabeçalho (padrão: `"Questions"`) |
+| `questions` | `array` | Sim | Lista de perguntas |
+| `questions[].title` | `string` | Sim | Título da pergunta |
+| `questions[].description` | `string` | Não | Descrição/explicação da pergunta |
+| `questions[].choices` | `array` | Não | Opções de múltipla escolha (se omitido, apenas texto livre) |
+
+**Exemplo com múltiplas perguntas:**
+```json
+{
+  "context": "Configuração do Projeto",
+  "questions": [
+    {
+      "title": "Linguagem preferida",
+      "description": "Qual linguagem você prefere para este projeto?",
+      "choices": ["Python", "TypeScript", "Rust", "Go"]
+    },
+    {
+      "title": "Framework de UI",
+      "description": "Escolha um framework frontend.",
+      "choices": ["React", "Vue", "Svelte", "Nenhum"]
+    }
+  ]
+}
+```
+
 ### Exibição de Uso de Tokens
 
 O Stupidex exibe o consumo de tokens em tempo real durante a sessão:

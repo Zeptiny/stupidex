@@ -10,6 +10,7 @@ from stupidex.tools.ast import (
     rename_symbol_tool,
     replace_symbol_tool,
 )
+from stupidex.tools.ask_question import ask_question_tool, execute_ask_question
 from stupidex.tools.exec import execute_command, execute_command_tool
 from stupidex.tools.file_manipulation import (
     edit_tool,
@@ -93,6 +94,7 @@ def get_tool_registry() -> dict[str, dict]:
         "find_symbol_references": {"tool": find_symbol_references_tool, "executor": execute_find_symbol_references},
         "replace_symbol": {"tool": replace_symbol_tool, "executor": execute_replace_symbol},
         "rename_symbol": {"tool": rename_symbol_tool, "executor": execute_rename_symbol},
+        "ask_question": {"tool": ask_question_tool, "executor": execute_ask_question},
     }
     return _TOOL_REGISTRY
 
