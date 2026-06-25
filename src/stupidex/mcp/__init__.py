@@ -62,8 +62,6 @@ class MCPManager:
         self._start_error = None
         self._server_tasks = []
         self._on_status_change = on_status_change
-        for server_name in servers:
-            self._server_status[server_name] = {"status": "starting", "tool_count": 0, "error": None}
         self._runner = asyncio.create_task(self._run(servers))
         await self._ready.wait()
         if self._start_error is not None:
@@ -71,6 +69,14 @@ class MCPManager:
             raise self._start_error
 
     async def _run(self, servers: dict[str, dict]) -> None:
+        # Rebuild status from the current server set so stale entries from
+        # previous runs are cleared.
+        self._server_status = {name: {"status": "starting", "tool_count": 0, "error": None} for name in servers}
+        if self._on_status_change is not None:
+            try:
+                await self._on_status_change()
+            except Exception:
+                pass
         remaining = len(servers)
         done_starting = asyncio.Event()
 
@@ -81,6 +87,8 @@ class MCPManager:
                 done_starting.set()
 
         try:
+            if not servers:
+                return
             self._server_tasks = [
                 asyncio.create_task(self._manage_server(name, config, _on_started))
                 for name, config in servers.items()
@@ -113,11 +121,15 @@ class MCPManager:
     async def _manage_server(self, name: str, config: dict, on_started: Callable[[], Coroutine[Any, Any, None]]) -> None:
         """Own the full lifecycle of one server: start, mark status, hold open, close."""
         stack = contextlib.AsyncExitStack()
+        connected = False
         try:
             await stack.__aenter__()
-            await self._start_server(name, config, stack)
-            tool_count = sum(1 for k in self._tools if k.startswith(f"mcp_{name}_"))
+            new_tools, new_uri_map = await self._start_server(name, config, stack)
+            self._tools.update(new_tools)
+            self._uri_map.update(new_uri_map)
+            tool_count = len(new_tools)
             self._server_status[name] = {"status": "connected", "tool_count": tool_count, "error": None}
+            connected = True
         except Exception as e:
             self._server_status[name] = {"status": "failed", "tool_count": 0, "error": str(e)[:80]}
             logger.warning("Failed to start MCP server '%s'", name, exc_info=True)
@@ -131,6 +143,12 @@ class MCPManager:
                     await self._on_status_change()
                 except Exception:
                     pass
+        if not connected:
+            try:
+                await stack.aclose()
+            except Exception:
+                logger.warning("Error closing MCP server '%s'", name, exc_info=True)
+            return
         # Keep the stack open until shutdown signals stop or task is cancelled.
         try:
             await self._stop.wait()
@@ -158,7 +176,10 @@ class MCPManager:
                 logger.warning("MCP runner task ended with an error", exc_info=True)
         self._runner = None
 
-    async def _start_server(self, server_name: str, config: dict, stack: contextlib.AsyncExitStack) -> None:
+    async def _start_server(
+        self, server_name: str, config: dict, stack: contextlib.AsyncExitStack,
+    ) -> tuple[dict[str, dict], dict[str, str]]:
+        """Start one MCP server and return its (tools, uri_map) without committing."""
         from stupidex.mcp.schema import convert_mcp_tool, make_mcp_executor
 
         if "url" in config:
@@ -175,18 +196,22 @@ class MCPManager:
         await session.initialize()
         self._sessions[server_name] = session
 
+        new_tools: dict[str, dict] = {}
         tools_result = await session.list_tools()
         for tool in tools_result.tools:
             registry_name, tool_obj, raw_schema = convert_mcp_tool(server_name, tool)
-            self._tools[registry_name] = {
+            new_tools[registry_name] = {
                 "tool": tool_obj,
                 "executor": make_mcp_executor(self.call_tool, server_name, tool.name),
                 "input_schema": raw_schema,
             }
 
+        new_uri_map: dict[str, str] = {}
         resources_result = await session.list_resources()
         for resource in resources_result.resources:
-            self._uri_map[str(resource.uri)] = server_name
+            new_uri_map[str(resource.uri)] = server_name
+
+        return new_tools, new_uri_map
 
     async def shutdown(self) -> None:
         await self._await_runner()

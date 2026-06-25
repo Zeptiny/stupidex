@@ -118,21 +118,25 @@ class Stupidex(App):
             pass
         await self.rerender_footer()
         await self.refresh_todos()
+        from stupidex.config import get_config
+        from stupidex.mcp import MCPManager, set_mcp_manager
+        cfg = get_config()
+        if cfg.mcp_servers:
+            mcp_manager = MCPManager()
+            self._mcp_manager = mcp_manager
+            set_mcp_manager(mcp_manager)
         self.run_worker(self._start_mcp_background(), exit_on_error=False)
 
     async def _start_mcp_background(self) -> None:
         from stupidex.config import get_config
-        from stupidex.mcp import MCPManager, set_mcp_manager
+        from stupidex.mcp import get_mcp_manager
         cfg = get_config()
         if not cfg.mcp_servers:
-            set_mcp_manager(None)
             await self.refresh_mcp_servers()
             return
-        # Show "starting" state in sidebar immediately.
-        await self.refresh_mcp_servers()
-        mcp_manager = MCPManager()
-        self._mcp_manager = mcp_manager
-        set_mcp_manager(mcp_manager)
+        mcp_manager = get_mcp_manager()
+        if mcp_manager is None:
+            return
 
         async def _on_server_ready() -> None:
             await self.refresh_mcp_servers()
