@@ -853,17 +853,17 @@ A ferramenta `ask_question` permite ao agente fazer perguntas ao usuário com m�
 
 **Com argumento JSON:**
 ```bash
-python -m examples.ask_question_cli '{"questions": [{"title": "Linguagem favorita?", "choices": ["Python", "TypeScript", "Rust", "Go"]}]}'
+stupidex-ask '{"questions": [{"title": "Linguagem favorita?", "choices": ["Python", "TypeScript", "Rust", "Go"]}]}'
 ```
 
 **Via stdin (pipe):**
 ```bash
-echo '{"questions": [{"title": "Escolha um", "choices": ["A", "B"]}]}' | python -m examples.ask_question_cli
+echo '{"questions": [{"title": "Escolha um", "choices": ["A", "B"]}]}' | stupidex-ask
 ```
 
 **Modo interativo (sem argumentos — abre perguntas de demo):**
 ```bash
-python -m examples.ask_question_cli
+stupidex-ask
 ```
 
 **Demo simples:**

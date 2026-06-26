@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
 from stupidex.screens.question_modal import QuestionAnswer, QuestionModal, QuestionSpec
@@ -63,7 +63,7 @@ def _format_answers_xml(answers: list[QuestionAnswer | None]) -> str:
             continue
         attrs = 'answered="true"'
         if ans.choice:
-            attrs += f' choice="{_escape(ans.choice)}"'
+            attrs += f" choice={quoteattr(ans.choice)}"
         if ans.free_text:
             parts.append(
                 f'  <question index="{i}" {attrs}>\n'
@@ -126,7 +126,7 @@ async def execute_ask_question(
             ),
         )
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     future: asyncio.Future[list[QuestionAnswer | None] | None] = loop.create_future()
 
     def _on_result(result: list[QuestionAnswer | None] | None) -> None:
