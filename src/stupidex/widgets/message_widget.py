@@ -204,7 +204,11 @@ class ThinkingMessageWidget(Static):
 
     def compose(self) -> ComposeResult:
         if self._loaded:
-            title = f"Thought: {Chain.format_elapsed(self._stored_duration)}" if self._stored_duration is not None else "Thought"
+            title = (
+                f"Thought: {Chain.format_elapsed(self._stored_duration)}"
+                if self._stored_duration is not None
+                else "Thought"
+            )
         else:
             title = "Thinking..."
         self._content_widget = Static(
@@ -264,41 +268,26 @@ class ThinkingMessageWidget(Static):
             self._do_update()
 
 
-_STREAM_APPEND_THRESHOLD = 200
-
-
 class AssistantMessageWidget(TextualMarkdown):
-    """Assistant message using Textual's Markdown for incremental streaming.
+    """Assistant message using Textual's MarkdownStream for incremental streaming.
 
-    Uses ``Markdown.append()`` which only re-parses from the last parsed line,
-    avoiding full-document re-parse on every update during streaming.
+    Uses ``MarkdownStream.write()`` which handles buffering, coalescing,
+    and back-pressure internally.
     """
 
     def __init__(self, msg: Message, *, loaded: bool = False, **kwargs):
         self.msg = msg
-        self._last_render_time: float = 0
-        self._flush_scheduled: bool = False
         super().__init__(msg.content, **kwargs)
+        self._stream = TextualMarkdown.get_stream(self)
         self._last_appended_len: int = len(msg.content)
 
-    def update_content(self, content: str) -> None:
+    async def update_content(self, content: str) -> None:
         self.msg.content = content
-        delta = content[self._last_appended_len:]
+        delta = content[self._last_appended_len :]
         if not delta:
             return
-        if len(delta) >= _STREAM_APPEND_THRESHOLD:
-            self._last_appended_len = len(content)
-            self.append(delta)
-        elif not self._flush_scheduled:
-            self._flush_scheduled = True
-            self.set_timer(_THROTTLE_INTERVAL, self._flush_update)
-
-    def _flush_update(self) -> None:
-        self._flush_scheduled = False
-        delta = self.msg.content[self._last_appended_len:]
-        if delta:
-            self._last_appended_len = len(self.msg.content)
-            self.append(delta)
+        self._last_appended_len = len(content)
+        await self._stream.write(delta)
 
 
 class ChainFooterWidget(Static):
@@ -332,9 +321,7 @@ class ChainFooterWidget(Static):
             # each intermediate snapshot.
             prompt, cached, completion, _total = usage
             text += (
-                f" · ↑{Chain.format_tokens(prompt)}"
-                f" (⟲{Chain.format_tokens(cached)})"
-                f" ↓{Chain.format_tokens(completion)}"
+                f" · ↑{Chain.format_tokens(prompt)} (⟲{Chain.format_tokens(cached)}) ↓{Chain.format_tokens(completion)}"
             )
         # Delegated subagent subtotal (R11): the tokens of subagents whose
         # ``parent_chain_index`` is this chain's index. Rendered as a separate
@@ -570,4 +557,4 @@ async def mount_streamed_message(container, msg: Message, state: StreamWidgetSta
                 w.scroll_visible(animate=False)
         else:
             if msg.content:
-                state.content.update_content(msg.content)
+                await state.content.update_content(msg.content)
