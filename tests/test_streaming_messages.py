@@ -1384,7 +1384,7 @@ class StreamWidgetTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self, msg):
                 self.msg = msg
 
-            def scroll_visible(self):
+            def scroll_visible(self, animate=True):
                 pass
 
         class FakeContainer:

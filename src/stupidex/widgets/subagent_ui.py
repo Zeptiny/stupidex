@@ -232,7 +232,6 @@ class SubagentUIManager:
 
     async def _tick_timer(self) -> None:
         self._tick_subagent_footers()
-        await self.update_sidebar()
 
     @staticmethod
     def _tab_label(record: SubagentRecord) -> str:
