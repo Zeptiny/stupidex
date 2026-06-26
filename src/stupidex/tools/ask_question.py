@@ -20,7 +20,10 @@ ask_question_tool = Tool(
         "The user can always submit a free-text answer instead of (or in "
         "addition to) selecting a choice, and may skip any question. "
         "Use when you need a decision, clarification, or feedback from the "
-        "user before proceeding."
+        "user before proceeding. "
+        "Especially useful during brainstorming for significant decision "
+        "points — provide 2-4 curated choices and use the context parameter "
+        "to explain why the question is being asked."
     ),
     parameters=ToolParameter(
         properties={
