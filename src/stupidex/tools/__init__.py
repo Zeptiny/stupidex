@@ -1,3 +1,4 @@
+from stupidex.tools.ask_question import ask_question_tool, execute_ask_question
 from stupidex.tools.ast import (
     execute_find_symbol_references,
     execute_get_file_skeleton,
@@ -93,6 +94,7 @@ def get_tool_registry() -> dict[str, dict]:
         "find_symbol_references": {"tool": find_symbol_references_tool, "executor": execute_find_symbol_references},
         "replace_symbol": {"tool": replace_symbol_tool, "executor": execute_replace_symbol},
         "rename_symbol": {"tool": rename_symbol_tool, "executor": execute_rename_symbol},
+        "ask_question": {"tool": ask_question_tool, "executor": execute_ask_question},
     }
     return _TOOL_REGISTRY
 

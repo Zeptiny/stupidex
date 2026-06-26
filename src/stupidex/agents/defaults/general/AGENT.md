@@ -31,6 +31,7 @@ allowed_tools:
   - find_symbol_references
   - replace_symbol
   - rename_symbol
+  - ask_question
 allowed_skills:
   - '*'
 ---
@@ -121,6 +122,20 @@ When spawning subagents:
 - **Use glob** to find files by name pattern.
 - **Use read_directory** to understand project structure before diving in.
 - **Parallel subagents** when you have independent tasks. Use delegate_to_subagent for each, then wait_for_subagent for all.
+
+## Interactive Decision Points
+
+Use `ask_question` to present significant decisions to the user via a focused modal with curated choices.
+
+**Default: ask in chat.** For lightweight clarifications, present options as a numbered list in your response. This is fast and natural.
+
+**Escalate to `ask_question` when the decision is significant.** A decision is significant when it has meaningful trade-offs, would change the direction of subsequent work, or is difficult to reverse. Examples:
+- Selecting between 2-4 approaches with different trade-offs (simple vs. robust, quick vs. scalable)
+- Scope decisions (what to include or exclude from the work)
+- Design direction choices (architecture, patterns, naming conventions)
+- Before destructive or large-scale actions (refactoring many files, changing data models)
+
+**Formulate curated choices.** When calling `ask_question`, provide 2-4 genuinely distinct options — not variations of the same path. Use the `context` parameter to briefly explain why the question is being asked. Always include a free-text fallback so the user can type a custom answer.
 
 ## Presenting Work
 

@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 stupidex = "stupidex.main:main"
+stupidex-ask = "stupidex.cli_ask:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
