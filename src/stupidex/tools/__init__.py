@@ -1,3 +1,4 @@
+from stupidex.tools.ask_question import ask_question_tool, execute_ask_question
 from stupidex.tools.ast import (
     execute_find_symbol_references,
     execute_get_file_skeleton,
@@ -10,7 +11,6 @@ from stupidex.tools.ast import (
     rename_symbol_tool,
     replace_symbol_tool,
 )
-from stupidex.tools.ask_question import ask_question_tool, execute_ask_question
 from stupidex.tools.exec import execute_command, execute_command_tool
 from stupidex.tools.file_manipulation import (
     edit_tool,

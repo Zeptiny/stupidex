@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 """Standalone demo: pushes QuestionModal in a minimal Textual app."""
-import asyncio
-import sys
 
 from textual.app import App, ComposeResult
 

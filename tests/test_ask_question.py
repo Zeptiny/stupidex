@@ -4,10 +4,9 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 
-from stupidex.tools.ask_question import _escape
-
 from stupidex.screens.question_modal import QuestionAnswer, QuestionModal, QuestionSpec
 from stupidex.tools.ask_question import (
+    _escape,
     _format_answers_xml,
     _question_specs_from_args,
     execute_ask_question,
@@ -180,7 +179,6 @@ class ExecuteAskQuestionTests(unittest.TestCase):
 
             asyncio.run(run())
 
-        modal = pushed["screen"]
         self.assertEqual(pushed["screen"]._header, "Pick wisely")
 
     def test_default_header_when_no_context(self):

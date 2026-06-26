@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
-
 from xml.sax.saxutils import escape
 
 from stupidex.domain.tool import ExecutorResult, Tool, ToolParameter, ToolParameterProperties
